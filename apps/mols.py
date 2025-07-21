@@ -2,7 +2,7 @@
 # requires-python = "<3.13,>=3.12"
 # dependencies = [
 #     "marimo",
-#     "rdkit==2025.3.3",
+#     "rdkit",
 # ]
 # ///
 
