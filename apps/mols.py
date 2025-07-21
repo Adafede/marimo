@@ -15,12 +15,13 @@ app = marimo.App()
 @app.cell
 def _():
     import marimo as mo
-    import itertools
+    from itertools import cycle
 
     try:
-        from rdkit import Chem
-        from rdkit.Chem import rdDepictor
-        from rdkit.Chem.Draw import rdMolDraw2D
+        from rdkit.Chem import MolFromSmarts
+        from rdkit.Chem import MolFromSmiles
+        from rdkit.Chem.Draw.rdMolDraw2D import MolDraw2DSVG
+        from rdkit.Chem.rdDepictor import Compute2DCoords
 
         message = mo.md("✅ Your environment supports **RDKit**, all good!")
     except ImportError:
@@ -32,8 +33,16 @@ def _():
             "```\n"
             "If using Docker, toggle **App View** (bottom right or `cmd + .`)."
         )
-        Chem = rdDepictor = rdMolDraw2D = None
-    return Chem, itertools, message, mo, rdDepictor, rdMolDraw2D
+        Compute2DCoords = MolDraw2DSVG = MolFromSmarts = MolFromSmiles = None
+    return (
+        cycle,
+        Compute2DCoords,
+        message,
+        mo,
+        MolDraw2DSVG,
+        MolFromSmarts,
+        MolFromSmiles,
+    )
 
 
 @app.cell
@@ -101,10 +110,11 @@ def _():
 # --- Main Rendering Logic ---
 @app.cell
 def _(
-    Chem,
-    itertools,
-    rdDepictor,
-    rdMolDraw2D,
+    Compute2DCoords,
+    cycle,
+    MolDraw2DSVG,
+    MolFromSmarts,
+    MolFromSmiles,
     smi_input,
     smarts_input,
     submit_button,
@@ -125,24 +135,24 @@ def _(
         "#aaaa00",
         "#dddddd",
     ]
-    color_cycle = itertools.cycle(highlight_palette)
+    color_cycle = cycle(highlight_palette)
 
     def parse_smarts(smarts_patterns):
         parsed = []
         for smarts in smarts_patterns:
-            mol = Chem.MolFromSmarts(smarts)
+            mol = MolFromSmarts(smarts)
             if mol:
                 parsed.append((smarts, mol, hex_to_rgb_float(next(color_cycle))))
         return parsed
 
     def render_molecule(smi, smarts_mols):
-        mol = Chem.MolFromSmiles(smi)
+        mol = MolFromSmiles(smi)
         if not mol:
             return (
                 f"<div style='color:red;'>🚫 Invalid SMILES: <code>{smi}</code></div>"
             )
 
-        rdDepictor.Compute2DCoords(mol)
+        Compute2DCoords(mol)
 
         atom_ids = []
         colors = {}
@@ -157,7 +167,7 @@ def _(
                         colors[idx] = color
                 tooltips.append(f"✅ {smarts}: {len(matches)} match(es)")
 
-        drawer = rdMolDraw2D.MolDraw2DSVG(300, 300)
+        drawer = MolDraw2DSVG(300, 300)
         drawer.DrawMolecule(mol, highlightAtoms=atom_ids, highlightAtomColors=colors)
         drawer.FinishDrawing()
 
