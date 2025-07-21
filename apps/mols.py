@@ -1,3 +1,11 @@
+# /// script
+# requires-python = "<3.13,>=3.12"
+# dependencies = [
+#     "marimo",
+#     "rdkit==2025.3.3",
+# ]
+# ///
+
 import marimo
 
 __generated_with = "0.14.10"
