@@ -2,7 +2,7 @@
 # requires-python = "<3.13,>=3.12"
 # dependencies = [
 #     "marimo",
-#     "rdkit,
+#     "rdkit==2025.3.3",
 # ]
 # ///
 
@@ -21,23 +21,20 @@ def _():
         from rdkit.Chem import rdDepictor
         from rdkit.Chem.Draw import rdMolDraw2D
 
-        message = mo.md("Your environment supports rdkit, all good!")
+        message = mo.md("✅ Your environment supports **RDKit**, all good!")
     except ImportError:
         import marimo as mo
         import itertools
 
         message = mo.md(
-            "⚠️ **warning wasm**: RDKit is not available in this environment.\n\n"
-            "To run this script, use:\n\n"
+            "⚠️ **RDKit not available in this environment**.\n\n"
+            "To run this script:\n"
             "```bash\n"
             "uvx marimo run https://raw.githubusercontent.com/Adafede/marimo/refs/heads/main/apps/mols.py\n"
-            "```\n\n"
-            "If running in a Docker container, do not forget to toggle app view (bottom right or using `cmd + .`)"
+            "```\n"
+            "If using Docker, toggle **App View** (bottom right or `cmd + .`)."
         )
-        Chem = None
-        itertools = None
-        rdDepictor = None
-        rdMolDraw2D = None
+        Chem = rdDepictor = rdMolDraw2D = None
     return Chem, itertools, message, mo, rdDepictor, rdMolDraw2D
 
 
@@ -50,7 +47,7 @@ def _(message):
 @app.cell
 def _(mo):
     smi_input = mo.ui.text_area(
-        label="## Enter SMILES (one per row)",
+        label="## Enter SMILES (one per line)",
         placeholder="e.g., CCO",
         value="CC(=O)O\nCCN(CC)CCN\nC[C@@H]1C=C(OC)C([C@@]2(C)[C@H]1C[C@@H]3[C@]4(C)[C@@H]2C(C(OC)=C(C)[C@@H]4CC(O3)=O)=O)=O",
     )
@@ -61,7 +58,7 @@ def _(mo):
 @app.cell
 def _(mo):
     smarts_input = mo.ui.text_area(
-        label="## Enter SMARTS (one per row)",
+        label="## Enter SMARTS patterns (one per line)",
         placeholder="e.g., [OH]",
         value="[N]\n[OH]\n[$(C);!$(C(~C)~C)]~[$(C);!$(C(~C)(~C)~C)]~[$(C);!$(C(~C)(~C)(~C)~C)]1~[$(C);!$(C(~C)(~C)(~C)~C)](~[$(C);!$(C(~C)~C)])~[$(C);!$(C(~C)(~C)~C)]~[$(C);!$(C(~C)(~C)~C)]~[$(C);!$(C(~C)(~C)(~C)~C)]2C3([$(C);!$(C(~C)~C)])~[$(C);!$(C(~C)(~C)~C)]~[$(C);!$(C(~C)(~C)~C)]~[$(C);!$(C(~C)(~C)~C)]~[$(C);!$(C(~C)(~C)(~C)~C)](~[$(C);!$(C(~C)~C)])~[$(C);!$(C(~C)(~C)(~C)~C)]3~[$(C);!$(C(~C)(~C)~C)]~[$(C);!$(C(~C)(~C)~C)]C2([$(C);!$(C(~C)~C)])1",
     )
@@ -74,34 +71,51 @@ def _(mo, smarts_input):
     smarts_list = [
         line.strip() for line in smarts_input.value.splitlines() if line.strip()
     ]
-    toggles = {smarts: mo.ui.switch(value=True, label=smarts) for smarts in smarts_list}
+    toggles = {s: mo.ui.switch(value=True, label=s) for s in smarts_list}
+
     mo.md("## Toggle SMARTS Highlights")
-    for toggle in toggles.values():
-        toggle
+    for switch in toggles.values():
+        switch
+
     return (toggles,)
 
 
 @app.cell
 def _(mo):
-    submit_button = mo.ui.button(label="🔬 Render Molecules with SMARTS Highlighting")
+    submit_button = mo.ui.button(label="🔬 Render Molecules")
     submit_button
     return (submit_button,)
 
 
+# --- Utility Functions ---
+@app.cell
+def _():
+    def parse_input(text):
+        return [line.strip() for line in text.splitlines() if line.strip()]
+
+    def hex_to_rgb_float(hex_color):
+        h = hex_color.lstrip("#")
+        return tuple(int(h[i : i + 2], 16) / 255.0 for i in (0, 2, 4))
+
+    return parse_input, hex_to_rgb_float
+
+
+# --- Main Rendering Logic ---
 @app.cell
 def _(
     Chem,
     itertools,
     rdDepictor,
     rdMolDraw2D,
-    smarts_input,
     smi_input,
+    smarts_input,
     submit_button,
     toggles,
+    parse_input,
+    hex_to_rgb_float,
 ):
-    _ = submit_button.value
+    _ = submit_button.value  # Trigger re-render
 
-    # --- Paul Tol Light palette ---
     highlight_palette = [
         "#77aadd",
         "#ee8866",
@@ -115,26 +129,15 @@ def _(
     ]
     color_cycle = itertools.cycle(highlight_palette)
 
-    def parse_input(text: str) -> list[str]:
-        return [line.strip() for line in text.splitlines() if line.strip()]
-
-    def hex_to_rgb_float(hexcolor: str) -> tuple[float, float, float]:
-        h = hexcolor.lstrip("#")
-        return tuple(int(h[i : i + 2], 16) / 255.0 for i in (0, 2, 4))
-
-    def parse_smarts(smarts_strs: list[str]) -> list[tuple[str, Chem.Mol, tuple]]:
+    def parse_smarts(smarts_patterns):
         parsed = []
-        for smarts in smarts_strs:
+        for smarts in smarts_patterns:
             mol = Chem.MolFromSmarts(smarts)
             if mol:
-                color_hex = next(color_cycle)
-                color_rgb = hex_to_rgb_float(color_hex)
-                parsed.append((smarts, mol, color_rgb))
+                parsed.append((smarts, mol, hex_to_rgb_float(next(color_cycle))))
         return parsed
 
-    def render_molecule(
-        smi: str, smarts_mols: list[tuple[str, Chem.Mol, tuple]]
-    ) -> str:
+    def render_molecule(smi, smarts_mols):
         mol = Chem.MolFromSmiles(smi)
         if not mol:
             return (
@@ -159,18 +162,17 @@ def _(
         drawer = rdMolDraw2D.MolDraw2DSVG(300, 300)
         drawer.DrawMolecule(mol, highlightAtoms=atom_ids, highlightAtomColors=colors)
         drawer.FinishDrawing()
-        svg = drawer.GetDrawingText()
 
         return (
-            f"<div style='display:inline-block; margin:12px; text-align:center; border:1px solid #eee; "
-            f"padding:10px; border-radius:8px; box-shadow: 2px 2px 5px rgba(0,0,0,0.1);'>"
-            f"{svg}<br><code>{smi}</code><br><small>{'<br>'.join(tooltips)}</small></div>"
+            "<div style='display:inline-block; margin:12px; text-align:center; "
+            "border:1px solid #eee; padding:10px; border-radius:8px; "
+            "box-shadow: 2px 2px 5px rgba(0,0,0,0.1);'>"
+            f"{drawer.GetDrawingText()}<br><code>{smi}</code><br>"
+            f"<small>{'<br>'.join(tooltips)}</small></div>"
         )
 
     smiles = parse_input(smi_input.value)
     raw_smarts = parse_input(smarts_input.value)
-
-    # Use toggles to filter only active SMARTS
     active_smarts = [s for s in raw_smarts if toggles[s].value]
     parsed_smarts = parse_smarts(active_smarts)
 
