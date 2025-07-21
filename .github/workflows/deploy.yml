@@ -35,6 +35,9 @@ jobs:
         with:
           python-version-file: "pyproject.toml"
 
+      - name: Install the project
+        run: uv sync --locked --all-extras --dev
+
       # Run the build script to export notebooks to WebAssembly
       - name: 🛠️ Export notebooks
         run: |
