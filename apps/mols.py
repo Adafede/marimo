@@ -14,18 +14,16 @@ app = marimo.App()
 
 @app.cell
 def _():
+    import marimo as mo
+    import itertools
+
     try:
-        import marimo as mo
-        import itertools
         from rdkit import Chem
         from rdkit.Chem import rdDepictor
         from rdkit.Chem.Draw import rdMolDraw2D
 
         message = mo.md("✅ Your environment supports **RDKit**, all good!")
     except ImportError:
-        import marimo as mo
-        import itertools
-
         message = mo.md(
             "⚠️ **RDKit not available in this environment**.\n\n"
             "To run this script:\n"
