@@ -2,7 +2,7 @@
 # requires-python = "<3.13,>=3.12"
 # dependencies = [
 #     "marimo",
-#     "rdkit",
+#     "rdkit,
 # ]
 # ///
 
@@ -14,13 +14,37 @@ app = marimo.App()
 
 @app.cell
 def _():
-    import marimo as mo
-    from rdkit import Chem
-    from rdkit.Chem import rdDepictor
-    from rdkit.Chem.Draw import rdMolDraw2D
-    import itertools
+    try:
+        import marimo as mo
+        import itertools
+        from rdkit import Chem
+        from rdkit.Chem import rdDepictor
+        from rdkit.Chem.Draw import rdMolDraw2D
 
-    return Chem, itertools, mo, rdDepictor, rdMolDraw2D
+        message = mo.md("Your environment supports rdkit, all good!")
+    except ImportError:
+        import marimo as mo
+        import itertools
+
+        message = mo.md(
+            "⚠️ **warning wasm**: RDKit is not available in this environment.\n\n"
+            "To run this script, use:\n\n"
+            "```bash\n"
+            "uvx marimo run https://raw.githubusercontent.com/Adafede/marimo/refs/heads/main/apps/mols.py\n"
+            "```\n\n"
+            "If running in a Docker container, do not forget to toggle app view (bottom right or using `cmd + .`)"
+        )
+        Chem = None
+        itertools = None
+        rdDepictor = None
+        rdMolDraw2D = None
+    return Chem, itertools, message, mo, rdDepictor, rdMolDraw2D
+
+
+@app.cell
+def _(message):
+    message
+    return ()
 
 
 @app.cell
