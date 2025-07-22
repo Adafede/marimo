@@ -23,6 +23,7 @@ def _():
         from rdkit.Chem import MolFromSmiles
         from rdkit.Chem.Draw.rdMolDraw2D import MolDraw2DSVG
         from rdkit.Chem.rdDepictor import Compute2DCoords
+        from rdkit.Chem.rdFMCS import FindMCS
 
         message = mo.md("✅ Your environment supports **RDKit**, all good!")
     except ImportError:
@@ -34,9 +35,10 @@ def _():
             "```\n"
             "If using Docker, toggle **App View** (bottom right or `cmd + .`)."
         )
-        Compute2DCoords = MolDraw2DSVG = MolFromSmarts = MolFromSmiles = None
+        Compute2DCoords = FindMCS = MolDraw2DSVG = MolFromSmarts = MolFromSmiles = None
     return (
         Compute2DCoords,
+        FindMCS,
         MolDraw2DSVG,
         MolFromSmarts,
         MolFromSmiles,
@@ -78,6 +80,24 @@ def _(mo):
 
 
 @app.cell
+def _(find_mcs_smarts, mo, parse_input, smi_input):
+    smiles_list = parse_input(smi_input.value)
+    mcs_smarts, mcs_error = find_mcs_smarts(smiles_list)
+
+    if mcs_smarts:
+        mcs = mo.md(
+            "### 📎 Automatically detected Maximum Common Substructure (MCS) SMARTS\n\n"
+            f"```smarts\n{mcs_smarts}\n```"
+        )
+    elif mcs_error:
+        mcs = mo.md(f"⚠️ {mcs_error}")
+    else:
+        mcs = mo.md("ℹ️ No MCS SMARTS generated.")
+    mcs
+    return
+
+
+@app.cell
 def _(mo, parse_input, smarts_input):
     smarts_list = parse_input(smarts_input.value)
     toggles = {
@@ -98,12 +118,8 @@ def _(mo):
 
 
 @app.cell
-def _():
+def _(FindMCS, MolFromSmiles):
     def parse_input(text):
-        """
-        Parses each line as (name, value) where value is first and name is after first space.
-        If no space, name == value.
-        """
         items = []
         for line in text.splitlines():
             line = line.strip()
@@ -121,7 +137,19 @@ def _():
         h = hex_color.lstrip("#")
         return tuple(int(h[i : i + 2], 16) / 255.0 for i in (0, 2, 4))
 
-    return hex_to_rgb_float, parse_input
+    def find_mcs_smarts(smiles_list):
+        mols = [MolFromSmiles(smi) for _, smi in smiles_list]
+        mols = [mol for mol in mols if mol is not None]
+        if len(mols) < 2:
+            return None, "⚠️ Need at least two valid SMILES to find MCS."
+
+        mcs_result = FindMCS(mols)
+        if mcs_result.canceled or not mcs_result.smartsString:
+            return None, "⚠️ Could not determine MCS."
+
+        return mcs_result.smartsString, None
+
+    return find_mcs_smarts, hex_to_rgb_float, parse_input
 
 
 @app.cell
