@@ -26,6 +26,7 @@ def _():
         from rdkit.Chem.rdFMCS import FindMCS
 
         message = mo.md("✅ Your environment supports **RDKit**, all good!")
+        rdkit_available = True
     except ImportError:
         message = mo.md(
             "⚠️ **RDKit not available in this environment**.\n\n"
@@ -35,6 +36,7 @@ def _():
             "```\n"
             "If using Docker, toggle **App View** (bottom right or `cmd + .`)."
         )
+        rdkit_available = False
         Compute2DCoords = FindMCS = MolDraw2DSVG = MolFromSmarts = MolFromSmiles = None
     return (
         Compute2DCoords,
@@ -46,6 +48,7 @@ def _():
         defaultdict,
         message,
         mo,
+        rdkit_available,
     )
 
 
@@ -56,45 +59,61 @@ def _(message):
 
 
 @app.cell
-def _(mo):
-    smi_input = mo.ui.text_area(
-        label="## Enter SMILES (one per line)",
-        placeholder="e.g., CCO Ethanol",
-        value="CC(=O)O acetic acid\nCCN(CC)CCN N,N-Diethylethylenediamine\nC[C@@H]1C=C(OC)C([C@@]2(C)[C@H]1C[C@@H]3[C@]4(C)[C@@H]2C(C(OC)=C(C)[C@@H]4CC(O3)=O)=O)=O quassin",
-        full_width=True,
-    )
+def _(mo, rdkit_available):
+    if not rdkit_available:
+        mo.stop()
+    return
+
+
+@app.cell
+def _(mo, rdkit_available):
+    if rdkit_available:
+        smi_input = mo.ui.text_area(
+            label="## Enter SMILES (one per line)",
+            placeholder="e.g., CCO Ethanol",
+            value="CC(=O)O acetic acid\nCCN(CC)CCN N,N-Diethylethylenediamine\nC[C@@H]1C=C(OC)C([C@@]2(C)[C@H]1C[C@@H]3[C@]4(C)[C@@H]2C(C(OC)=C(C)[C@@H]4CC(O3)=O)=O)=O quassin",
+            full_width=True,
+        )
+    else:
+        smi_input = None
     smi_input
     return (smi_input,)
 
 
 @app.cell
-def _(find_mcs_smarts, mo, parse_input, smi_input):
-    smiles_list = parse_input(smi_input.value)
-    mcs_smarts, mcs_error = find_mcs_smarts(smiles_list)
+def _(find_mcs_smarts, mo, parse_input, rdkit_available, smi_input):
+    if rdkit_available:
+        smiles_list = parse_input(smi_input.value)
+        mcs_smarts, mcs_error = find_mcs_smarts(smiles_list)
 
-    if mcs_smarts:
-        mcs = mo.md(
-            "### 📎 Automatically Detected Maximum Common Substructure (MCS) SMARTS\n\n"
-            "The SMARTS pattern below was generated automatically. It may not always be chemically meaningful or appropriate for your use case, so please review it carefully.\n\n"
-            "You can paste it below as a starting point:\n"
-            f"```smarts\n{mcs_smarts}\n```"
-        )
-    elif mcs_error:
-        mcs = mo.md(f"⚠️ {mcs_error}")
+        if mcs_smarts:
+            mcs = mo.md(
+                "### 📎 Automatically Detected Maximum Common Substructure (MCS) SMARTS\n\n"
+                "The SMARTS pattern below was generated automatically. It may not always be chemically meaningful or appropriate for your use case, so please review it carefully.\n\n"
+                "You can paste it below as a starting point:\n"
+                f"```smarts\n{mcs_smarts}\n```"
+            )
+        elif mcs_error:
+            mcs = mo.md(f"⚠️ {mcs_error}")
+        else:
+            mcs = mo.md("ℹ️ No MCS SMARTS generated.")
     else:
-        mcs = mo.md("ℹ️ No MCS SMARTS generated.")
+        mcs = None
     mcs
     return
 
 
 @app.cell
-def _(mo):
-    smarts_input = mo.ui.text_area(
-        label="## Enter SMARTS patterns (one per line)",
-        placeholder="e.g., [OH] Hydroxyl",
-        value="[#7] nitrogen\n[OH] hydroxyl\n[$(C);!$(C(~C)~C)]~[$(C);!$(C(~C)(~C)~C)]~[$(C);!$(C(~C)(~C)(~C)~C)]1~[$(C);!$(C(~C)(~C)(~C)~C)](~[$(C);!$(C(~C)~C)])~[$(C);!$(C(~C)(~C)~C)]~[$(C);!$(C(~C)(~C)~C)]~[$(C);!$(C(~C)(~C)(~C)~C)]2C3([$(C);!$(C(~C)~C)])~[$(C);!$(C(~C)(~C)~C)]~[$(C);!$(C(~C)(~C)~C)]~[$(C);!$(C(~C)(~C)~C)]~[$(C);!$(C(~C)(~C)(~C)~C)](~[$(C);!$(C(~C)~C)])~[$(C);!$(C(~C)(~C)(~C)~C)]3~[$(C);!$(C(~C)(~C)~C)]~[$(C);!$(C(~C)(~C)~C)]C2([$(C);!$(C(~C)~C)])1 picrasane",
-        full_width=True,
-    )
+def _(mo, rdkit_available):
+    if rdkit_available:
+        smarts_input = mo.ui.text_area(
+            label="## Enter SMARTS patterns (one per line)",
+            placeholder="e.g., [OH] Hydroxyl",
+            value="[#7] nitrogen\n[OH] hydroxyl\n[$(C);!$(C(~C)~C)]~[$(C);!$(C(~C)(~C)~C)]~[$(C);!$(C(~C)(~C)(~C)~C)]1~[$(C);!$(C(~C)(~C)(~C)~C)](~[$(C);!$(C(~C)~C)])~[$(C);!$(C(~C)(~C)~C)]~[$(C);!$(C(~C)(~C)~C)]~[$(C);!$(C(~C)(~C)(~C)~C)]2C3([$(C);!$(C(~C)~C)])~[$(C);!$(C(~C)(~C)~C)]~[$(C);!$(C(~C)(~C)~C)]~[$(C);!$(C(~C)(~C)~C)]~[$(C);!$(C(~C)(~C)(~C)~C)](~[$(C);!$(C(~C)~C)])~[$(C);!$(C(~C)(~C)(~C)~C)]3~[$(C);!$(C(~C)(~C)~C)]~[$(C);!$(C(~C)(~C)~C)]C2([$(C);!$(C(~C)~C)])1 picrasane",
+            full_width=True,
+        )
+    else:
+        smarts_input = None
     smarts_input
     return (smarts_input,)
 
@@ -113,8 +132,11 @@ def _(mo, parse_input, smarts_input):
 
 
 @app.cell
-def _(mo):
-    submit_button = mo.ui.button(label="🔬 Render Molecules")
+def _(mo, rdkit_available):
+    if rdkit_available:
+        submit_button = mo.ui.button(label="🔬 Render Molecules")
+    else:
+        submit_button = None
     submit_button
     return (submit_button,)
 
