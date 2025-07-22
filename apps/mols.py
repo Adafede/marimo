@@ -68,6 +68,26 @@ def _(mo):
 
 
 @app.cell
+def _(find_mcs_smarts, mo, parse_input, smi_input):
+    smiles_list = parse_input(smi_input.value)
+    mcs_smarts, mcs_error = find_mcs_smarts(smiles_list)
+
+    if mcs_smarts:
+        mcs = mo.md(
+            "### 📎 Automatically Detected Maximum Common Substructure (MCS) SMARTS\n\n"
+            "The SMARTS pattern below was generated automatically. It may not always be chemically meaningful or appropriate for your use case, so please review it carefully.\n\n"
+            "You can paste it below as a starting point:\n"
+            f"```smarts\n{mcs_smarts}\n```"
+        )
+    elif mcs_error:
+        mcs = mo.md(f"⚠️ {mcs_error}")
+    else:
+        mcs = mo.md("ℹ️ No MCS SMARTS generated.")
+    mcs
+    return
+
+
+@app.cell
 def _(mo):
     smarts_input = mo.ui.text_area(
         label="## Enter SMARTS patterns (one per line)",
@@ -77,24 +97,6 @@ def _(mo):
     )
     smarts_input
     return (smarts_input,)
-
-
-@app.cell
-def _(find_mcs_smarts, mo, parse_input, smi_input):
-    smiles_list = parse_input(smi_input.value)
-    mcs_smarts, mcs_error = find_mcs_smarts(smiles_list)
-
-    if mcs_smarts:
-        mcs = mo.md(
-            "### 📎 Automatically detected Maximum Common Substructure (MCS) SMARTS\n\n"
-            f"```smarts\n{mcs_smarts}\n```"
-        )
-    elif mcs_error:
-        mcs = mo.md(f"⚠️ {mcs_error}")
-    else:
-        mcs = mo.md("ℹ️ No MCS SMARTS generated.")
-    mcs
-    return
 
 
 @app.cell
