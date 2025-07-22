@@ -8,7 +8,7 @@
 
 import marimo
 
-__generated_with = "0.14.10"
+__generated_with = "0.14.12"
 app = marimo.App()
 
 
@@ -36,21 +36,21 @@ def _():
         )
         Compute2DCoords = MolDraw2DSVG = MolFromSmarts = MolFromSmiles = None
     return (
-        cycle,
         Compute2DCoords,
-        defaultdict,
-        message,
-        mo,
         MolDraw2DSVG,
         MolFromSmarts,
         MolFromSmiles,
+        cycle,
+        defaultdict,
+        message,
+        mo,
     )
 
 
 @app.cell
 def _(message):
     message
-    return ()
+    return
 
 
 @app.cell
@@ -78,7 +78,7 @@ def _(mo):
 
 
 @app.cell
-def _(mo, smarts_input):
+def _(mo, parse_input, smarts_input):
     smarts_list = parse_input(smarts_input.value)
     toggles = {
         smarts: mo.ui.switch(value=True, label=name) for name, smarts in smarts_list
@@ -87,7 +87,6 @@ def _(mo, smarts_input):
     mo.md("## Toggle SMARTS Highlights")
     for switch in toggles.values():
         switch
-
     return (toggles,)
 
 
@@ -98,7 +97,6 @@ def _(mo):
     return (submit_button,)
 
 
-# --- Utility Functions ---
 @app.cell
 def _():
     def parse_input(text):
@@ -123,24 +121,23 @@ def _():
         h = hex_color.lstrip("#")
         return tuple(int(h[i : i + 2], 16) / 255.0 for i in (0, 2, 4))
 
-    return parse_input, hex_to_rgb_float
+    return hex_to_rgb_float, parse_input
 
 
-# --- Main Rendering Logic ---
 @app.cell
 def _(
     Compute2DCoords,
-    cycle,
-    defaultdict,
     MolDraw2DSVG,
     MolFromSmarts,
     MolFromSmiles,
-    smi_input,
+    cycle,
+    defaultdict,
+    hex_to_rgb_float,
+    parse_input,
     smarts_input,
+    smi_input,
     submit_button,
     toggles,
-    parse_input,
-    hex_to_rgb_float,
 ):
     _ = submit_button.value  # Trigger re-render
 
@@ -225,7 +222,7 @@ def _(
             f"padding:6px 12px; border-bottom:1px solid #eee;'>"
             f"<span style='font-size:0.9em; font-weight:500;'>{name}</span>"
             f"<span style='background:{highlight_palette[i % len(highlight_palette)]};"
-            f" color:#fff; padding:2px 8px; border-radius:12px; font-size:0.8em;'>"
+            f" padding:2px 8px; border-radius:12px; font-size:0.8em;'>"
             f"{match_counter[name]} / {total_mols} mol{'s' if total_mols != 1 else ''}</span>"
             f"</div>"
             for i, (name, _) in enumerate(active_smarts)
