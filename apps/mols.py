@@ -11,9 +11,7 @@ import marimo
 __generated_with = "0.14.12"
 app = marimo.App(app_title="Automated substructure depiction and verification")
 
-
-@app.cell
-def py_import():
+with app.setup:
     import marimo as mo
     from collections import defaultdict
     from itertools import cycle
@@ -34,14 +32,6 @@ def py_import():
         )
         rdkit_available = False
         MolFromSmarts = None
-    return (
-        MolFromSmarts,
-        cycle,
-        defaultdict,
-        message,
-        mo,
-        rdkit_available,
-    )
 
 
 @app.function
@@ -106,7 +96,9 @@ def render_molecule(name, smi, smarts_mols, match_counter):
             match_counter[s_name] += 1
 
     drawer = MolDraw2DSVG(200, 200)
-    drawer.DrawMolecule(mol, highlightAtoms=atom_ids, highlightAtomColors=colors)
+    drawer.DrawMolecule(
+        mol, highlightAtoms=atom_ids, highlightAtomColors=colors
+    )
     drawer.FinishDrawing()
 
     label = (
@@ -125,20 +117,20 @@ def render_molecule(name, smi, smarts_mols, match_counter):
 
 
 @app.cell
-def message_md(message):
+def message_md():
     message
     return
 
 
 @app.cell
-def stop_rdkit(mo, rdkit_available):
+def stop_rdkit():
     if not rdkit_available:
         mo.stop()
     return
 
 
 @app.cell
-def input_smiles(mo, rdkit_available):
+def input_smiles():
     if rdkit_available:
         smi_input = mo.ui.text_area(
             label="## Enter SMILES (one per line)",
@@ -153,7 +145,7 @@ def input_smiles(mo, rdkit_available):
 
 
 @app.cell
-def py_find_mcs(find_mcs_smarts, mo, parse_input, rdkit_available, smi_input):
+def py_find_mcs(smi_input):
     if rdkit_available:
         smiles_list = parse_input(smi_input.value)
         mcs_smarts, mcs_error = find_mcs_smarts(smiles_list)
@@ -176,7 +168,7 @@ def py_find_mcs(find_mcs_smarts, mo, parse_input, rdkit_available, smi_input):
 
 
 @app.cell
-def input_smarts(mo, rdkit_available):
+def input_smarts():
     if rdkit_available:
         smarts_input = mo.ui.text_area(
             label="## Enter SMARTS patterns (one per line)",
@@ -191,10 +183,11 @@ def input_smarts(mo, rdkit_available):
 
 
 @app.cell
-def input_toggle(mo, parse_input, smarts_input):
+def input_toggle(smarts_input):
     smarts_list = parse_input(smarts_input.value)
     toggles = {
-        smarts: mo.ui.switch(value=True, label=name) for name, smarts in smarts_list
+        smarts: mo.ui.switch(value=True, label=name)
+        for name, smarts in smarts_list
     }
 
     mo.md("## Toggle SMARTS Highlights")
@@ -204,7 +197,7 @@ def input_toggle(mo, parse_input, smarts_input):
 
 
 @app.cell
-def button_submit(mo, rdkit_available):
+def button_submit():
     if rdkit_available:
         submit_button = mo.ui.button(label="🔬 Render Molecules")
     else:
@@ -214,17 +207,7 @@ def button_submit(mo, rdkit_available):
 
 
 @app.cell
-def py_generate_html(
-    MolFromSmarts,
-    cycle,
-    defaultdict,
-    hex_to_rgb_float,
-    parse_input,
-    smarts_input,
-    smi_input,
-    submit_button,
-    toggles,
-):
+def py_generate_html(smarts_input, smi_input, submit_button, toggles):
     _ = submit_button.value  # Trigger re-render
 
     highlight_palette = [
@@ -295,7 +278,7 @@ def py_generate_html(
 
 
 @app.cell
-def html(html, mo):
+def html(html):
     mo.Html(html)
     return
 
