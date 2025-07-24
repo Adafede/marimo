@@ -9,21 +9,17 @@
 import marimo
 
 __generated_with = "0.14.12"
-app = marimo.App()
+app = marimo.App(app_title="Automated substructure depiction and verification")
 
 
 @app.cell
-def _():
+def py_import():
     import marimo as mo
     from collections import defaultdict
     from itertools import cycle
 
     try:
         from rdkit.Chem import MolFromSmarts
-        from rdkit.Chem import MolFromSmiles
-        from rdkit.Chem.Draw.rdMolDraw2D import MolDraw2DSVG
-        from rdkit.Chem.rdDepictor import Compute2DCoords
-        from rdkit.Chem.rdFMCS import FindMCS
 
         message = mo.md("✅ Your environment supports **RDKit**, all good!")
         rdkit_available = True
@@ -37,13 +33,9 @@ def _():
             "If using Docker, toggle **App View** (bottom right or `cmd + .`)."
         )
         rdkit_available = False
-        Compute2DCoords = FindMCS = MolDraw2DSVG = MolFromSmarts = MolFromSmiles = None
+        MolFromSmarts = None
     return (
-        Compute2DCoords,
-        FindMCS,
-        MolDraw2DSVG,
         MolFromSmarts,
-        MolFromSmiles,
         cycle,
         defaultdict,
         message,
@@ -52,21 +44,101 @@ def _():
     )
 
 
+@app.function
+def parse_input(text):
+    items = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if " " in line:
+            val, name = line.split(" ", 1)
+            items.append((name.strip(), val.strip()))
+        else:
+            items.append((line, line))
+    return items
+
+
+@app.function
+def hex_to_rgb_float(hex_color):
+    h = hex_color.lstrip("#")
+    return tuple(int(h[i : i + 2], 16) / 255.0 for i in (0, 2, 4))
+
+
+@app.function
+def find_mcs_smarts(smiles_list):
+    from rdkit.Chem import MolFromSmiles
+    from rdkit.Chem.rdFMCS import FindMCS
+
+    mols = [MolFromSmiles(smi) for _, smi in smiles_list]
+    mols = [mol for mol in mols if mol is not None]
+    if len(mols) < 2:
+        return None, "⚠️ Need at least two valid SMILES to find MCS."
+
+    mcs_result = FindMCS(mols)
+    if mcs_result.canceled or not mcs_result.smartsString:
+        return None, "⚠️ Could not determine MCS."
+
+    return mcs_result.smartsString, None
+
+
+@app.function
+def render_molecule(name, smi, smarts_mols, match_counter):
+    from rdkit.Chem import MolFromSmiles
+    from rdkit.Chem.Draw.rdMolDraw2D import MolDraw2DSVG
+    from rdkit.Chem.rdDepictor import Compute2DCoords
+
+    mol = MolFromSmiles(smi)
+    if not mol:
+        return f"<div style='color:red;'>🚫 Invalid SMILES: <code>{smi}</code></div>"
+
+    Compute2DCoords(mol)
+    atom_ids, colors, tooltips = [], {}, []
+
+    for s_name, smarts, smarts_mol, color in smarts_mols:
+        matches = mol.GetSubstructMatches(smarts_mol)
+        if matches:
+            for match in matches:
+                atom_ids.extend(match)
+                for idx in match:
+                    colors[idx] = color
+            tooltips.append(f"✅ {s_name}: {len(matches)} match(es)")
+            match_counter[s_name] += 1
+
+    drawer = MolDraw2DSVG(200, 200)
+    drawer.DrawMolecule(mol, highlightAtoms=atom_ids, highlightAtomColors=colors)
+    drawer.FinishDrawing()
+
+    label = (
+        f"<strong>{name}</strong><br><code>{smi}</code>"
+        if name != smi
+        else f"<code>{smi}</code>"
+    )
+
+    return (
+        "<div style='display:inline-block; margin:12px; text-align:center; "
+        "border:1px solid #eee; padding:10px; border-radius:8px; "
+        "box-shadow: 2px 2px 5px rgba(0,0,0,0.1);'>"
+        f"{drawer.GetDrawingText()}<br>{label}<br>"
+        f"<small>{'<br>'.join(tooltips)}</small></div>"
+    )
+
+
 @app.cell
-def _(message):
+def message_md(message):
     message
     return
 
 
 @app.cell
-def _(mo, rdkit_available):
+def stop_rdkit(mo, rdkit_available):
     if not rdkit_available:
         mo.stop()
     return
 
 
 @app.cell
-def _(mo, rdkit_available):
+def input_smiles(mo, rdkit_available):
     if rdkit_available:
         smi_input = mo.ui.text_area(
             label="## Enter SMILES (one per line)",
@@ -81,7 +153,7 @@ def _(mo, rdkit_available):
 
 
 @app.cell
-def _(find_mcs_smarts, mo, parse_input, rdkit_available, smi_input):
+def py_find_mcs(find_mcs_smarts, mo, parse_input, rdkit_available, smi_input):
     if rdkit_available:
         smiles_list = parse_input(smi_input.value)
         mcs_smarts, mcs_error = find_mcs_smarts(smiles_list)
@@ -104,7 +176,7 @@ def _(find_mcs_smarts, mo, parse_input, rdkit_available, smi_input):
 
 
 @app.cell
-def _(mo, rdkit_available):
+def input_smarts(mo, rdkit_available):
     if rdkit_available:
         smarts_input = mo.ui.text_area(
             label="## Enter SMARTS patterns (one per line)",
@@ -119,7 +191,7 @@ def _(mo, rdkit_available):
 
 
 @app.cell
-def _(mo, parse_input, smarts_input):
+def input_toggle(mo, parse_input, smarts_input):
     smarts_list = parse_input(smarts_input.value)
     toggles = {
         smarts: mo.ui.switch(value=True, label=name) for name, smarts in smarts_list
@@ -132,7 +204,7 @@ def _(mo, parse_input, smarts_input):
 
 
 @app.cell
-def _(mo, rdkit_available):
+def button_submit(mo, rdkit_available):
     if rdkit_available:
         submit_button = mo.ui.button(label="🔬 Render Molecules")
     else:
@@ -142,46 +214,8 @@ def _(mo, rdkit_available):
 
 
 @app.cell
-def _(FindMCS, MolFromSmiles):
-    def parse_input(text):
-        items = []
-        for line in text.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            if " " in line:
-                val, name = line.split(" ", 1)
-                items.append((name.strip(), val.strip()))
-            else:
-                # No name given
-                items.append((line, line))
-        return items
-
-    def hex_to_rgb_float(hex_color):
-        h = hex_color.lstrip("#")
-        return tuple(int(h[i : i + 2], 16) / 255.0 for i in (0, 2, 4))
-
-    def find_mcs_smarts(smiles_list):
-        mols = [MolFromSmiles(smi) for _, smi in smiles_list]
-        mols = [mol for mol in mols if mol is not None]
-        if len(mols) < 2:
-            return None, "⚠️ Need at least two valid SMILES to find MCS."
-
-        mcs_result = FindMCS(mols)
-        if mcs_result.canceled or not mcs_result.smartsString:
-            return None, "⚠️ Could not determine MCS."
-
-        return mcs_result.smartsString, None
-
-    return find_mcs_smarts, hex_to_rgb_float, parse_input
-
-
-@app.cell
-def _(
-    Compute2DCoords,
-    MolDraw2DSVG,
+def py_generate_html(
     MolFromSmarts,
-    MolFromSmiles,
     cycle,
     defaultdict,
     hex_to_rgb_float,
@@ -218,44 +252,6 @@ def _(
         mol = MolFromSmarts(smarts)
         if mol:
             parsed_smarts.append((name, smarts, mol, hex_to_rgb_float(color)))
-
-    def render_molecule(name, smi, smarts_mols, match_counter):
-        mol = MolFromSmiles(smi)
-        if not mol:
-            return (
-                f"<div style='color:red;'>🚫 Invalid SMILES: <code>{smi}</code></div>"
-            )
-
-        Compute2DCoords(mol)
-        atom_ids, colors, tooltips = [], {}, []
-
-        for s_name, smarts, smarts_mol, color in smarts_mols:
-            matches = mol.GetSubstructMatches(smarts_mol)
-            if matches:
-                for match in matches:
-                    atom_ids.extend(match)
-                    for idx in match:
-                        colors[idx] = color
-                tooltips.append(f"✅ {s_name}: {len(matches)} match(es)")
-                match_counter[s_name] += 1
-
-        drawer = MolDraw2DSVG(200, 200)
-        drawer.DrawMolecule(mol, highlightAtoms=atom_ids, highlightAtomColors=colors)
-        drawer.FinishDrawing()
-
-        label = (
-            f"<strong>{name}</strong><br><code>{smi}</code>"
-            if name != smi
-            else f"<code>{smi}</code>"
-        )
-
-        return (
-            "<div style='display:inline-block; margin:12px; text-align:center; "
-            "border:1px solid #eee; padding:10px; border-radius:8px; "
-            "box-shadow: 2px 2px 5px rgba(0,0,0,0.1);'>"
-            f"{drawer.GetDrawingText()}<br>{label}<br>"
-            f"<small>{'<br>'.join(tooltips)}</small></div>"
-        )
 
     match_counter = defaultdict(int)
 
@@ -299,7 +295,7 @@ def _(
 
 
 @app.cell
-def _(html, mo):
+def html(html, mo):
     mo.Html(html)
     return
 
