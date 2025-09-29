@@ -7,9 +7,10 @@
 #     "numpy==2.3.0"
 # ]
 # ///
+
 import marimo
 
-__generated_with = "0.10.9"
+__generated_with = "0.16.3"
 app = marimo.App(width="medium")
 
 with app.setup:
@@ -49,7 +50,7 @@ def _():
         )
     )
     chart
-    return chart
+    return (chart,)
 
 
 @app.cell
