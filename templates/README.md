@@ -1,10 +1,15 @@
+---
+title: Readme
+marimo-version: 0.17.0
+---
+
 # Template Documentation
 
 ## Overview
 
-This directory contains Jinja2 templates used by the build 
-script to generate HTML pages for the marimo WebAssembly + GitHub Pages project. 
-Templates define the structure and appearance of the generated pages, 
+This directory contains Jinja2 templates used by the build
+script to generate HTML pages for the marimo WebAssembly + GitHub Pages project.
+Templates define the structure and appearance of the generated pages,
 particularly the index page that lists all notebooks and apps.
 
 ## Template Requirements
@@ -84,7 +89,7 @@ This repository includes three example templates:
 
 ## Best Practices
 
-1. **Styling**: 
+1. **Styling**:
    - Include CSS directly in the template using `<style>` tags for simplicity, or
    - Use Tailwind CSS via CDN for a utility-first approach without custom CSS
 2. **Responsive Design**: Ensure the template works well on different screen sizes

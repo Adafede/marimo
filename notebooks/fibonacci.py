@@ -4,9 +4,10 @@
 #     "marimo==0.13.15",
 # ]
 # ///
+
 import marimo
 
-__generated_with = "0.10.6"
+__generated_with = "0.17.0"
 app = marimo.App()
 
 with app.setup:
@@ -30,13 +31,14 @@ def _():
     # Create an interactive slider
     n = mo.ui.slider(1, 100, value=50, label="Number of Fibonacci numbers")
     n
-    return n
+    return (n,)
 
 
 @app.cell
 def _(n):
     fib = fibonacci(n.value)
     mo.md(", ".join([str(f) for f in fib]))
+    return
 
 
 @app.function
