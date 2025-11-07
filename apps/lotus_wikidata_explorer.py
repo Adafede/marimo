@@ -2,6 +2,7 @@
 # requires-python = ">=3.12"
 # dependencies = [
 #     "marimo",
+#     "astral==3.2",
 #     "polars==1.35.1",
 #     "sparqlwrapper==2.0.0",
 #     "pyarrow>=14.0.0",
@@ -20,43 +21,38 @@ with app.setup:
     from datetime import datetime
     from SPARQLWrapper import SPARQLWrapper, JSON
     from urllib.parse import quote
+    from typing import Optional, Dict, List, Any
+    from dataclasses import dataclass
+    from functools import lru_cache
+    from astral import LocationInfo
+    from astral.sun import sun
+
+    # ========================================================================
+    # CONFIGURATION
+    # ========================================================================
+
+    USER_AGENT = "LOTUS Explorer/0.0.1"
+    MAX_RETRIES = 3
+    RETRY_BACKOFF = 2
+    QUERY_LIMIT = 1000000
+    DEFAULT_PAGE_SIZE = 15
+    EXPORT_PAGE_SIZE = 25
+
+    THEMES = {
+        "light": {
+            "cdk_base": "https://www.simolecule.com/cdkdepict/depict/cow/svg",
+            "link_color": "#1a73e8",
+        },
+        "dark": {
+            "cdk_base": "https://www.simolecule.com/cdkdepict/depict/cob/svg",
+            "link_color": "#8ab4f8",
+        },
+    }
 
 
 @app.function
-def execute_sparql(
-    query: str, user_agent: str = "LOTUS Explorer/2.0", max_retries: int = 3
-) -> dict:
-    """Execute SPARQL query with retry logic"""
-    sparql = SPARQLWrapper("https://query.wikidata.org/sparql")
-    sparql.setQuery(query)
-    sparql.setReturnFormat(JSON)
-    sparql.addCustomHttpHeader("User-Agent", user_agent)
-
-    for attempt in range(max_retries):
-        try:
-            return sparql.query().convert()
-        except Exception as e:
-            if attempt == max_retries - 1:
-                raise Exception(f"Query failed after {max_retries} attempts: {str(e)}")
-            time.sleep(2**attempt)
-
-
-@app.function
-def extract_qid(url: str) -> str:
-    """Extract QID from Wikidata URL"""
-    return url.replace("http://www.wikidata.org/entity/", "")
-
-
-@app.function
-def create_structure_image_url(smiles: str) -> str:
-    """Create CDK Depict image URL from SMILES"""
-    return f"https://www.simolecule.com/cdkdepict/depict/bot/svg?smi={quote(smiles)}&annotate=cip"
-
-
-@app.function
-def taxon_name_to_qid(taxon_name: str) -> str | None:
-    """Get Wikidata QID from taxon name"""
-    query = f"""
+def build_taxon_search_query(taxon_name: str) -> str:
+    return f"""
     SELECT ?item WHERE {{
       SERVICE wikibase:mwapi {{
         bd:serviceParam wikibase:endpoint "www.wikidata.org";
@@ -71,44 +67,10 @@ def taxon_name_to_qid(taxon_name: str) -> str | None:
     }}
     """
 
-    try:
-        results = execute_sparql(query)
-        bindings = results.get("results", {}).get("bindings", [])
-        if bindings:
-            return extract_qid(bindings[0].get("item", {}).get("value", ""))
-    except Exception:
-        pass
-    return None
-
 
 @app.function
-def get_binding_value(binding: dict, key: str, default: str = "") -> str:
-    """Safely extract value from SPARQL binding"""
-    return binding.get(key, {}).get("value", default)
-
-
-@app.function
-def create_link(url, text):
-    # Use a deep blue for light mode (good contrast against white)
-    # Use a brighter, more saturated blue for dark mode (good contrast against dark grey)
-    light_mode_color = "#0b68cb"  # Deep Blue
-    dark_mode_color = "#479bf5"  # Brighter Blue
-
-    # This CSS variable or function isn't natively supported in all browser contexts
-    # so we'll apply a standard color for simplicity in the current implementation,
-    # A standard, accessible blue like #007AFF works well across both.
-    accessible_blue = "#007AFF"
-    return mo.Html(
-        f'<a href="{url}" target="_blank"><span style="color: {accessible_blue};">{text}</span></a>'
-    )
-
-
-@app.function
-def query_wikidata(
-    qid: str, year_start: int | None = None, year_end: int | None = None
-) -> pl.DataFrame:
-    """Query Wikidata for natural products"""
-    query = f"""
+def build_compounds_query(qid: str) -> str:
+    return f"""
     SELECT DISTINCT ?structure ?structureLabel ?inchikey ?smiles_iso ?smiles_conn
                    ?taxon_name ?taxon ?ref_title ?ref_doi ?ref_qid ?pub_date
     WHERE {{
@@ -130,55 +92,248 @@ def query_wikidata(
       }}
       SERVICE wikibase:label {{ bd:serviceParam wikibase:language "[AUTO_LANGUAGE],en". }}
     }}
-    LIMIT 100000
+    LIMIT {QUERY_LIMIT}
     """
 
+
+@app.function
+def execute_sparql(query: str, max_retries: int = MAX_RETRIES) -> Dict[str, Any]:
+    sparql = SPARQLWrapper("https://query.wikidata.org/sparql")
+    sparql.setQuery(query)
+    sparql.setReturnFormat(JSON)
+    sparql.addCustomHttpHeader("User-Agent", USER_AGENT)
+
+    for attempt in range(max_retries):
+        try:
+            return sparql.query().convert()
+        except Exception as e:
+            if attempt == max_retries - 1:
+                raise Exception(f"Query failed after {max_retries} attempts: {str(e)}")
+            time.sleep(RETRY_BACKOFF**attempt)
+
+
+@app.function
+@lru_cache(maxsize=128)
+def extract_qid(url: str) -> str:
+    return url.replace("http://www.wikidata.org/entity/", "")
+
+
+@app.cell
+def get_user_location(requests):
+    def get_user_location() -> dict:
+        """Get user's geolocation data via ipapi.co"""
+        try:
+            resp = requests.get("https://ipapi.co/json/", timeout=5)
+            if resp.status_code == 200:
+                data = resp.json()
+                return {
+                    "latitude": data.get("latitude", 0.0),
+                    "longitude": data.get("longitude", 0.0),
+                    "timezone": data.get("timezone", "UTC"),
+                }
+        except Exception:
+            pass
+        # Fallback to UTC if API fails
+        return {"latitude": 0.0, "longitude": 0.0, "timezone": "UTC"}
+    return (get_user_location,)
+
+
+@app.cell
+def get_theme_by_geo(get_user_location):
+    @lru_cache(maxsize=1)
+    def get_theme_by_geo() -> dict:
+        """Determine theme (day/night) dynamically from geolocation and Astral"""
+        loc = get_user_location()
+        city = LocationInfo(
+            latitude=loc["latitude"], longitude=loc["longitude"], timezone=loc["timezone"]
+        )
+        s = sun(city.observer, date=datetime.now())
+        now = datetime.now(s["sunrise"].tzinfo)
+
+        if s["sunrise"] <= now < s["sunset"]:
+            return THEMES["light"]
+        else:
+            return THEMES["dark"]
+    return (get_theme_by_geo,)
+
+
+@app.cell
+def create_structure_image_url(get_theme_by_geo):
+    @lru_cache(maxsize=1024)
+    def create_structure_image_url(smiles: str) -> str:
+        theme = get_theme_by_geo()
+        encoded_smiles = quote(smiles)
+        return f"{theme['cdk_base']}?smi={encoded_smiles}&annotate=cip"
+    return (create_structure_image_url,)
+
+
+@app.function
+def taxon_name_to_qid(taxon_name: str) -> Optional[str]:
+    try:
+        query = build_taxon_search_query(taxon_name)
+        results = execute_sparql(query)
+        bindings = results.get("results", {}).get("bindings", [])
+        if bindings:
+            return extract_qid(bindings[0].get("item", {}).get("value", ""))
+    except Exception:
+        pass
+    return None
+
+
+@app.function
+def get_binding_value(binding: Dict[str, Any], key: str, default: str = "") -> str:
+    return binding.get(key, {}).get("value", default)
+
+
+@app.cell
+def create_link(get_theme_by_geo):
+    def create_link(url: str, text: str) -> mo.Html:
+        theme = get_theme_by_geo()
+        return mo.Html(
+            f'<a href="{url}" target="_blank" rel="noopener noreferrer" '
+            f'style="color: {theme["link_color"]}; text-decoration: none; '
+            f'border-bottom: 1px solid transparent; transition: border-color 0.2s;" '
+            f'onmouseover="this.style.borderColor=\'{theme["link_color"]}\'" '
+            f'onmouseout="this.style.borderColor=\'transparent\'">{text}</a>'
+        )
+    return (create_link,)
+
+
+@app.function
+def apply_year_filter(
+    df: pl.DataFrame, year_start: Optional[int], year_end: Optional[int]
+) -> pl.DataFrame:
+    if year_start is None or year_end is None or "pub_date" not in df.columns:
+        return df
+    return df.filter(
+        pl.col("pub_date").is_null()
+        | (
+            (pl.col("pub_date").dt.year() >= year_start)
+            & (pl.col("pub_date").dt.year() <= year_end)
+        )
+    )
+
+
+@app.function
+def query_wikidata(
+    qid: str, year_start: Optional[int] = None, year_end: Optional[int] = None
+) -> pl.DataFrame:
+    query = build_compounds_query(qid)
     results = execute_sparql(query)
     bindings = results.get("results", {}).get("bindings", [])
 
     if not bindings:
         return pl.DataFrame()
 
-    rows = [
-        {
-            "structure": get_binding_value(b, "structure"),
-            "name": get_binding_value(b, "structureLabel"),
-            "inchikey": get_binding_value(b, "inchikey"),
-            "smiles": get_binding_value(b, "smiles_iso")
-            or get_binding_value(b, "smiles_conn"),
-            "taxon_name": get_binding_value(b, "taxon_name"),
-            "taxon": get_binding_value(b, "taxon"),
-            "ref_title": get_binding_value(b, "ref_title"),
-            "ref_doi": get_binding_value(b, "ref_doi"),
-            "reference": get_binding_value(b, "ref_qid"),
-            "pub_date": get_binding_value(b, "pub_date"),
-        }
-        for b in bindings
-    ]
-
-    df = pl.DataFrame(rows)
-
-    # Apply year filter if specified
-    if year_start is not None and year_end is not None and "pub_date" in df.columns:
-        df = (
-            df.with_columns(
-                [
-                    pl.col("pub_date")
-                    .str.slice(0, 4)
-                    .cast(pl.Int32, strict=False)
-                    .alias("year")
-                ]
-            )
-            .filter(
-                pl.col("year").is_null()
-                | ((pl.col("year") >= year_start) & (pl.col("year") <= year_end))
-            )
-            .drop("year")
+    rows = []
+    for b in bindings:
+        pub_date_raw = get_binding_value(b, "pub_date", None)
+        rows.append(
+            {
+                "structure": get_binding_value(b, "structure"),
+                "name": get_binding_value(b, "structureLabel"),
+                "inchikey": get_binding_value(b, "inchikey"),
+                "smiles": get_binding_value(b, "smiles_iso")
+                or get_binding_value(b, "smiles_conn"),
+                "taxon_name": get_binding_value(b, "taxon_name"),
+                "taxon": get_binding_value(b, "taxon"),
+                "ref_title": get_binding_value(b, "ref_title"),
+                "ref_doi": get_binding_value(b, "ref_doi"),
+                "reference": get_binding_value(b, "ref_qid"),
+                "pub_date": pub_date_raw,
+            }
         )
 
-    # Remove duplicates and sort
+    df = pl.DataFrame(rows)
+    # Convert pub_date to datetime safely
+    # Convert pub_date to proper date
+    df = df.with_columns(
+        pl.when(pl.col("pub_date").is_not_null())
+        .then(
+            pl.col("pub_date").str.strptime(
+                pl.Datetime, format="%Y-%m-%dT%H:%M:%SZ", strict=False
+            )
+        )
+        .otherwise(None)
+        .alias("pub_date")
+    )
+    df = df.with_columns(pl.col("pub_date").dt.date())
+    df = apply_year_filter(df, year_start, year_end)
     return df.unique(subset=["structure", "taxon", "reference"], keep="first").sort(
         "name"
+    )
+
+
+@app.cell
+def create_display_row(create_link, create_structure_image_url):
+    def create_display_row(row: Dict[str, str]) -> Dict[str, Any]:
+        img_url = create_structure_image_url(row["smiles"])
+        struct_qid = extract_qid(row["structure"])
+        taxon_qid = extract_qid(row["taxon"])
+        ref_qid = extract_qid(row["reference"])
+        ref_title = row["ref_title"] or "—"
+        doi = row["ref_doi"]
+
+        # Build hyperlinks
+        struct_link = (
+            create_link(f"https://www.wikidata.org/wiki/{struct_qid}", struct_qid)
+            if struct_qid
+            else "—"
+        )
+        taxon_link = (
+            create_link(f"https://www.wikidata.org/wiki/{taxon_qid}", taxon_qid)
+            if taxon_qid
+            else "—"
+        )
+        ref_link = (
+            create_link(f"https://www.wikidata.org/wiki/{ref_qid}", ref_qid)
+            if ref_qid
+            else "—"
+        )
+        doi_link = create_link(f"https://doi.org/{doi}", doi) if doi else "—"
+
+        return {
+            "2D Depiction": mo.image(src=img_url),
+            "Compound": row["name"],
+            "Compound SMILES": row["smiles"],
+            "Compound InChIKey": row["inchikey"],
+            "Taxon": row["taxon_name"],
+            "Reference title": ref_title,
+            "Reference DOI": doi_link,
+            "Compound QID": struct_link,
+            "Taxon QID": taxon_link,
+            "Reference QID": ref_link,
+        }
+    return (create_display_row,)
+
+
+@app.function
+def prepare_export_dataframe(df: pl.DataFrame) -> pl.DataFrame:
+    return df.with_columns(
+        [
+            pl.col("structure")
+            .str.replace("http://www.wikidata.org/entity/", "", literal=True)
+            .alias("compound_qid"),
+            pl.col("taxon")
+            .str.replace("http://www.wikidata.org/entity/", "", literal=True)
+            .alias("taxon_qid"),
+            pl.col("reference")
+            .str.replace("http://www.wikidata.org/entity/", "", literal=True)
+            .alias("reference_qid"),
+        ]
+    ).select(
+        [
+            pl.col("name").alias("compound_name"),
+            pl.col("smiles").alias("compound_smiles"),
+            pl.col("inchikey").alias("compound_inchikey"),
+            pl.col("taxon_name"),
+            pl.col("ref_title").alias("reference_title"),
+            pl.col("ref_doi").alias("reference_doi"),
+            pl.col("pub_date").alias("reference_date"),
+            "compound_qid",
+            "taxon_qid",
+            "reference_qid",
+        ]
     )
 
 
@@ -197,33 +352,51 @@ def _():
 
 @app.cell
 def _():
+    current_year = datetime.now().year
+
     taxon_input = mo.ui.text(
-        value="Swertia",
-        label="Taxon name",
-        placeholder="e.g., Swertia, Artemisia, Cannabis",
+        value="Gentiana lutea",
+        label="🔬 Taxon name",
+        placeholder="e.g., Swertia, ...",
+        full_width=True,
     )
 
-    current_year = datetime.now().year
+    year_filter = mo.ui.checkbox(label="📅 Filter by publication year", value=False)
+
     year_start = mo.ui.number(
-        value=1900, start=1700, stop=current_year, label="Start year"
+        value=1900,
+        start=1700,
+        stop=current_year,
+        label="Start year",
+        full_width=True,
     )
+
     year_end = mo.ui.number(
-        value=current_year, start=1700, stop=current_year, label="End year"
+        value=current_year,
+        start=1700,
+        stop=current_year,
+        label="End year",
+        full_width=True,
     )
-    year_filter = mo.ui.checkbox(label="Filter by publication year", value=False)
 
     run_button = mo.ui.run_button(label="🔍 Search Wikidata")
+    return run_button, taxon_input, year_end, year_filter, year_start
 
+
+@app.cell
+def _(run_button, taxon_input, year_end, year_filter, year_start):
     mo.vstack(
         [
             mo.md("## Search Parameters"),
-            mo.hstack(
-                [taxon_input, year_start, year_end, year_filter], gap=2, widths="equal"
-            ),
+            taxon_input,
+            mo.hstack([year_filter], justify="start"),
+            mo.hstack([year_start, year_end], gap=2, widths="equal")
+            if year_filter.value
+            else mo.Html(""),
             run_button,
         ]
     )
-    return run_button, taxon_input, year_end, year_filter, year_start
+    return
 
 
 @app.cell
@@ -232,14 +405,19 @@ def _(run_button, taxon_input, year_end, year_filter, year_start):
         results_df = None
         qid = None
     else:
-        with mo.status.spinner(title=f"Querying Wikidata for {taxon_input.value}..."):
+        with mo.status.spinner(
+            title=f"🔎 Querying Wikidata for {taxon_input.value}..."
+        ):
             qid = taxon_name_to_qid(taxon_input.value)
 
             if not qid:
                 mo.stop(
                     True,
-                    mo.md(
-                        f"**Error:** Could not find '{taxon_input.value}' in Wikidata"
+                    mo.callout(
+                        mo.md(
+                            f"**Taxon not found:** Could not find '{taxon_input.value}' in Wikidata. Please check the spelling or try a different taxonomic name."
+                        ),
+                        kind="warn",
                     ),
                 )
 
@@ -248,18 +426,24 @@ def _(run_button, taxon_input, year_end, year_filter, year_start):
                 y_end = year_end.value if year_filter.value else None
                 results_df = query_wikidata(qid, y_start, y_end)
             except Exception as e:
-                mo.stop(True, mo.md(f"**Error:** {str(e)}"))
+                mo.stop(
+                    True,
+                    mo.callout(
+                        mo.md(f"**Query Error:** {str(e)}"),
+                        kind="danger",
+                    ),
+                )
     return qid, results_df
 
 
 @app.cell
-def _(qid, results_df, run_button, taxon_input):
+def _(create_link, qid, results_df, run_button, taxon_input):
     if not run_button.value or results_df is None:
-        summary_display = mo.md("")
+        summary_display = mo.Html("")
     elif len(results_df) == 0:
         summary_display = mo.callout(
             mo.md(
-                f"No natural products found for **{taxon_input.value}** (QID: {qid})"
+                f"No natural products found for **{taxon_input.value}** ([{qid}](https://www.wikidata.org/wiki/{qid})) with the current filters."
             ),
             kind="warn",
         )
@@ -268,27 +452,35 @@ def _(qid, results_df, run_button, taxon_input):
         n_taxa = results_df.n_unique(subset=["taxon"])
         n_refs = results_df.n_unique(subset=["reference"])
 
+        # Choose singular/plural dynamically
+        compound_label = "🧪 Compound" if n_compounds == 1 else "🧪 Compounds"
+        taxon_label = "🌱 Taxon" if n_taxa == 1 else "🌱 Taxa"
+        reference_label = "📚 Reference" if n_refs == 1 else "📚 References"
+        entry_label = "📝 Entry" if len(results_df) == 1 else "📝 Entries"
+
         summary_display = mo.vstack(
             [
                 mo.md(f"""
             ## Results Summary
 
-            Found data for **{taxon_input.value}** ([{qid}](https://www.wikidata.org/wiki/{qid}))
+            Found data for **{taxon_input.value}** {create_link(f"https://www.wikidata.org/wiki/{qid}", f"({qid})")}
             """),
                 mo.hstack(
                     [
                         mo.stat(
-                            value=str(n_compounds), label="Compounds", bordered=True
+                            value=str(n_compounds), label=compound_label, bordered=True
                         ),
-                        mo.stat(value=str(n_taxa), label="Taxa", bordered=True),
-                        mo.stat(value=str(n_refs), label="References", bordered=True),
+                        mo.stat(value=str(n_taxa), label=taxon_label, bordered=True),
                         mo.stat(
-                            value=str(len(results_df)),
-                            label="Total Entries",
-                            bordered=True,
+                            value=str(n_refs), label=reference_label, bordered=True
+                        ),
+                        mo.stat(
+                            value=str(len(results_df)), label=entry_label, bordered=True
                         ),
                     ],
                     gap=2,
+                    justify="start",
+                    wrap=True,
                 ),
             ]
         )
@@ -298,112 +490,40 @@ def _(qid, results_df, run_button, taxon_input):
 
 
 @app.cell
-def _(results_df, run_button):
-    if run_button.value and results_df is not None and len(results_df) > 0:
-        search_box = mo.ui.text(
-            label="Filter compounds",
-            placeholder="Search by name (e.g., 'acid', 'glycoside')...",
-        )
-        mo.md(f"## 🔬 Compound Browser\n\n{search_box}")
-    else:
-        search_box = None
-    return (search_box,)
-
-
-@app.cell
-def _(results_df, run_button, search_box):
-    if not run_button.value or results_df is None or len(results_df) == 0:
-        filtered_df = None
-    else:
-        filtered_df = results_df
-        if search_box and search_box.value:
-            filtered_df = filtered_df.filter(
-                pl.col("name").str.to_lowercase().str.contains(search_box.value.lower())
-            )
-    return (filtered_df,)
-
-
-@app.cell
-def _(filtered_df, run_button):
-    if not run_button.value or filtered_df is None or len(filtered_df) == 0:
+def _(create_display_row, results_df, run_button):
+    if not run_button.value or results_df is None:
         table_output = None
+    elif len(results_df) == 0:
+        table_output = mo.callout(
+            mo.md("No compounds match your search criteria."),
+            kind="neutral",
+        )
     else:
-        # Create display table with images (limited for performance)
-        display_data = []
-        for _row in filtered_df.iter_rows(named=True):
-            _img_url = create_structure_image_url(_row["smiles"])
-            _struct_qid = extract_qid(_row["structure"])
-            _taxon_qid = extract_qid(_row["taxon"])
-            _reference_qid = extract_qid(_row["reference"])
+        # Create display table with
+        display_data = [
+            create_display_row(row) for row in results_df.iter_rows(named=True)
+        ]
 
-            display_data.append(
-                {
-                    "2D Depiction": mo.image(src=_img_url),
-                    "Compound name": _row["name"],
-                    "Compound SMILES": _row["smiles"],
-                    "Compound InChIKey": _row["inchikey"],
-                    "Taxon name": _row["taxon_name"],
-                    "Reference title": _row["ref_title"][:50] + "..."
-                    if _row["ref_title"] and len(_row["ref_title"]) > 50
-                    else _row["ref_title"],
-                    "Reference DOI": create_link(
-                        f'https://doi.org/{_row["ref_doi"]}', _row["ref_doi"]
-                    )
-                    if _row["ref_doi"]
-                    else "",
-                    "Compound QID": create_link(_row["structure"], _struct_qid),
-                    "Taxon QID": create_link(_row["taxon"], _taxon_qid),
-                    "Reference QID": create_link(_row["reference"], _reference_qid),
-                }
-            )
-
-        display_table = mo.ui.table(display_data, selection=None, page_size=10)
-
-        # Create export table (all data, CSV-ready) - use native Polars operations
-        export_df = filtered_df.with_columns(
-            [
-                pl.col("structure")
-                .str.replace("http://www.wikidata.org/entity/", "", literal=True)
-                .alias("compound_qid"),
-                pl.col("taxon")
-                .str.replace("http://www.wikidata.org/entity/", "", literal=True)
-                .alias("taxon_qid"),
-                pl.col("reference")
-                .str.replace("http://www.wikidata.org/entity/", "", literal=True)
-                .alias("reference_qid"),
-            ]
-        ).select(
-            [
-                pl.col("name").alias("compound_name"),
-                pl.col("smiles").alias("compound_smiles"),
-                pl.col("inchikey").alias("compound_inchikey"),
-                pl.col("taxon_name").alias("taxon_name"),
-                pl.col("ref_title").alias("reference_title"),
-                pl.col("ref_doi").alias("reference_doi"),
-                "compound_qid",
-                "taxon_qid",
-                "reference_qid",
-            ]
+        display_table = mo.ui.table(
+            display_data,
+            selection=None,
+            page_size=DEFAULT_PAGE_SIZE,
+            show_column_summaries=False,
         )
 
+        # Create export table
+        export_df = prepare_export_dataframe(results_df)
         export_table = mo.ui.table(
             export_df,
             selection=None,
-            page_size=20,
-            style_cell=lambda row, col, selected: {
-                "white-space": "nowrap",
-                "overflow": "hidden",
-                "text-overflow": "ellipsis",
-                "max-width": "200px",
-            },
+            page_size=EXPORT_PAGE_SIZE,
+            show_column_summaries=False,
         )
 
         table_output = mo.vstack(
             [
-                mo.md(f"""
-            ## Compounds Table
-            """),
-                mo.ui.tabs({"Display": display_table, "Export": export_table}),
+                mo.md(f"### Data Tables"),
+                mo.ui.tabs({"🖼️  Display": display_table, "📥 Export": export_table}),
             ]
         )
 
@@ -415,7 +535,7 @@ def _(filtered_df, run_button):
 def _():
     mo.md("""
     ---
-    **Data:** [LOTUS](https://www.wikidata.org/wiki/Q104225190) & [Wikidata](https://www.wikidata.org/) ([CC0](https://creativecommons.org/publicdomain/zero/1.0/)) | 
+    **Data:** [LOTUS Initiative](https://www.wikidata.org/wiki/Q104225190) & [Wikidata](https://www.wikidata.org/) ([CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/)) | 
     **Structure Rendering:** [CDK Depict](https://github.com/cdk/depict) | 
     **Code:** [GPL-3.0](https://www.gnu.org/licenses/gpl-3.0.html)
     """)
