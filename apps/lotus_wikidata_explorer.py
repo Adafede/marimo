@@ -294,9 +294,9 @@ def prepare_export_dataframe(df: pl.DataFrame) -> pl.DataFrame:
 @app.cell
 def _():
     mo.md("""
-    # 🌿 LOTUS Wikidata Natural Products Explorer
+    # 🌿 LOTUS Wikidata Explorer
 
-    Explore natural products from [LOTUS](https://doi.org/10.7554/eLife.70780) and 
+    Explore chemical compounds from [LOTUS](https://doi.org/10.7554/eLife.70780) and 
     [Wikidata](https://www.wikidata.org/) for any taxon.
 
     Enter a taxon name to discover chemical compounds found in organisms of that taxonomic group.
