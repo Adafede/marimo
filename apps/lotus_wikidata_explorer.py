@@ -2,11 +2,10 @@
 # requires-python = ">=3.12"
 # dependencies = [
 #     "marimo",
-#     "astral>=3.2",
-#     "polars>=1.35.1",
-#     "pyarrow>=22.0.0",
-#     "sparqlwrapper>=2.0.0",
-#     "requests>=2.32.5",
+#     "astral==3.2",
+#     "polars==1.35.1",
+#     "pyarrow==22.0.0",
+#     "sparqlwrapper==2.0.0",
 # ]
 # [tool.marimo.display]
 # theme = "system"
@@ -20,10 +19,7 @@ app = marimo.App(width="full", app_title="LOTUS Wikidata Explorer")
 with app.setup:
     import marimo as mo
     import polars as pl
-    import requests
     import time
-    from astral import LocationInfo
-    from astral.sun import sun
     from datetime import datetime
     from functools import lru_cache
     from typing import Optional, Dict, Any
@@ -35,23 +31,14 @@ with app.setup:
     # ====================================================================
 
     CONFIG = {
-        "user_agent": "LOTUS Explorer/0.0.1",
+        "cdk_base": "https://www.simolecule.com/cdkdepict/depict/cot/svg",
+        "color_hyperlink": "#006699",
         "max_retries": 3,
-        "retry_backoff": 2,
-        "query_limit": 1_000_000,
         "page_size_default": 15,
         "page_size_export": 25,
-    }
-
-    THEMES = {
-        "light": {
-            "cdk_base": "https://www.simolecule.com/cdkdepict/depict/cow/svg",
-            "link_color": "#1a73e8",
-        },
-        "dark": {
-            "cdk_base": "https://www.simolecule.com/cdkdepict/depict/cob/svg",
-            "link_color": "#8ab4f8",
-        },
+        "query_limit": 1_000_000,
+        "retry_backoff": 2,
+        "user_agent": "LOTUS Explorer/0.0.1",
     }
 
     # Shared SPARQL instance
@@ -127,50 +114,12 @@ def extract_qid(url: str) -> str:
 
 
 @app.function
-@lru_cache(maxsize=1)
-def get_user_location() -> dict:
-    """Get user's geolocation data via ipapi.co"""
-    try:
-        resp = requests.get("https://ipapi.co/json/", timeout=5)
-        if resp.status_code == 200:
-            data = resp.json()
-            return {
-                "latitude": data.get("latitude", 0.0),
-                "longitude": data.get("longitude", 0.0),
-                "timezone": data.get("timezone", "UTC"),
-            }
-    except Exception:
-        pass
-    # Fallback to UTC if API fails
-    return {"latitude": 0.0, "longitude": 0.0, "timezone": "UTC"}
-
-
-@app.function
-@lru_cache(maxsize=1)
-def get_theme_by_geo() -> dict:
-    """Determine theme (day/night) dynamically from geolocation and Astral"""
-    try:
-        loc = get_user_location()
-        city = LocationInfo(
-            latitude=loc["latitude"],
-            longitude=loc["longitude"],
-            timezone=loc["timezone"],
-        )
-        s = sun(city.observer, date=datetime.now())
-        now = datetime.now(s["sunrise"].tzinfo)
-        return THEMES["light"] if s["sunrise"] <= now < s["sunset"] else THEMES["dark"]
-    except Exception:
-        return THEMES["light"]
-
-
-@app.function
 @lru_cache(maxsize=1024)
 def create_structure_image_url(smiles: str) -> str:
     if not smiles:
         return "https://via.placeholder.com/120x120?text=No+SMILES"
-    theme = get_theme_by_geo()
     encoded_smiles = quote(smiles)
-    return f"{theme['cdk_base']}?smi={encoded_smiles}&annotate=cip"
+    return f"{CONFIG['cdk_base']}?smi={encoded_smiles}&annotate=cip"
 
 
 @app.function
@@ -193,8 +142,7 @@ def get_binding_value(binding: Dict[str, Any], key: str, default: str = "") -> s
 
 @app.function
 def create_link(url: str, text: str) -> mo.Html:
-    theme = get_theme_by_geo()
-    color = theme["link_color"]
+    color = CONFIG["color_hyperlink"]
     safe_text = text or url or ""
     safe_url = url or "#"
     return mo.Html(
@@ -536,9 +484,10 @@ def _():
     mo.md(
         """
     ---
-    **Data Source:** [LOTUS Initiative](https://www.wikidata.org/wiki/Q104225190) & [Wikidata](https://www.wikidata.org/) • [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/)  
-    **Structure Rendering:** [CDK Depict](https://github.com/cdk/depict)  
-    **Code:** [GPL-3.0](https://www.gnu.org/licenses/gpl-3.0.html)    
+    **Data:** <a href="https://www.wikidata.org/wiki/Q104225190" style="color:#990000;">LOTUS Initiative</a> & <a href="https://www.wikidata.org/" style="color:#990000;">Wikidata</a>  |  
+    **Code:** <a href="https://github.com/cdk/depict" style="color:#339966;">CDK Depict</a> & 
+    <a href="https://github.com/Adafede/marimo/blob/main/apps/lotus_wikidata_explorer.py" style="color:#339966;">lotus_wikidata_explorer.py</a>  |  
+    **License:** <a href="https://creativecommons.org/publicdomain/zero/1.0/" style="color:#006699;">CC0 1.0</a> for data & <a href="https://www.gnu.org/licenses/gpl-3.0.html" style="color:#006699;">GPL-3.0</a> for code
     """
     )
     return

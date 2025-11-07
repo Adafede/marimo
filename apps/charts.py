@@ -4,8 +4,11 @@
 #     "marimo==0.13.15",
 #     "altair==4.2.0",
 #     "pandas==2.3.0",
-#     "numpy==2.3.0"
+#     "pyarrow==22.0.0",
+#     "numpy==2.3.0",
 # ]
+# [tool.marimo.display]
+# theme = "system"
 # ///
 
 import marimo
