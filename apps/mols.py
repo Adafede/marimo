@@ -96,9 +96,7 @@ def render_molecule(name, smi, smarts_mols, match_counter):
             match_counter[s_name] += 1
 
     drawer = MolDraw2DSVG(200, 200)
-    drawer.DrawMolecule(
-        mol, highlightAtoms=atom_ids, highlightAtomColors=colors
-    )
+    drawer.DrawMolecule(mol, highlightAtoms=atom_ids, highlightAtomColors=colors)
     drawer.FinishDrawing()
 
     label = (
@@ -186,8 +184,7 @@ def input_smarts():
 def input_toggle(smarts_input):
     smarts_list = parse_input(smarts_input.value)
     toggles = {
-        smarts: mo.ui.switch(value=True, label=name)
-        for name, smarts in smarts_list
+        smarts: mo.ui.switch(value=True, label=name) for name, smarts in smarts_list
     }
 
     mo.md("## Toggle SMARTS Highlights")
