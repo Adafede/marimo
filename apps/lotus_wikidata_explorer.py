@@ -8,6 +8,8 @@
 #     "sparqlwrapper>=2.0.0",
 #     "requests>=2.32.5",
 # ]
+# [tool.marimo.display]
+# theme = "system"
 # ///
 
 import marimo
