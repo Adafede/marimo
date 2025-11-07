@@ -2,10 +2,11 @@
 # requires-python = ">=3.12"
 # dependencies = [
 #     "marimo",
-#     "astral==3.2",
-#     "polars==1.35.1",
-#     "sparqlwrapper==2.0.0",
-#     "pyarrow>=14.0.0",
+#     "astral>=3.2",
+#     "polars>=1.35.1",
+#     "pyarrow>=22.0.0",
+#     "sparqlwrapper>=2.0.0",
+#     "requests>=2.32.5",
 # ]
 # ///
 
@@ -17,26 +18,28 @@ app = marimo.App(width="full", app_title="LOTUS Wikidata Explorer")
 with app.setup:
     import marimo as mo
     import polars as pl
+    import requests
     import time
-    from datetime import datetime
-    from SPARQLWrapper import SPARQLWrapper, JSON
-    from urllib.parse import quote
-    from typing import Optional, Dict, List, Any
-    from dataclasses import dataclass
-    from functools import lru_cache
     from astral import LocationInfo
     from astral.sun import sun
+    from datetime import datetime
+    from functools import lru_cache
+    from typing import Optional, Dict, Any
+    from urllib.parse import quote
+    from SPARQLWrapper import SPARQLWrapper, JSON
 
-    # ========================================================================
+    # ====================================================================
     # CONFIGURATION
-    # ========================================================================
+    # ====================================================================
 
-    USER_AGENT = "LOTUS Explorer/0.0.1"
-    MAX_RETRIES = 3
-    RETRY_BACKOFF = 2
-    QUERY_LIMIT = 1000000
-    DEFAULT_PAGE_SIZE = 15
-    EXPORT_PAGE_SIZE = 25
+    CONFIG = {
+        "user_agent": "LOTUS Explorer/0.0.1",
+        "max_retries": 3,
+        "retry_backoff": 2,
+        "query_limit": 1_000_000,
+        "page_size_default": 15,
+        "page_size_export": 25,
+    }
 
     THEMES = {
         "light": {
@@ -48,6 +51,11 @@ with app.setup:
             "link_color": "#8ab4f8",
         },
     }
+
+    # Shared SPARQL instance
+    SPARQL = SPARQLWrapper("https://query.wikidata.org/sparql")
+    SPARQL.setReturnFormat(JSON)
+    SPARQL.addCustomHttpHeader("User-Agent", CONFIG["user_agent"])
 
 
 @app.function
@@ -92,24 +100,22 @@ def build_compounds_query(qid: str) -> str:
       }}
       SERVICE wikibase:label {{ bd:serviceParam wikibase:language "[AUTO_LANGUAGE],en". }}
     }}
-    LIMIT {QUERY_LIMIT}
+    LIMIT {CONFIG["query_limit"]}
     """
 
 
 @app.function
-def execute_sparql(query: str, max_retries: int = MAX_RETRIES) -> Dict[str, Any]:
-    sparql = SPARQLWrapper("https://query.wikidata.org/sparql")
-    sparql.setQuery(query)
-    sparql.setReturnFormat(JSON)
-    sparql.addCustomHttpHeader("User-Agent", USER_AGENT)
-
+def execute_sparql(
+    query: str, max_retries: int = CONFIG["max_retries"]
+) -> Dict[str, Any]:
     for attempt in range(max_retries):
         try:
-            return sparql.query().convert()
+            SPARQL.setQuery(query)
+            return SPARQL.query().convert()
         except Exception as e:
             if attempt == max_retries - 1:
                 raise Exception(f"Query failed after {max_retries} attempts: {str(e)}")
-            time.sleep(RETRY_BACKOFF**attempt)
+            time.sleep(CONFIG["retry_backoff"] * (2**attempt))
 
 
 @app.function
@@ -118,53 +124,51 @@ def extract_qid(url: str) -> str:
     return url.replace("http://www.wikidata.org/entity/", "")
 
 
-@app.cell
-def get_user_location(requests):
-    def get_user_location() -> dict:
-        """Get user's geolocation data via ipapi.co"""
-        try:
-            resp = requests.get("https://ipapi.co/json/", timeout=5)
-            if resp.status_code == 200:
-                data = resp.json()
-                return {
-                    "latitude": data.get("latitude", 0.0),
-                    "longitude": data.get("longitude", 0.0),
-                    "timezone": data.get("timezone", "UTC"),
-                }
-        except Exception:
-            pass
-        # Fallback to UTC if API fails
-        return {"latitude": 0.0, "longitude": 0.0, "timezone": "UTC"}
-    return (get_user_location,)
+@app.function
+@lru_cache(maxsize=1)
+def get_user_location() -> dict:
+    """Get user's geolocation data via ipapi.co"""
+    try:
+        resp = requests.get("https://ipapi.co/json/", timeout=5)
+        if resp.status_code == 200:
+            data = resp.json()
+            return {
+                "latitude": data.get("latitude", 0.0),
+                "longitude": data.get("longitude", 0.0),
+                "timezone": data.get("timezone", "UTC"),
+            }
+    except Exception:
+        pass
+    # Fallback to UTC if API fails
+    return {"latitude": 0.0, "longitude": 0.0, "timezone": "UTC"}
 
 
-@app.cell
-def get_theme_by_geo(get_user_location):
-    @lru_cache(maxsize=1)
-    def get_theme_by_geo() -> dict:
-        """Determine theme (day/night) dynamically from geolocation and Astral"""
+@app.function
+@lru_cache(maxsize=1)
+def get_theme_by_geo() -> dict:
+    """Determine theme (day/night) dynamically from geolocation and Astral"""
+    try:
         loc = get_user_location()
         city = LocationInfo(
-            latitude=loc["latitude"], longitude=loc["longitude"], timezone=loc["timezone"]
+            latitude=loc["latitude"],
+            longitude=loc["longitude"],
+            timezone=loc["timezone"],
         )
         s = sun(city.observer, date=datetime.now())
         now = datetime.now(s["sunrise"].tzinfo)
-
-        if s["sunrise"] <= now < s["sunset"]:
-            return THEMES["light"]
-        else:
-            return THEMES["dark"]
-    return (get_theme_by_geo,)
+        return THEMES["light"] if s["sunrise"] <= now < s["sunset"] else THEMES["dark"]
+    except Exception:
+        return THEMES["light"]
 
 
-@app.cell
-def create_structure_image_url(get_theme_by_geo):
-    @lru_cache(maxsize=1024)
-    def create_structure_image_url(smiles: str) -> str:
-        theme = get_theme_by_geo()
-        encoded_smiles = quote(smiles)
-        return f"{theme['cdk_base']}?smi={encoded_smiles}&annotate=cip"
-    return (create_structure_image_url,)
+@app.function
+@lru_cache(maxsize=1024)
+def create_structure_image_url(smiles: str) -> str:
+    if not smiles:
+        return "https://via.placeholder.com/120x120?text=No+SMILES"
+    theme = get_theme_by_geo()
+    encoded_smiles = quote(smiles)
+    return f"{theme['cdk_base']}?smi={encoded_smiles}&annotate=cip"
 
 
 @app.function
@@ -185,18 +189,19 @@ def get_binding_value(binding: Dict[str, Any], key: str, default: str = "") -> s
     return binding.get(key, {}).get("value", default)
 
 
-@app.cell
-def create_link(get_theme_by_geo):
-    def create_link(url: str, text: str) -> mo.Html:
-        theme = get_theme_by_geo()
-        return mo.Html(
-            f'<a href="{url}" target="_blank" rel="noopener noreferrer" '
-            f'style="color: {theme["link_color"]}; text-decoration: none; '
-            f'border-bottom: 1px solid transparent; transition: border-color 0.2s;" '
-            f'onmouseover="this.style.borderColor=\'{theme["link_color"]}\'" '
-            f'onmouseout="this.style.borderColor=\'transparent\'">{text}</a>'
-        )
-    return (create_link,)
+@app.function
+def create_link(url: str, text: str) -> mo.Html:
+    theme = get_theme_by_geo()
+    color = theme["link_color"]
+    safe_text = text or url or ""
+    safe_url = url or "#"
+    return mo.Html(
+        f'<a href="{safe_url}" target="_blank" rel="noopener noreferrer" '
+        f'style="color: {color}; text-decoration: none; '
+        f'border-bottom: 1px solid transparent; transition: border-color 0.2s;" '
+        f"onmouseover=\"this.style.borderColor='{color}'\" "
+        f"onmouseout=\"this.style.borderColor='transparent'\">{safe_text}</a>"
+    )
 
 
 @app.function
@@ -221,13 +226,16 @@ def query_wikidata(
     query = build_compounds_query(qid)
     results = execute_sparql(query)
     bindings = results.get("results", {}).get("bindings", [])
-
     if not bindings:
         return pl.DataFrame()
 
     rows = []
     for b in bindings:
         pub_date_raw = get_binding_value(b, "pub_date", None)
+        doi = get_binding_value(b, "ref_doi")
+        if doi and doi.startswith("http"):
+            doi = doi.split("doi.org/")[-1]
+
         rows.append(
             {
                 "structure": get_binding_value(b, "structure"),
@@ -238,15 +246,13 @@ def query_wikidata(
                 "taxon_name": get_binding_value(b, "taxon_name"),
                 "taxon": get_binding_value(b, "taxon"),
                 "ref_title": get_binding_value(b, "ref_title"),
-                "ref_doi": get_binding_value(b, "ref_doi"),
+                "ref_doi": doi,
                 "reference": get_binding_value(b, "ref_qid"),
                 "pub_date": pub_date_raw,
             }
         )
 
     df = pl.DataFrame(rows)
-    # Convert pub_date to datetime safely
-    # Convert pub_date to proper date
     df = df.with_columns(
         pl.when(pl.col("pub_date").is_not_null())
         .then(
@@ -264,47 +270,45 @@ def query_wikidata(
     )
 
 
-@app.cell
-def create_display_row(create_link, create_structure_image_url):
-    def create_display_row(row: Dict[str, str]) -> Dict[str, Any]:
-        img_url = create_structure_image_url(row["smiles"])
-        struct_qid = extract_qid(row["structure"])
-        taxon_qid = extract_qid(row["taxon"])
-        ref_qid = extract_qid(row["reference"])
-        ref_title = row["ref_title"] or "—"
-        doi = row["ref_doi"]
+@app.function
+def create_display_row(row: Dict[str, str]) -> Dict[str, Any]:
+    img_url = create_structure_image_url(row["smiles"])
+    struct_qid = extract_qid(row["structure"])
+    taxon_qid = extract_qid(row["taxon"])
+    ref_qid = extract_qid(row["reference"])
+    ref_title = row["ref_title"] or "—"
+    doi = row["ref_doi"]
 
-        # Build hyperlinks
-        struct_link = (
-            create_link(f"https://www.wikidata.org/wiki/{struct_qid}", struct_qid)
-            if struct_qid
-            else "—"
-        )
-        taxon_link = (
-            create_link(f"https://www.wikidata.org/wiki/{taxon_qid}", taxon_qid)
-            if taxon_qid
-            else "—"
-        )
-        ref_link = (
-            create_link(f"https://www.wikidata.org/wiki/{ref_qid}", ref_qid)
-            if ref_qid
-            else "—"
-        )
-        doi_link = create_link(f"https://doi.org/{doi}", doi) if doi else "—"
+    # Build hyperlinks
+    struct_link = (
+        create_link(f"https://www.wikidata.org/wiki/{struct_qid}", struct_qid)
+        if struct_qid
+        else "—"
+    )
+    taxon_link = (
+        create_link(f"https://www.wikidata.org/wiki/{taxon_qid}", taxon_qid)
+        if taxon_qid
+        else "—"
+    )
+    ref_link = (
+        create_link(f"https://www.wikidata.org/wiki/{ref_qid}", ref_qid)
+        if ref_qid
+        else "—"
+    )
+    doi_link = create_link(f"https://doi.org/{doi}", doi) if doi else "—"
 
-        return {
-            "2D Depiction": mo.image(src=img_url),
-            "Compound": row["name"],
-            "Compound SMILES": row["smiles"],
-            "Compound InChIKey": row["inchikey"],
-            "Taxon": row["taxon_name"],
-            "Reference title": ref_title,
-            "Reference DOI": doi_link,
-            "Compound QID": struct_link,
-            "Taxon QID": taxon_link,
-            "Reference QID": ref_link,
-        }
-    return (create_display_row,)
+    return {
+        "2D Depiction": mo.image(src=img_url),
+        "Compound": row["name"],
+        "Compound SMILES": row["smiles"],
+        "Compound InChIKey": row["inchikey"],
+        "Taxon": row["taxon_name"],
+        "Reference title": ref_title,
+        "Reference DOI": doi_link,
+        "Compound QID": struct_link,
+        "Taxon QID": taxon_link,
+        "Reference QID": ref_link,
+    }
 
 
 @app.function
@@ -345,7 +349,7 @@ def _():
     Explore natural products from [LOTUS](https://doi.org/10.7554/eLife.70780) and 
     [Wikidata](https://www.wikidata.org/) for any taxon.
 
-    Enter a taxon name to discover all associated natural products and their biological sources.
+    Enter a taxon name to discover chemical compounds found in organisms of that taxonomic group.
     """)
     return
 
@@ -357,18 +361,14 @@ def _():
     taxon_input = mo.ui.text(
         value="Gentiana lutea",
         label="🔬 Taxon name",
-        placeholder="e.g., Swertia, ...",
+        placeholder="e.g., Swertia, Artemisia, Homo sapiens, ...",
         full_width=True,
     )
 
     year_filter = mo.ui.checkbox(label="📅 Filter by publication year", value=False)
 
     year_start = mo.ui.number(
-        value=1900,
-        start=1700,
-        stop=current_year,
-        label="Start year",
-        full_width=True,
+        value=1900, start=1700, stop=current_year, label="Start year", full_width=True
     )
 
     year_end = mo.ui.number(
@@ -405,17 +405,16 @@ def _(run_button, taxon_input, year_end, year_filter, year_start):
         results_df = None
         qid = None
     else:
-        with mo.status.spinner(
-            title=f"🔎 Querying Wikidata for {taxon_input.value}..."
-        ):
-            qid = taxon_name_to_qid(taxon_input.value)
-
+        taxon_name = taxon_input.value.strip()
+        start_time = time.time()
+        with mo.status.spinner(title=f"🔎 Querying Wikidata for {taxon_name}..."):
+            qid = taxon_name_to_qid(taxon_name)
             if not qid:
                 mo.stop(
                     True,
                     mo.callout(
                         mo.md(
-                            f"**Taxon not found:** Could not find '{taxon_input.value}' in Wikidata. Please check the spelling or try a different taxonomic name."
+                            f"**Taxon not found:** Could not find '{taxon_name}' in Wikidata. Please check the spelling or try a different taxonomic name."
                         ),
                         kind="warn",
                     ),
@@ -427,23 +426,21 @@ def _(run_button, taxon_input, year_end, year_filter, year_start):
                 results_df = query_wikidata(qid, y_start, y_end)
             except Exception as e:
                 mo.stop(
-                    True,
-                    mo.callout(
-                        mo.md(f"**Query Error:** {str(e)}"),
-                        kind="danger",
-                    ),
+                    True, mo.callout(mo.md(f"**Query Error:** {str(e)}"), kind="danger")
                 )
+        elapsed = round(time.time() - start_time, 2)
+        mo.md(f"⏱️ Query completed in **{elapsed}s**.")
     return qid, results_df
 
 
 @app.cell
-def _(create_link, qid, results_df, run_button, taxon_input):
+def _(qid, results_df, run_button, taxon_input):
     if not run_button.value or results_df is None:
         summary_display = mo.Html("")
     elif len(results_df) == 0:
         summary_display = mo.callout(
             mo.md(
-                f"No natural products found for **{taxon_input.value}** ([{qid}](https://www.wikidata.org/wiki/{qid})) with the current filters."
+                f"No natural products found for **{taxon_input.value}** ({create_link(f'https://www.wikidata.org/wiki/{qid}', qid)}) with the current filters."
             ),
             kind="warn",
         )
@@ -460,11 +457,13 @@ def _(create_link, qid, results_df, run_button, taxon_input):
 
         summary_display = mo.vstack(
             [
-                mo.md(f"""
+                mo.md(
+                    f"""
             ## Results Summary
 
-            Found data for **{taxon_input.value}** {create_link(f"https://www.wikidata.org/wiki/{qid}", f"({qid})")}
-            """),
+            Found data for **{taxon_input.value}** {create_link(f"https://www.wikidata.org/wiki/{qid}", qid)}
+            """
+                ),
                 mo.hstack(
                     [
                         mo.stat(
@@ -490,16 +489,15 @@ def _(create_link, qid, results_df, run_button, taxon_input):
 
 
 @app.cell
-def _(create_display_row, results_df, run_button):
+def _(results_df, run_button):
     if not run_button.value or results_df is None:
         table_output = None
     elif len(results_df) == 0:
         table_output = mo.callout(
-            mo.md("No compounds match your search criteria."),
-            kind="neutral",
+            mo.md("No compounds match your search criteria."), kind="neutral"
         )
     else:
-        # Create display table with
+        # Create display table
         display_data = [
             create_display_row(row) for row in results_df.iter_rows(named=True)
         ]
@@ -507,22 +505,22 @@ def _(create_display_row, results_df, run_button):
         display_table = mo.ui.table(
             display_data,
             selection=None,
-            page_size=DEFAULT_PAGE_SIZE,
+            page_size=CONFIG["page_size_default"],
             show_column_summaries=False,
         )
 
-        # Create export table
+        # Create export table (preserves pub_date as actual date)
         export_df = prepare_export_dataframe(results_df)
         export_table = mo.ui.table(
             export_df,
             selection=None,
-            page_size=EXPORT_PAGE_SIZE,
+            page_size=CONFIG["page_size_export"],
             show_column_summaries=False,
         )
 
         table_output = mo.vstack(
             [
-                mo.md(f"### Data Tables"),
+                mo.md("### Data Tables"),
                 mo.ui.tabs({"🖼️  Display": display_table, "📥 Export": export_table}),
             ]
         )
@@ -533,12 +531,14 @@ def _(create_display_row, results_df, run_button):
 
 @app.cell
 def _():
-    mo.md("""
+    mo.md(
+        """
     ---
-    **Data:** [LOTUS Initiative](https://www.wikidata.org/wiki/Q104225190) & [Wikidata](https://www.wikidata.org/) ([CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/)) | 
-    **Structure Rendering:** [CDK Depict](https://github.com/cdk/depict) | 
-    **Code:** [GPL-3.0](https://www.gnu.org/licenses/gpl-3.0.html)
-    """)
+    **Data Source:** [LOTUS Initiative](https://www.wikidata.org/wiki/Q104225190) & [Wikidata](https://www.wikidata.org/) • [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/)  
+    **Structure Rendering:** [CDK Depict](https://github.com/cdk/depict)  
+    **Code:** [GPL-3.0](https://www.gnu.org/licenses/gpl-3.0.html)    
+    """
+    )
     return
 
 
