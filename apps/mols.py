@@ -4,6 +4,8 @@
 #     "marimo",
 #     "rdkit==2025.3.3",
 # ]
+# [tool.marimo.display]
+# theme = "system"
 # ///
 
 import marimo
@@ -258,7 +260,7 @@ def py_generate_html(smarts_input, smi_input, submit_button, toggles):
 
         summary_html = (
             "<div style='margin: 16px auto; padding:12px 16px; max-width:800px; "
-            "background: #fafafa; border: 1px solid #ddd; border-radius: 8px; "
+            "border: 1px solid #ddd; border-radius: 8px; "
             "box-shadow: 1px 1px 5px rgba(0,0,0,0.05); font-family: sans-serif;'>"
             "<div style='font-weight:bold; font-size:1.1em; margin-bottom:8px;'>🔎 SMARTS Match Summary</div>"
             + "".join(summary_items)
