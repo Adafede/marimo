@@ -417,7 +417,7 @@ def _():
     ---
     **Data:** [LOTUS](https://www.wikidata.org/wiki/Q104225190) & [Wikidata](https://www.wikidata.org/) ([CC0](https://creativecommons.org/publicdomain/zero/1.0/)) | 
     **Structure Rendering:** [CDK Depict](https://github.com/cdk/depict) | 
-    **Code:** [GPL-3.0](https://www.gnu.org/licenses/gpl-3.0.html) | 
+    **Code:** [GPL-3.0](https://www.gnu.org/licenses/gpl-3.0.html)
     """)
     return
 
