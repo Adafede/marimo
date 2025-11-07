@@ -386,7 +386,17 @@ def _(filtered_df, run_button):
             ]
         )
 
-        export_table = mo.ui.table(export_df, selection=None, page_size=20)
+        export_table = mo.ui.table(
+            export_df,
+            selection=None,
+            page_size=20,
+            style_cell=lambda row, col, selected: {
+                "white-space": "nowrap",
+                "overflow": "hidden",
+                "text-overflow": "ellipsis",
+                "max-width": "200px",
+            },
+        )
 
         table_output = mo.vstack(
             [
