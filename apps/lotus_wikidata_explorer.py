@@ -19,6 +19,7 @@ app = marimo.App(width="full", app_title="LOTUS Wikidata Explorer")
 with app.setup:
     import marimo as mo
     import polars as pl
+    import re
     import time
     from datetime import datetime
     from functools import lru_cache
@@ -45,6 +46,11 @@ with app.setup:
     SPARQL = SPARQLWrapper("https://query.wikidata.org/sparql")
     SPARQL.setReturnFormat(JSON)
     SPARQL.addCustomHttpHeader("User-Agent", CONFIG["user_agent"])
+
+    # Subscript translation map (constant for performance)
+    SUBSCRIPT_MAP = str.maketrans("₀₁₂₃₄₅₆₇₈₉", "0123456789")
+    # Regex pattern for molecular formula parsing (compiled once)
+    FORMULA_PATTERN = re.compile(r"([A-Z][a-z]?)(\d*)")
 
 
 @app.function
@@ -99,6 +105,7 @@ def build_compounds_query(qid: str) -> str:
 def execute_sparql(
     query: str, max_retries: int = CONFIG["max_retries"]
 ) -> Dict[str, Any]:
+    """Execute SPARQL query with retry logic and exponential backoff."""
     for attempt in range(max_retries):
         try:
             SPARQL.setQuery(query)
@@ -106,7 +113,10 @@ def execute_sparql(
         except Exception as e:
             if attempt == max_retries - 1:
                 raise Exception(f"Query failed after {max_retries} attempts: {str(e)}")
-            time.sleep(CONFIG["retry_backoff"] * (2**attempt))
+            wait_time = CONFIG["retry_backoff"] * (2**attempt)
+            time.sleep(wait_time)
+    # This line should never be reached, but satisfies type checker
+    raise Exception("Unexpected error in execute_sparql")
 
 
 @app.function
@@ -193,6 +203,7 @@ def get_binding_value(binding: Dict[str, Any], key: str, default: str = "") -> s
 
 @app.function
 def create_link(url: str, text: str) -> mo.Html:
+    """Create a styled hyperlink."""
     color = CONFIG["color_hyperlink"]
     safe_text = text or url or ""
     safe_url = url or "#"
@@ -203,6 +214,18 @@ def create_link(url: str, text: str) -> mo.Html:
         f"onmouseover=\"this.style.borderColor='{color}'\" "
         f"onmouseout=\"this.style.borderColor='transparent'\">{safe_text}</a>"
     )
+
+
+@app.function
+def create_wikidata_link(qid: str) -> mo.Html:
+    """Create a Wikidata link for a QID."""
+    return create_link(f"https://www.wikidata.org/wiki/{qid}", qid) if qid else mo.Html("—")
+
+
+@app.function
+def pluralize(singular: str, count: int) -> str:
+    """Return singular or plural form based on count."""
+    return singular if count == 1 else f"{singular}s"
 
 
 @app.function
@@ -233,29 +256,24 @@ def apply_mass_filter(
 
 
 @app.function
-def parse_molecular_formula(formula: str) -> Dict[str, int]:
-    """Parse molecular formula and extract atom counts."""
-    import re
-
+@lru_cache(maxsize=1024)
+def parse_molecular_formula(formula: str) -> tuple:
+    """Parse molecular formula and extract atom counts. Returns tuple for caching."""
     if not formula:
-        return {}
+        return ()
 
-    # Map Unicode subscript digits to regular digits
-    subscript_map = str.maketrans("₀₁₂₃₄₅₆₇₈₉", "0123456789")
-
-    # Convert subscript numbers to regular numbers
-    normalized_formula = formula.translate(subscript_map)
+    # Normalize formula by converting subscripts to regular numbers
+    normalized_formula = formula.translate(SUBSCRIPT_MAP)
 
     # Pattern to match element followed by optional number
-    pattern = r"([A-Z][a-z]?)(\d*)"
-    matches = re.findall(pattern, normalized_formula)
+    matches = FORMULA_PATTERN.findall(normalized_formula)
 
-    atom_counts = {}
-    for element, count in matches:
-        if element:
-            atom_counts[element] = int(count) if count else 1
-
-    return atom_counts
+    # Return tuple of (element, count) pairs for immutability and caching
+    return tuple(
+        (element, int(count) if count else 1)
+        for element, count in matches
+        if element
+    )
 
 
 @app.function
@@ -290,50 +308,36 @@ def formula_matches_criteria(
         return True  # Keep entries without formula
 
     # Normalize formula by converting subscripts to regular numbers
-    subscript_map = str.maketrans("₀₁₂₃₄₅₆₇₈₉", "0123456789")
-    normalized_formula = formula.translate(subscript_map)
+    normalized_formula = formula.translate(SUBSCRIPT_MAP)
 
     # If exact formula is specified, check for exact match
     if exact_formula and exact_formula.strip():
-        normalized_exact = exact_formula.strip().translate(subscript_map)
+        normalized_exact = exact_formula.strip().translate(SUBSCRIPT_MAP)
         return normalized_formula == normalized_exact
 
-    # Parse the formula
-    atoms = parse_molecular_formula(formula)
+    # Parse the formula (cached)
+    atom_tuple = parse_molecular_formula(formula)
+    atoms = dict(atom_tuple)
 
     # Check main elements ranges
-    checks = [
+    for element, min_val, max_val in [
         ("C", c_min, c_max),
         ("H", h_min, h_max),
         ("N", n_min, n_max),
         ("O", o_min, o_max),
         ("P", p_min, p_max),
         ("S", s_min, s_max),
-    ]
-
-    for element, min_val, max_val in checks:
+    ]:
         if min_val is not None or max_val is not None:
             count = atoms.get(element, 0)
-            if min_val is not None and count < min_val:
-                return False
-            if max_val is not None and count > max_val:
+            if (min_val is not None and count < min_val) or (max_val is not None and count > max_val):
                 return False
 
     # Check halogens with state-based logic
-    halogen_checks = [
-        ("F", f_state),
-        ("Cl", cl_state),
-        ("Br", br_state),
-        ("I", i_state),
-    ]
-
-    for halogen, state in halogen_checks:
+    for halogen, state in [("F", f_state), ("Cl", cl_state), ("Br", br_state), ("I", i_state)]:
         count = atoms.get(halogen, 0)
-        if state == "required" and count == 0:
+        if (state == "required" and count == 0) or (state == "excluded" and count > 0):
             return False
-        elif state == "excluded" and count > 0:
-            return False
-        # "allowed" state has no restrictions
 
     return True
 
@@ -369,49 +373,24 @@ def apply_formula_filter(
         and all(
             v is None
             for v in [
-                c_min,
-                c_max,
-                h_min,
-                h_max,
-                n_min,
-                n_max,
-                o_min,
-                o_max,
-                p_min,
-                p_max,
-                s_min,
-                s_max,
+                c_min, c_max, h_min, h_max, n_min, n_max,
+                o_min, o_max, p_min, p_max, s_min, s_max,
             ]
         )
         and all(state == "allowed" for state in [f_state, cl_state, br_state, i_state])
     ):
         return df
 
-    # Apply filter row by row
-    mask = []
-    for row in df.iter_rows(named=True):
-        formula = row.get("mf", "")
-        matches = formula_matches_criteria(
-            formula,
-            exact_formula,
-            c_min,
-            c_max,
-            h_min,
-            h_max,
-            n_min,
-            n_max,
-            o_min,
-            o_max,
-            p_min,
-            p_max,
-            s_min,
-            s_max,
-            f_state,
-            cl_state,
-            br_state,
-            i_state,
+    # Apply filter with list comprehension (faster than loop + append)
+    mask = [
+        formula_matches_criteria(
+            row.get("mf", ""),
+            exact_formula, c_min, c_max, h_min, h_max, n_min, n_max,
+            o_min, o_max, p_min, p_max, s_min, s_max,
+            f_state, cl_state, br_state, i_state,
         )
-        mask.append(matches)
+        for row in df.iter_rows(named=True)
+    ]
 
     return df.filter(pl.Series(mask))
 
@@ -444,105 +423,65 @@ def query_wikidata(
     query = build_compounds_query(qid)
     results = execute_sparql(query)
     bindings = results.get("results", {}).get("bindings", [])
+
     if not bindings:
         return pl.DataFrame()
 
-    rows = []
-    for b in bindings:
-        pub_date_raw = get_binding_value(b, "pub_date", None)
-        doi = get_binding_value(b, "ref_doi")
-        if doi and doi.startswith("http"):
-            doi = doi.split("doi.org/")[-1]
-
-        mass_raw = get_binding_value(b, "mass", None)
-        mass = float(mass_raw) if mass_raw else None
-
-        rows.append(
-            {
-                "structure": get_binding_value(b, "structure"),
-                "name": get_binding_value(b, "structureLabel"),
-                "inchikey": get_binding_value(b, "inchikey"),
-                "smiles": get_binding_value(b, "smiles_iso")
-                or get_binding_value(b, "smiles_conn"),
-                "taxon_name": get_binding_value(b, "taxon_name"),
-                "taxon": get_binding_value(b, "taxon"),
-                "ref_title": get_binding_value(b, "ref_title"),
-                "ref_doi": doi,
-                "reference": get_binding_value(b, "ref_qid"),
-                "pub_date": pub_date_raw,
-                "mass": mass,
-                "mf": get_binding_value(b, "mf"),
-            }
-        )
+    # Process results more efficiently
+    rows = [
+        {
+            "structure": get_binding_value(b, "structure"),
+            "name": get_binding_value(b, "structureLabel"),
+            "inchikey": get_binding_value(b, "inchikey"),
+            "smiles": get_binding_value(b, "smiles_iso") or get_binding_value(b, "smiles_conn"),
+            "taxon_name": get_binding_value(b, "taxon_name"),
+            "taxon": get_binding_value(b, "taxon"),
+            "ref_title": get_binding_value(b, "ref_title"),
+            "ref_doi": get_binding_value(b, "ref_doi").split("doi.org/")[-1]
+                if (doi := get_binding_value(b, "ref_doi")) and doi.startswith("http")
+                else get_binding_value(b, "ref_doi"),
+            "reference": get_binding_value(b, "ref_qid"),
+            "pub_date": get_binding_value(b, "pub_date", None),
+            "mass": float(mass_raw) if (mass_raw := get_binding_value(b, "mass", None)) else None,
+            "mf": get_binding_value(b, "mf"),
+        }
+        for b in bindings
+    ]
 
     df = pl.DataFrame(rows)
+
+    # Optimize date conversion with single chain
     df = df.with_columns(
         pl.when(pl.col("pub_date").is_not_null())
         .then(
             pl.col("pub_date").str.strptime(
                 pl.Datetime, format="%Y-%m-%dT%H:%M:%SZ", strict=False
-            )
+            ).dt.date()
         )
         .otherwise(None)
         .alias("pub_date")
     )
-    df = df.with_columns(pl.col("pub_date").dt.date())
 
-    # Apply filters
+    # Apply filters (only if they're active)
     df = apply_year_filter(df, year_start, year_end)
     df = apply_mass_filter(df, mass_min, mass_max)
     df = apply_formula_filter(
-        df,
-        exact_formula,
-        c_min,
-        c_max,
-        h_min,
-        h_max,
-        n_min,
-        n_max,
-        o_min,
-        o_max,
-        p_min,
-        p_max,
-        s_min,
-        s_max,
-        f_state,
-        cl_state,
-        br_state,
-        i_state,
+        df, exact_formula, c_min, c_max, h_min, h_max, n_min, n_max,
+        o_min, o_max, p_min, p_max, s_min, s_max,
+        f_state, cl_state, br_state, i_state,
     )
 
-    return df.unique(subset=["structure", "taxon", "reference"], keep="first").sort(
-        "name"
-    )
+    return df.unique(subset=["structure", "taxon", "reference"], keep="first").sort("name")
 
 
 @app.function
 def create_display_row(row: Dict[str, str]) -> Dict[str, Any]:
+    """Create a display row for the table with images and links."""
     img_url = create_structure_image_url(row["smiles"])
     struct_qid = extract_qid(row["structure"])
     taxon_qid = extract_qid(row["taxon"])
     ref_qid = extract_qid(row["reference"])
-    ref_title = row["ref_title"] or "—"
     doi = row["ref_doi"]
-
-    # Build hyperlinks
-    struct_link = (
-        create_link(f"https://www.wikidata.org/wiki/{struct_qid}", struct_qid)
-        if struct_qid
-        else "—"
-    )
-    taxon_link = (
-        create_link(f"https://www.wikidata.org/wiki/{taxon_qid}", taxon_qid)
-        if taxon_qid
-        else "—"
-    )
-    ref_link = (
-        create_link(f"https://www.wikidata.org/wiki/{ref_qid}", ref_qid)
-        if ref_qid
-        else "—"
-    )
-    doi_link = create_link(f"https://doi.org/{doi}", doi) if doi else "—"
 
     return {
         "2D Depiction": mo.image(src=img_url),
@@ -550,41 +489,35 @@ def create_display_row(row: Dict[str, str]) -> Dict[str, Any]:
         "Compound SMILES": row["smiles"],
         "Compound InChIKey": row["inchikey"],
         "Taxon": row["taxon_name"],
-        "Reference title": ref_title,
-        "Reference DOI": doi_link,
-        "Compound QID": struct_link,
-        "Taxon QID": taxon_link,
-        "Reference QID": ref_link,
+        "Reference title": row["ref_title"] or "—",
+        "Reference DOI": create_link(f"https://doi.org/{doi}", doi) if doi else mo.Html("—"),
+        "Compound QID": create_wikidata_link(struct_qid),
+        "Taxon QID": create_wikidata_link(taxon_qid),
+        "Reference QID": create_wikidata_link(ref_qid),
     }
 
 
 @app.function
 def prepare_export_dataframe(df: pl.DataFrame) -> pl.DataFrame:
-    return df.with_columns(
-        [
-            pl.col("structure")
-            .str.replace("http://www.wikidata.org/entity/", "", literal=True)
-            .alias("compound_qid"),
-            pl.col("taxon")
-            .str.replace("http://www.wikidata.org/entity/", "", literal=True)
-            .alias("taxon_qid"),
-            pl.col("reference")
-            .str.replace("http://www.wikidata.org/entity/", "", literal=True)
-            .alias("reference_qid"),
-        ]
-    ).select(
-        [
+    """Prepare dataframe for export with cleaned QIDs and selected columns."""
+    return (
+        df.with_columns([
+            pl.col("structure").str.replace("http://www.wikidata.org/entity/", "", literal=True).alias("compound_qid"),
+            pl.col("taxon").str.replace("http://www.wikidata.org/entity/", "", literal=True).alias("taxon_qid"),
+            pl.col("reference").str.replace("http://www.wikidata.org/entity/", "", literal=True).alias("reference_qid"),
+        ])
+        .select([
             pl.col("name").alias("compound_name"),
             pl.col("smiles").alias("compound_smiles"),
             pl.col("inchikey").alias("compound_inchikey"),
-            pl.col("taxon_name"),
+            "taxon_name",
             pl.col("ref_title").alias("reference_title"),
             pl.col("ref_doi").alias("reference_doi"),
             pl.col("pub_date").alias("reference_date"),
             "compound_qid",
             "taxon_qid",
             "reference_qid",
-        ]
+        ])
     )
 
 
@@ -900,9 +833,7 @@ def _(qid, results_df, run_button, taxon_input, taxon_warning):
             parts.append(mo.callout(mo.md(f"⚠️ {taxon_warning}"), kind="warn"))
         parts.append(
             mo.callout(
-                mo.md(
-                    f"No natural products found for **{taxon_input.value}** ({create_link(f'https://www.wikidata.org/wiki/{qid}', qid)}) with the current filters."
-                ),
+                mo.md(f"No natural products found for **{taxon_input.value}** ({create_wikidata_link(qid)}) with the current filters."),
                 kind="warn",
             )
         )
@@ -911,42 +842,22 @@ def _(qid, results_df, run_button, taxon_input, taxon_warning):
         n_compounds = results_df.n_unique(subset=["structure"])
         n_taxa = results_df.n_unique(subset=["taxon"])
         n_refs = results_df.n_unique(subset=["reference"])
-
-        # Choose singular/plural dynamically
-        compound_label = "🧪 Compound" if n_compounds == 1 else "🧪 Compounds"
-        taxon_label = "🌱 Taxon" if n_taxa == 1 else "🌱 Taxa"
-        reference_label = "📚 Reference" if n_refs == 1 else "📚 References"
-        entry_label = "📝 Entry" if len(results_df) == 1 else "📝 Entries"
+        n_entries = len(results_df)
 
         summary_parts = [
-            mo.md(
-                f"""
-            ## Results Summary
-
-            Found data for **{taxon_input.value}** {create_link(f"https://www.wikidata.org/wiki/{qid}", qid)}
-            """
-            ),
+            mo.md(f"## Results Summary\n\nFound data for **{taxon_input.value}** {create_wikidata_link(qid)}"),
         ]
 
-        # Add warning if there was ambiguity
         if taxon_warning:
-            summary_parts.append(
-                mo.callout(mo.md(f"⚠️ {taxon_warning}"), kind="warn")
-            )
+            summary_parts.append(mo.callout(mo.md(f"⚠️ {taxon_warning}"), kind="warn"))
 
         summary_parts.append(
             mo.hstack(
                 [
-                    mo.stat(
-                        value=str(n_compounds), label=compound_label, bordered=True
-                    ),
-                    mo.stat(value=str(n_taxa), label=taxon_label, bordered=True),
-                    mo.stat(
-                        value=str(n_refs), label=reference_label, bordered=True
-                    ),
-                    mo.stat(
-                        value=str(len(results_df)), label=entry_label, bordered=True
-                    ),
+                    mo.stat(value=str(n_compounds), label=f"🧪 {pluralize('Compound', n_compounds)}", bordered=True),
+                    mo.stat(value=str(n_taxa), label=f"🌱 {pluralize('Taxon', n_taxa)}", bordered=True),
+                    mo.stat(value=str(n_refs), label=f"📚 {pluralize('Reference', n_refs)}", bordered=True),
+                    mo.stat(value=str(n_entries), label=f"📝 {pluralize('Entry', n_entries)}", bordered=True),
                 ],
                 gap=2,
                 justify="start",
