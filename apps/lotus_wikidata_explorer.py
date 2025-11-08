@@ -1082,7 +1082,7 @@ def _():
     mo.accordion(
         {
             "🔗 URL Query API": mo.md("""
-            You can query this notebook via URL parameters!
+            You can query this notebook via URL parameters! When running locally or accessing the published version, add query parameters to automatically execute searches.
 
             ### Available Parameters
 
@@ -1100,17 +1100,25 @@ def _():
 
             ### Examples
 
-            ```
-            https://adafede.github.io/marimo/apps/lotus_wikidata_explorer.html?taxon=Swertia&mass_min=200&mass_max=600
+            #### Search by taxon name with mass filter
+
+            ```text
+            ?taxon=Swertia&mass_min=200&mass_max=600
             ```
 
-            ```
-            https://adafede.github.io/marimo/apps/lotus_wikidata_explorer.html?taxon=Q157115&year_start=2000&c_min=15&c_max=25
+            #### Search by QID with year and carbon range
+
+            ```text
+            ?taxon=Q157115&year_start=2000&c_min=15&c_max=25
             ```
 
+            #### Search excluding fluorine and requiring chlorine
+
+            ```text
+            ?taxon=Artemisia&f_state=excluded&cl_state=required
             ```
-            https://adafede.github.io/marimo/apps/lotus_wikidata_explorer.html?taxon=Artemisia&f_state=excluded&cl_state=required
-            ```
+
+            **Tip:** Copy the query parameters above and append them to your notebook URL.
             """)
         }
     )
