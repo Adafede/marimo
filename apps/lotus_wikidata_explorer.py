@@ -607,74 +607,142 @@ def _():
 
 
 @app.cell
-def _():
+def _(
+    state_br_state,
+    state_c_max,
+    state_c_min,
+    state_cl_state,
+    state_exact_formula,
+    state_f_state,
+    state_formula_filter,
+    state_h_max,
+    state_h_min,
+    state_i_state,
+    state_mass_filter,
+    state_mass_max,
+    state_mass_min,
+    state_n_max,
+    state_n_min,
+    state_o_max,
+    state_o_min,
+    state_p_max,
+    state_p_min,
+    state_s_max,
+    state_s_min,
+    state_taxon,
+    state_year_end,
+    state_year_filter,
+    state_year_start,
+):
     ## MASS FILTERS
-    mass_filter = mo.ui.checkbox(label="⚖ Filter by mass", value=False)
+    mass_filter = mo.ui.checkbox(label="⚖ Filter by mass", value=state_mass_filter)
 
     mass_min = mo.ui.number(
-        value=0, start=0, stop=10000, step=10, label="Min mass (Da)", full_width=True
+        value=state_mass_min,
+        start=0,
+        stop=10000,
+        step=10,
+        label="Min mass (Da)",
+        full_width=True,
     )
 
     mass_max = mo.ui.number(
-        value=2000, start=0, stop=10000, step=10, label="Max mass (Da)", full_width=True
+        value=state_mass_max,
+        start=0,
+        stop=10000,
+        step=10,
+        label="Max mass (Da)",
+        full_width=True,
     )
 
     ## FORMULA FILTERS
-    formula_filter = mo.ui.checkbox(label="⚛ Filter by molecular formula", value=False)
+    formula_filter = mo.ui.checkbox(
+        label="⚛ Filter by molecular formula", value=state_formula_filter
+    )
 
     exact_formula = mo.ui.text(
-        value="",
+        value=state_exact_formula,
         label="Exact formula (e.g., C15H10O5)",
         placeholder="Leave empty to use element ranges",
         full_width=True,
     )
 
-    c_min = mo.ui.number(value=None, start=0, stop=100, label="C min", full_width=True)
-    c_max = mo.ui.number(value=100, start=0, stop=100, label="C max", full_width=True)
-    h_min = mo.ui.number(value=None, start=0, stop=200, label="H min", full_width=True)
-    h_max = mo.ui.number(value=200, start=0, stop=200, label="H max", full_width=True)
-    n_min = mo.ui.number(value=None, start=0, stop=50, label="N min", full_width=True)
-    n_max = mo.ui.number(value=50, start=0, stop=50, label="N max", full_width=True)
-    o_min = mo.ui.number(value=None, start=0, stop=50, label="O min", full_width=True)
-    o_max = mo.ui.number(value=50, start=0, stop=50, label="O max", full_width=True)
-    p_min = mo.ui.number(value=None, start=0, stop=20, label="P min", full_width=True)
-    p_max = mo.ui.number(value=20, start=0, stop=20, label="P max", full_width=True)
-    s_min = mo.ui.number(value=None, start=0, stop=20, label="S min", full_width=True)
-    s_max = mo.ui.number(value=20, start=0, stop=20, label="S max", full_width=True)
+    c_min = mo.ui.number(
+        value=state_c_min, start=0, stop=100, label="C min", full_width=True
+    )
+    c_max = mo.ui.number(
+        value=state_c_max, start=0, stop=100, label="C max", full_width=True
+    )
+    h_min = mo.ui.number(
+        value=state_h_min, start=0, stop=200, label="H min", full_width=True
+    )
+    h_max = mo.ui.number(
+        value=state_h_max, start=0, stop=200, label="H max", full_width=True
+    )
+    n_min = mo.ui.number(
+        value=state_n_min, start=0, stop=50, label="N min", full_width=True
+    )
+    n_max = mo.ui.number(
+        value=state_n_max, start=0, stop=50, label="N max", full_width=True
+    )
+    o_min = mo.ui.number(
+        value=state_o_min, start=0, stop=50, label="O min", full_width=True
+    )
+    o_max = mo.ui.number(
+        value=state_o_max, start=0, stop=50, label="O max", full_width=True
+    )
+    p_min = mo.ui.number(
+        value=state_p_min, start=0, stop=20, label="P min", full_width=True
+    )
+    p_max = mo.ui.number(
+        value=state_p_max, start=0, stop=20, label="P max", full_width=True
+    )
+    s_min = mo.ui.number(
+        value=state_s_min, start=0, stop=20, label="S min", full_width=True
+    )
+    s_max = mo.ui.number(
+        value=state_s_max, start=0, stop=20, label="S max", full_width=True
+    )
 
     # Halogen selectors (allowed/required/excluded)
     halogen_options = ["allowed", "required", "excluded"]
     f_state = mo.ui.dropdown(
-        options=halogen_options, value="allowed", label="F", full_width=True
+        options=halogen_options, value=state_f_state, label="F", full_width=True
     )
     cl_state = mo.ui.dropdown(
-        options=halogen_options, value="allowed", label="Cl", full_width=True
+        options=halogen_options, value=state_cl_state, label="Cl", full_width=True
     )
     br_state = mo.ui.dropdown(
-        options=halogen_options, value="allowed", label="Br", full_width=True
+        options=halogen_options, value=state_br_state, label="Br", full_width=True
     )
     i_state = mo.ui.dropdown(
-        options=halogen_options, value="allowed", label="I", full_width=True
+        options=halogen_options, value=state_i_state, label="I", full_width=True
     )
 
     ## DATE FILTERS
     current_year = datetime.now().year
 
     taxon_input = mo.ui.text(
-        value="Gentiana lutea",
+        value=state_taxon,
         label="🔬 Taxon name or QID",
         placeholder="e.g., Swertia chirayita, Anabaena, Q157115, ...",
         full_width=True,
     )
 
-    year_filter = mo.ui.checkbox(label="⏱ Filter by publication year", value=False)
+    year_filter = mo.ui.checkbox(
+        label="⏱ Filter by publication year", value=state_year_filter
+    )
 
     year_start = mo.ui.number(
-        value=1900, start=1700, stop=current_year, label="Start year", full_width=True
+        value=state_year_start,
+        start=1700,
+        stop=current_year,
+        label="Start year",
+        full_width=True,
     )
 
     year_end = mo.ui.number(
-        value=current_year,
+        value=state_year_end,
         start=1700,
         stop=current_year,
         label="End year",
@@ -802,12 +870,14 @@ def _(
     run_button,
     s_max,
     s_min,
+    state_auto_run,
     taxon_input,
     year_end,
     year_filter,
     year_start,
 ):
-    if not run_button.value:
+    # Auto-run if URL parameters were detected, or if run button was clicked
+    if not run_button.value and not state_auto_run:
         results_df = None
         qid = None
         taxon_warning = None
@@ -895,8 +965,9 @@ def _(
 
 
 @app.cell
-def _(qid, results_df, run_button, taxon_input, taxon_warning):
-    if not run_button.value or results_df is None:
+def _(qid, results_df, run_button, state_auto_run, taxon_input, taxon_warning):
+    # Display summary if either button was clicked or auto-run from URL
+    if (not run_button.value and not state_auto_run) or results_df is None:
         summary_display = mo.Html("")
     elif len(results_df) == 0:
         # Show no compounds message, and taxon warning if present
@@ -964,8 +1035,9 @@ def _(qid, results_df, run_button, taxon_input, taxon_warning):
 
 
 @app.cell
-def _(results_df, run_button):
-    if not run_button.value or results_df is None:
+def _(results_df, run_button, state_auto_run):
+    # Display table if either button was clicked or auto-run from URL
+    if (not run_button.value and not state_auto_run) or results_df is None:
         table_output = None
     elif len(results_df) == 0:
         table_output = mo.callout(
@@ -1003,6 +1075,296 @@ def _(results_df, run_button):
 
     table_output
     return
+
+
+@app.cell
+def _():
+    mo.accordion(
+        {
+            "🔗 URL Query API": mo.md("""
+            You can query this notebook via URL parameters!
+
+            ### Available Parameters
+
+            - `taxon` - Taxon name or QID (required)
+            - `mass_min`, `mass_max` - Mass range in Daltons
+            - `year_start`, `year_end` - Publication year range
+            - `exact_formula` - Exact molecular formula (e.g., C15H10O5)
+            - `c_min`, `c_max` - Carbon count range
+            - `h_min`, `h_max` - Hydrogen count range
+            - `n_min`, `n_max` - Nitrogen count range
+            - `o_min`, `o_max` - Oxygen count range
+            - `p_min`, `p_max` - Phosphorus count range
+            - `s_min`, `s_max` - Sulfur count range
+            - `f_state`, `cl_state`, `br_state`, `i_state` - Halogen states (allowed/required/excluded)
+
+            ### Examples
+
+            ```
+            https://adafede.github.io/marimo/apps/lotus_wikidata_explorer.html?taxon=Swertia&mass_min=200&mass_max=600
+            ```
+
+            ```
+            https://adafede.github.io/marimo/apps/lotus_wikidata_explorer.html?taxon=Q157115&year_start=2000&c_min=15&c_max=25
+            ```
+
+            ```
+            https://adafede.github.io/marimo/apps/lotus_wikidata_explorer.html?taxon=Artemisia&f_state=excluded&cl_state=required
+            ```
+            """)
+        }
+    )
+    return
+
+
+@app.cell
+def _():
+    url_params = mo.query_params()
+
+    # Display URL query info if parameters are present
+    # QueryParams has keys() method, and we can access values with get()
+    if url_params and hasattr(url_params, "keys") and len(list(url_params.keys())) > 0:
+        param_list = [f"**{k}**: {url_params.get(k)}" for k in url_params.keys()]
+        mo.callout(
+            mo.md(f"""
+            ### 🔗 URL Query Detected
+
+            {chr(10).join(param_list)}
+
+            The search will auto-execute with these parameters.
+            """),
+            kind="info",
+        )
+    return (url_params,)
+
+
+@app.cell
+def _(url_params):
+    # Parse URL parameters and set defaults for the query
+    def get_url_param(key: str, default=None, param_type=str):
+        """Get URL parameter with type conversion."""
+        value = url_params.get(key)
+        if value is None:
+            return default
+        try:
+            if param_type == bool:
+                return value.lower() in ("true", "1", "yes")
+            elif param_type == int:
+                return int(value)
+            elif param_type == float:
+                return float(value)
+            else:
+                return str(value)
+        except (ValueError, AttributeError):
+            return default
+
+    # Extract all parameters from URL
+    url_taxon = get_url_param("taxon")
+    url_mass_filter = (
+        get_url_param("mass_min") is not None or get_url_param("mass_max") is not None
+    )
+    url_mass_min = get_url_param("mass_min", 0, float)
+    url_mass_max = get_url_param("mass_max", 2000, float)
+    url_year_filter = (
+        get_url_param("year_start") is not None or get_url_param("year_end") is not None
+    )
+    url_year_start = get_url_param("year_start", 1900, int)
+    url_year_end = get_url_param("year_end", 2025, int)
+    url_formula_filter = any(
+        [
+            get_url_param("exact_formula"),
+            get_url_param("c_min"),
+            get_url_param("c_max"),
+            get_url_param("h_min"),
+            get_url_param("h_max"),
+            get_url_param("n_min"),
+            get_url_param("n_max"),
+            get_url_param("o_min"),
+            get_url_param("o_max"),
+            get_url_param("p_min"),
+            get_url_param("p_max"),
+            get_url_param("s_min"),
+            get_url_param("s_max"),
+            get_url_param("f_state", "allowed") != "allowed",
+            get_url_param("cl_state", "allowed") != "allowed",
+            get_url_param("br_state", "allowed") != "allowed",
+            get_url_param("i_state", "allowed") != "allowed",
+        ]
+    )
+    url_exact_formula = get_url_param("exact_formula", "")
+    url_c_min = get_url_param("c_min", None, int)
+    url_c_max = get_url_param("c_max", 100, int)
+    url_h_min = get_url_param("h_min", None, int)
+    url_h_max = get_url_param("h_max", 200, int)
+    url_n_min = get_url_param("n_min", None, int)
+    url_n_max = get_url_param("n_max", 50, int)
+    url_o_min = get_url_param("o_min", None, int)
+    url_o_max = get_url_param("o_max", 50, int)
+    url_p_min = get_url_param("p_min", None, int)
+    url_p_max = get_url_param("p_max", 20, int)
+    url_s_min = get_url_param("s_min", None, int)
+    url_s_max = get_url_param("s_max", 20, int)
+    url_f_state = get_url_param("f_state", "allowed")
+    url_cl_state = get_url_param("cl_state", "allowed")
+    url_br_state = get_url_param("br_state", "allowed")
+    url_i_state = get_url_param("i_state", "allowed")
+
+    # Auto-trigger search if taxon is in URL
+    url_auto_search = url_taxon is not None
+    return (
+        url_auto_search,
+        url_br_state,
+        url_c_max,
+        url_c_min,
+        url_cl_state,
+        url_exact_formula,
+        url_f_state,
+        url_formula_filter,
+        url_h_max,
+        url_h_min,
+        url_i_state,
+        url_mass_filter,
+        url_mass_max,
+        url_mass_min,
+        url_n_max,
+        url_n_min,
+        url_o_max,
+        url_o_min,
+        url_p_max,
+        url_p_min,
+        url_s_max,
+        url_s_min,
+        url_taxon,
+        url_year_end,
+        url_year_filter,
+        url_year_start,
+    )
+
+
+@app.cell
+def _(
+    url_auto_search,
+    url_br_state,
+    url_c_max,
+    url_c_min,
+    url_cl_state,
+    url_exact_formula,
+    url_f_state,
+    url_formula_filter,
+    url_h_max,
+    url_h_min,
+    url_i_state,
+    url_mass_filter,
+    url_mass_max,
+    url_mass_min,
+    url_n_max,
+    url_n_min,
+    url_o_max,
+    url_o_min,
+    url_p_max,
+    url_p_min,
+    url_s_max,
+    url_s_min,
+    url_taxon,
+    url_year_end,
+    url_year_filter,
+    url_year_start,
+):
+    # Create state variables that will be used to populate the UI
+    # These are only set when URL parameters are present
+    if url_auto_search:
+        # Taxon state
+        state_taxon = url_taxon or "Gentiana lutea"
+
+        # Mass filter state
+        state_mass_filter = url_mass_filter
+        state_mass_min = url_mass_min if url_mass_filter else 0
+        state_mass_max = url_mass_max if url_mass_filter else 2000
+
+        # Year filter state
+        state_year_filter = url_year_filter
+        state_year_start = url_year_start if url_year_filter else 1900
+        state_year_end = url_year_end if url_year_filter else 2025
+
+        # Formula filter state
+        state_formula_filter = url_formula_filter
+        state_exact_formula = url_exact_formula if url_formula_filter else ""
+        state_c_min = url_c_min if url_formula_filter else None
+        state_c_max = url_c_max if url_formula_filter else 100
+        state_h_min = url_h_min if url_formula_filter else None
+        state_h_max = url_h_max if url_formula_filter else 200
+        state_n_min = url_n_min if url_formula_filter else None
+        state_n_max = url_n_max if url_formula_filter else 50
+        state_o_min = url_o_min if url_formula_filter else None
+        state_o_max = url_o_max if url_formula_filter else 50
+        state_p_min = url_p_min if url_formula_filter else None
+        state_p_max = url_p_max if url_formula_filter else 20
+        state_s_min = url_s_min if url_formula_filter else None
+        state_s_max = url_s_max if url_formula_filter else 20
+        state_f_state = url_f_state if url_formula_filter else "allowed"
+        state_cl_state = url_cl_state if url_formula_filter else "allowed"
+        state_br_state = url_br_state if url_formula_filter else "allowed"
+        state_i_state = url_i_state if url_formula_filter else "allowed"
+
+        state_auto_run = True
+
+        mo.md(f"**Auto-executing search for:** {url_taxon}")
+    else:
+        # Default states when no URL parameters
+        state_taxon = "Gentiana lutea"
+        state_mass_filter = False
+        state_mass_min = 0
+        state_mass_max = 2000
+        state_year_filter = False
+        state_year_start = 1900
+        state_year_end = 2025
+        state_formula_filter = False
+        state_exact_formula = ""
+        state_c_min = None
+        state_c_max = 100
+        state_h_min = None
+        state_h_max = 200
+        state_n_min = None
+        state_n_max = 50
+        state_o_min = None
+        state_o_max = 50
+        state_p_min = None
+        state_p_max = 20
+        state_s_min = None
+        state_s_max = 20
+        state_f_state = "allowed"
+        state_cl_state = "allowed"
+        state_br_state = "allowed"
+        state_i_state = "allowed"
+        state_auto_run = False
+    return (
+        state_auto_run,
+        state_br_state,
+        state_c_max,
+        state_c_min,
+        state_cl_state,
+        state_exact_formula,
+        state_f_state,
+        state_formula_filter,
+        state_h_max,
+        state_h_min,
+        state_i_state,
+        state_mass_filter,
+        state_mass_max,
+        state_mass_min,
+        state_n_max,
+        state_n_min,
+        state_o_max,
+        state_o_min,
+        state_p_max,
+        state_p_min,
+        state_s_max,
+        state_s_min,
+        state_taxon,
+        state_year_end,
+        state_year_filter,
+        state_year_start,
+    )
 
 
 @app.cell
