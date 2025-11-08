@@ -69,7 +69,7 @@ def build_taxon_search_query(taxon_name: str) -> str:
 def build_compounds_query(qid: str) -> str:
     return f"""
     SELECT DISTINCT ?structure ?structureLabel ?inchikey ?smiles_iso ?smiles_conn
-                   ?taxon_name ?taxon ?ref_title ?ref_doi ?ref_qid ?pub_date
+                   ?taxon_name ?taxon ?ref_title ?ref_doi ?ref_qid ?pub_date ?mass ?mf
     WHERE {{
       ?taxon (wdt:P171*) wd:{qid};
              wdt:P225 ?taxon_name. 
@@ -80,6 +80,8 @@ def build_compounds_query(qid: str) -> str:
                  prov:wasDerivedFrom ?ref.
       ?ref pr:P248 ?ref_qid.
       OPTIONAL {{ ?structure wdt:P2017 ?smiles_iso. }}
+      OPTIONAL {{ ?structure wdt:P2067 ?mass. }}
+      OPTIONAL {{ ?structure wdt:P274 ?mf. }}
       OPTIONAL {{
         SERVICE <https://query-scholarly.wikidata.org/sparql> {{
           ?ref_qid wdt:P1476 ?ref_title;
@@ -170,8 +172,166 @@ def apply_year_filter(
 
 
 @app.function
+def apply_mass_filter(
+    df: pl.DataFrame, mass_min: Optional[float], mass_max: Optional[float]
+) -> pl.DataFrame:
+    if mass_min is None or mass_max is None or "mass" not in df.columns:
+        return df
+    return df.filter(
+        pl.col("mass").is_null()
+        | ((pl.col("mass") >= mass_min) & (pl.col("mass") <= mass_max))
+    )
+
+
+@app.function
+def parse_molecular_formula(formula: str) -> Dict[str, int]:
+    """Parse molecular formula and extract atom counts."""
+    import re
+    if not formula:
+        return {}
+
+    # Map Unicode subscript digits to regular digits
+    subscript_map = str.maketrans('₀₁₂₃₄₅₆₇₈₉', '0123456789')
+
+    # Convert subscript numbers to regular numbers
+    normalized_formula = formula.translate(subscript_map)
+
+    # Pattern to match element followed by optional number
+    pattern = r'([A-Z][a-z]?)(\d*)'
+    matches = re.findall(pattern, normalized_formula)
+
+    atom_counts = {}
+    for element, count in matches:
+        if element:
+            atom_counts[element] = int(count) if count else 1
+
+    return atom_counts
+
+
+@app.function
+def formula_matches_criteria(
+    formula: str,
+    exact_formula: Optional[str],
+    c_min: Optional[int], c_max: Optional[int],
+    h_min: Optional[int], h_max: Optional[int],
+    n_min: Optional[int], n_max: Optional[int],
+    o_min: Optional[int], o_max: Optional[int],
+    p_min: Optional[int], p_max: Optional[int],
+    s_min: Optional[int], s_max: Optional[int],
+    f_state: str, cl_state: str, br_state: str, i_state: str
+) -> bool:
+    """Check if a molecular formula matches the specified criteria.
+
+    Halogen states can be:
+    - "allowed": no restriction (default)
+    - "required": must be present (count > 0)
+    - "excluded": must not be present (count = 0)
+    """
+    if not formula:
+        return True  # Keep entries without formula
+
+    # Normalize formula by converting subscripts to regular numbers
+    subscript_map = str.maketrans('₀₁₂₃₄₅₆₇₈₉', '0123456789')
+    normalized_formula = formula.translate(subscript_map)
+
+    # If exact formula is specified, check for exact match
+    if exact_formula and exact_formula.strip():
+        normalized_exact = exact_formula.strip().translate(subscript_map)
+        return normalized_formula == normalized_exact
+
+    # Parse the formula
+    atoms = parse_molecular_formula(formula)
+
+    # Check main elements ranges
+    checks = [
+        ('C', c_min, c_max),
+        ('H', h_min, h_max),
+        ('N', n_min, n_max),
+        ('O', o_min, o_max),
+        ('P', p_min, p_max),
+        ('S', s_min, s_max),
+    ]
+
+    for element, min_val, max_val in checks:
+        if min_val is not None or max_val is not None:
+            count = atoms.get(element, 0)
+            if min_val is not None and count < min_val:
+                return False
+            if max_val is not None and count > max_val:
+                return False
+
+    # Check halogens with state-based logic
+    halogen_checks = [
+        ('F', f_state),
+        ('Cl', cl_state),
+        ('Br', br_state),
+        ('I', i_state),
+    ]
+
+    for halogen, state in halogen_checks:
+        count = atoms.get(halogen, 0)
+        if state == "required" and count == 0:
+            return False
+        elif state == "excluded" and count > 0:
+            return False
+        # "allowed" state has no restrictions
+
+    return True
+
+
+@app.function
+def apply_formula_filter(
+    df: pl.DataFrame,
+    exact_formula: Optional[str],
+    c_min: Optional[int], c_max: Optional[int],
+    h_min: Optional[int], h_max: Optional[int],
+    n_min: Optional[int], n_max: Optional[int],
+    o_min: Optional[int], o_max: Optional[int],
+    p_min: Optional[int], p_max: Optional[int],
+    s_min: Optional[int], s_max: Optional[int],
+    f_state: str, cl_state: str, br_state: str, i_state: str
+) -> pl.DataFrame:
+    """Apply molecular formula filters to the dataframe."""
+    if "mf" not in df.columns:
+        return df
+
+    # If no filter is specified, return as is
+    if (exact_formula is None or not exact_formula.strip()) and \
+       all(v is None for v in [c_min, c_max, h_min, h_max, n_min, n_max, o_min, o_max, p_min, p_max, s_min, s_max]) and \
+       all(state == "allowed" for state in [f_state, cl_state, br_state, i_state]):
+        return df
+
+    # Apply filter row by row
+    mask = []
+    for row in df.iter_rows(named=True):
+        formula = row.get("mf", "")
+        matches = formula_matches_criteria(
+            formula, exact_formula,
+            c_min, c_max, h_min, h_max, n_min, n_max,
+            o_min, o_max, p_min, p_max, s_min, s_max,
+            f_state, cl_state, br_state, i_state
+        )
+        mask.append(matches)
+
+    return df.filter(pl.Series(mask))
+
+
+@app.function
 def query_wikidata(
-    qid: str, year_start: Optional[int] = None, year_end: Optional[int] = None
+    qid: str,
+    year_start: Optional[int] = None,
+    year_end: Optional[int] = None,
+    mass_min: Optional[float] = None,
+    mass_max: Optional[float] = None,
+    exact_formula: Optional[str] = None,
+    c_min: Optional[int] = None, c_max: Optional[int] = None,
+    h_min: Optional[int] = None, h_max: Optional[int] = None,
+    n_min: Optional[int] = None, n_max: Optional[int] = None,
+    o_min: Optional[int] = None, o_max: Optional[int] = None,
+    p_min: Optional[int] = None, p_max: Optional[int] = None,
+    s_min: Optional[int] = None, s_max: Optional[int] = None,
+    f_state: str = "allowed", cl_state: str = "allowed",
+    br_state: str = "allowed", i_state: str = "allowed"
 ) -> pl.DataFrame:
     query = build_compounds_query(qid)
     results = execute_sparql(query)
@@ -186,6 +346,9 @@ def query_wikidata(
         if doi and doi.startswith("http"):
             doi = doi.split("doi.org/")[-1]
 
+        mass_raw = get_binding_value(b, "mass", None)
+        mass = float(mass_raw) if mass_raw else None
+
         rows.append(
             {
                 "structure": get_binding_value(b, "structure"),
@@ -199,6 +362,8 @@ def query_wikidata(
                 "ref_doi": doi,
                 "reference": get_binding_value(b, "ref_qid"),
                 "pub_date": pub_date_raw,
+                "mass": mass,
+                "mf": get_binding_value(b, "mf"),
             }
         )
 
@@ -214,7 +379,17 @@ def query_wikidata(
         .alias("pub_date")
     )
     df = df.with_columns(pl.col("pub_date").dt.date())
+
+    # Apply filters
     df = apply_year_filter(df, year_start, year_end)
+    df = apply_mass_filter(df, mass_min, mass_max)
+    df = apply_formula_filter(
+        df, exact_formula,
+        c_min, c_max, h_min, h_max, n_min, n_max,
+        o_min, o_max, p_min, p_max, s_min, s_max,
+        f_state, cl_state, br_state, i_state
+    )
+
     return df.unique(subset=["structure", "taxon", "reference"], keep="first").sort(
         "name"
     )
@@ -306,6 +481,56 @@ def _():
 
 @app.cell
 def _():
+    ## MASS FILTERS
+    mass_filter = mo.ui.checkbox(label="⚖ Filter by mass", value=False)
+
+    mass_min = mo.ui.number(
+        value=0, start=0, stop=10000, step=10, label="Min mass (Da)", full_width=True
+    )
+
+    mass_max = mo.ui.number(
+        value=2000, start=0, stop=10000, step=10, label="Max mass (Da)", full_width=True
+    )
+
+    ## FORMULA FILTERS
+    formula_filter = mo.ui.checkbox(label="⚛ Filter by molecular formula", value=False)
+
+    exact_formula = mo.ui.text(
+        value="",
+        label="Exact formula (e.g., C15H10O5)",
+        placeholder="Leave empty to use element ranges",
+        full_width=True,
+    )
+
+    c_min = mo.ui.number(value=None, start=0, stop=100, label="C min", full_width=True)
+    c_max = mo.ui.number(value=100, start=0, stop=100, label="C max", full_width=True)
+    h_min = mo.ui.number(value=None, start=0, stop=200, label="H min", full_width=True)
+    h_max = mo.ui.number(value=200, start=0, stop=200, label="H max", full_width=True)
+    n_min = mo.ui.number(value=None, start=0, stop=50, label="N min", full_width=True)
+    n_max = mo.ui.number(value=50, start=0, stop=50, label="N max", full_width=True)
+    o_min = mo.ui.number(value=None, start=0, stop=50, label="O min", full_width=True)
+    o_max = mo.ui.number(value=50, start=0, stop=50, label="O max", full_width=True)
+    p_min = mo.ui.number(value=None, start=0, stop=20, label="P min", full_width=True)
+    p_max = mo.ui.number(value=20, start=0, stop=20, label="P max", full_width=True)
+    s_min = mo.ui.number(value=None, start=0, stop=20, label="S min", full_width=True)
+    s_max = mo.ui.number(value=20, start=0, stop=20, label="S max", full_width=True)
+
+    # Halogen selectors (allowed/required/excluded)
+    halogen_options = ["allowed", "required", "excluded"]
+    f_state = mo.ui.dropdown(
+        options=halogen_options, value="allowed", label="F", full_width=True
+    )
+    cl_state = mo.ui.dropdown(
+        options=halogen_options, value="allowed", label="Cl", full_width=True
+    )
+    br_state = mo.ui.dropdown(
+        options=halogen_options, value="allowed", label="Br", full_width=True
+    )
+    i_state = mo.ui.dropdown(
+        options=halogen_options, value="allowed", label="I", full_width=True
+    )
+
+    ## DATE FILTERS
     current_year = datetime.now().year
 
     taxon_input = mo.ui.text(
@@ -315,7 +540,7 @@ def _():
         full_width=True,
     )
 
-    year_filter = mo.ui.checkbox(label="📅 Filter by publication year", value=False)
+    year_filter = mo.ui.checkbox(label="⏱ Filter by publication year", value=False)
 
     year_start = mo.ui.number(
         value=1900, start=1700, stop=current_year, label="Start year", full_width=True
@@ -330,27 +555,127 @@ def _():
     )
 
     run_button = mo.ui.run_button(label="🔍 Search Wikidata")
-    return run_button, taxon_input, year_end, year_filter, year_start
+    return (
+        br_state,
+        c_max,
+        c_min,
+        cl_state,
+        exact_formula,
+        f_state,
+        formula_filter,
+        h_max,
+        h_min,
+        i_state,
+        mass_filter,
+        mass_max,
+        mass_min,
+        n_max,
+        n_min,
+        o_max,
+        o_min,
+        p_max,
+        p_min,
+        run_button,
+        s_max,
+        s_min,
+        taxon_input,
+        year_end,
+        year_filter,
+        year_start,
+    )
 
 
 @app.cell
-def _(run_button, taxon_input, year_end, year_filter, year_start):
-    mo.vstack(
-        [
-            mo.md("## Search Parameters"),
-            taxon_input,
-            mo.hstack([year_filter], justify="start"),
-            mo.hstack([year_start, year_end], gap=2, widths="equal")
-            if year_filter.value
-            else mo.Html(""),
-            run_button,
-        ]
-    )
+def _(
+    br_state,
+    c_max,
+    c_min,
+    cl_state,
+    exact_formula,
+    f_state,
+    formula_filter,
+    h_max,
+    h_min,
+    i_state,
+    mass_filter,
+    mass_max,
+    mass_min,
+    n_max,
+    n_min,
+    o_max,
+    o_min,
+    p_max,
+    p_min,
+    run_button,
+    s_max,
+    s_min,
+    taxon_input,
+    year_end,
+    year_filter,
+    year_start,
+):
+    filters_ui = [
+        mo.md("## Search Parameters"),
+        taxon_input,
+        mo.hstack([mass_filter], justify="start"),
+        mo.hstack([mass_min, mass_max], gap=2, widths="equal")
+        if mass_filter.value
+        else mo.Html(""),
+        mo.hstack([formula_filter], justify="start"),
+        mo.hstack([year_filter], justify="start"),
+        mo.hstack([year_start, year_end], gap=2, widths="equal")
+        if year_filter.value
+        else mo.Html(""),
+    ]
+
+    if formula_filter.value:
+        filters_ui.extend([
+            exact_formula,
+            mo.md("**Element ranges** (leave empty to ignore)"),
+            mo.hstack([c_min, c_max], gap=2, widths="equal"),
+            mo.hstack([h_min, h_max], gap=2, widths="equal"),
+            mo.hstack([n_min, n_max], gap=2, widths="equal"),
+            mo.hstack([o_min, o_max], gap=2, widths="equal"),
+            mo.hstack([p_min, p_max], gap=2, widths="equal"),
+            mo.hstack([s_min, s_max], gap=2, widths="equal"),
+            mo.md("**Halogens** (allowed / required / excluded)"),
+            mo.hstack([f_state, cl_state, br_state, i_state], gap=2, widths="equal"),
+        ])
+
+    filters_ui.append(run_button)
+    mo.vstack(filters_ui)
     return
 
 
 @app.cell
-def _(run_button, taxon_input, year_end, year_filter, year_start):
+def _(
+    br_state,
+    c_max,
+    c_min,
+    cl_state,
+    exact_formula,
+    f_state,
+    formula_filter,
+    h_max,
+    h_min,
+    i_state,
+    mass_filter,
+    mass_max,
+    mass_min,
+    n_max,
+    n_min,
+    o_max,
+    o_min,
+    p_max,
+    p_min,
+    run_button,
+    s_max,
+    s_min,
+    taxon_input,
+    year_end,
+    year_filter,
+    year_start,
+):
     if not run_button.value:
         results_df = None
         qid = None
@@ -373,7 +698,42 @@ def _(run_button, taxon_input, year_end, year_filter, year_start):
             try:
                 y_start = year_start.value if year_filter.value else None
                 y_end = year_end.value if year_filter.value else None
-                results_df = query_wikidata(qid, y_start, y_end)
+                m_min = mass_min.value if mass_filter.value else None
+                m_max = mass_max.value if mass_filter.value else None
+
+                # Formula filters
+                if formula_filter.value:
+                    exact_f = exact_formula.value if exact_formula.value.strip() else None
+                    _c_min = c_min.value
+                    _c_max = c_max.value
+                    _h_min = h_min.value
+                    _h_max = h_max.value
+                    _n_min = n_min.value
+                    _n_max = n_max.value
+                    _o_min = o_min.value
+                    _o_max = o_max.value
+                    _p_min = p_min.value
+                    _p_max = p_max.value
+                    _s_min = s_min.value
+                    _s_max = s_max.value
+                    _f_state = f_state.value
+                    _cl_state = cl_state.value
+                    _br_state = br_state.value
+                    _i_state = i_state.value
+                else:
+                    exact_f = None
+                    _c_min = _c_max = _h_min = _h_max = None
+                    _n_min = _n_max = _o_min = _o_max = None
+                    _p_min = _p_max = _s_min = _s_max = None
+                    _f_state = _cl_state = _br_state = _i_state = "allowed"
+
+                results_df = query_wikidata(
+                    qid, y_start, y_end, m_min, m_max,
+                    exact_f,
+                    _c_min, _c_max, _h_min, _h_max, _n_min, _n_max,
+                    _o_min, _o_max, _p_min, _p_max, _s_min, _s_max,
+                    _f_state, _cl_state, _br_state, _i_state
+                )
             except Exception as e:
                 mo.stop(
                     True, mo.callout(mo.md(f"**Query Error:** {str(e)}"), kind="danger")
