@@ -171,8 +171,7 @@ def resolve_taxon_to_qid(taxon_input: str) -> tuple[Optional[str], Optional[str]
 
         # Check for exact name match (case-insensitive)
         exact_matches = [
-            (qid, name) for qid, name in matches
-            if name.lower() == taxon_input.lower()
+            (qid, name) for qid, name in matches if name.lower() == taxon_input.lower()
         ]
 
         if len(exact_matches) == 1:
@@ -219,7 +218,11 @@ def create_link(url: str, text: str) -> mo.Html:
 @app.function
 def create_wikidata_link(qid: str) -> mo.Html:
     """Create a Wikidata link for a QID."""
-    return create_link(f"https://www.wikidata.org/wiki/{qid}", qid) if qid else mo.Html("—")
+    return (
+        create_link(f"https://www.wikidata.org/wiki/{qid}", qid)
+        if qid
+        else mo.Html("—")
+    )
 
 
 @app.function
@@ -281,9 +284,7 @@ def parse_molecular_formula(formula: str) -> tuple:
 
     # Return tuple of (element, count) pairs for immutability and caching
     return tuple(
-        (element, int(count) if count else 1)
-        for element, count in matches
-        if element
+        (element, int(count) if count else 1) for element, count in matches if element
     )
 
 
@@ -341,11 +342,18 @@ def formula_matches_criteria(
     ]:
         if min_val is not None or max_val is not None:
             count = atoms.get(element, 0)
-            if (min_val is not None and count < min_val) or (max_val is not None and count > max_val):
+            if (min_val is not None and count < min_val) or (
+                max_val is not None and count > max_val
+            ):
                 return False
 
     # Check halogens with state-based logic
-    for halogen, state in [("F", f_state), ("Cl", cl_state), ("Br", br_state), ("I", i_state)]:
+    for halogen, state in [
+        ("F", f_state),
+        ("Cl", cl_state),
+        ("Br", br_state),
+        ("I", i_state),
+    ]:
         count = atoms.get(halogen, 0)
         if (state == "required" and count == 0) or (state == "excluded" and count > 0):
             return False
@@ -384,8 +392,18 @@ def apply_formula_filter(
         and all(
             v is None
             for v in [
-                c_min, c_max, h_min, h_max, n_min, n_max,
-                o_min, o_max, p_min, p_max, s_min, s_max,
+                c_min,
+                c_max,
+                h_min,
+                h_max,
+                n_min,
+                n_max,
+                o_min,
+                o_max,
+                p_min,
+                p_max,
+                s_min,
+                s_max,
             ]
         )
         and all(state == "allowed" for state in [f_state, cl_state, br_state, i_state])
@@ -396,9 +414,23 @@ def apply_formula_filter(
     mask = [
         formula_matches_criteria(
             row.get("mf", ""),
-            exact_formula, c_min, c_max, h_min, h_max, n_min, n_max,
-            o_min, o_max, p_min, p_max, s_min, s_max,
-            f_state, cl_state, br_state, i_state,
+            exact_formula,
+            c_min,
+            c_max,
+            h_min,
+            h_max,
+            n_min,
+            n_max,
+            o_min,
+            o_max,
+            p_min,
+            p_max,
+            s_min,
+            s_max,
+            f_state,
+            cl_state,
+            br_state,
+            i_state,
         )
         for row in df.iter_rows(named=True)
     ]
@@ -444,16 +476,19 @@ def query_wikidata(
             "structure": get_binding_value(b, "structure"),
             "name": get_binding_value(b, "structureLabel"),
             "inchikey": get_binding_value(b, "inchikey"),
-            "smiles": get_binding_value(b, "smiles_iso") or get_binding_value(b, "smiles_conn"),
+            "smiles": get_binding_value(b, "smiles_iso")
+            or get_binding_value(b, "smiles_conn"),
             "taxon_name": get_binding_value(b, "taxon_name"),
             "taxon": get_binding_value(b, "taxon"),
             "ref_title": get_binding_value(b, "ref_title"),
             "ref_doi": get_binding_value(b, "ref_doi").split("doi.org/")[-1]
-                if (doi := get_binding_value(b, "ref_doi")) and doi.startswith("http")
-                else get_binding_value(b, "ref_doi"),
+            if (doi := get_binding_value(b, "ref_doi")) and doi.startswith("http")
+            else get_binding_value(b, "ref_doi"),
             "reference": get_binding_value(b, "ref_qid"),
             "pub_date": get_binding_value(b, "pub_date", None),
-            "mass": float(mass_raw) if (mass_raw := get_binding_value(b, "mass", None)) else None,
+            "mass": float(mass_raw)
+            if (mass_raw := get_binding_value(b, "mass", None))
+            else None,
             "mf": get_binding_value(b, "mf"),
         }
         for b in bindings
@@ -465,9 +500,9 @@ def query_wikidata(
     df = df.with_columns(
         pl.when(pl.col("pub_date").is_not_null())
         .then(
-            pl.col("pub_date").str.strptime(
-                pl.Datetime, format="%Y-%m-%dT%H:%M:%SZ", strict=False
-            ).dt.date()
+            pl.col("pub_date")
+            .str.strptime(pl.Datetime, format="%Y-%m-%dT%H:%M:%SZ", strict=False)
+            .dt.date()
         )
         .otherwise(None)
         .alias("pub_date")
@@ -477,12 +512,29 @@ def query_wikidata(
     df = apply_year_filter(df, year_start, year_end)
     df = apply_mass_filter(df, mass_min, mass_max)
     df = apply_formula_filter(
-        df, exact_formula, c_min, c_max, h_min, h_max, n_min, n_max,
-        o_min, o_max, p_min, p_max, s_min, s_max,
-        f_state, cl_state, br_state, i_state,
+        df,
+        exact_formula,
+        c_min,
+        c_max,
+        h_min,
+        h_max,
+        n_min,
+        n_max,
+        o_min,
+        o_max,
+        p_min,
+        p_max,
+        s_min,
+        s_max,
+        f_state,
+        cl_state,
+        br_state,
+        i_state,
     )
 
-    return df.unique(subset=["structure", "taxon", "reference"], keep="first").sort("name")
+    return df.unique(subset=["structure", "taxon", "reference"], keep="first").sort(
+        "name"
+    )
 
 
 @app.function
@@ -501,7 +553,9 @@ def create_display_row(row: Dict[str, str]) -> Dict[str, Any]:
         "Compound InChIKey": row["inchikey"],
         "Taxon": row["taxon_name"],
         "Reference title": row["ref_title"] or "—",
-        "Reference DOI": create_link(f"https://doi.org/{doi}", doi) if doi else mo.Html("—"),
+        "Reference DOI": create_link(f"https://doi.org/{doi}", doi)
+        if doi
+        else mo.Html("—"),
         "Compound QID": create_wikidata_link(struct_qid),
         "Taxon QID": create_wikidata_link(taxon_qid),
         "Reference QID": create_wikidata_link(ref_qid),
@@ -511,13 +565,20 @@ def create_display_row(row: Dict[str, str]) -> Dict[str, Any]:
 @app.function
 def prepare_export_dataframe(df: pl.DataFrame) -> pl.DataFrame:
     """Prepare dataframe for export with cleaned QIDs and selected columns."""
-    return (
-        df.with_columns([
-            pl.col("structure").str.replace("http://www.wikidata.org/entity/", "", literal=True).alias("compound_qid"),
-            pl.col("taxon").str.replace("http://www.wikidata.org/entity/", "", literal=True).alias("taxon_qid"),
-            pl.col("reference").str.replace("http://www.wikidata.org/entity/", "", literal=True).alias("reference_qid"),
-        ])
-        .select([
+    return df.with_columns(
+        [
+            pl.col("structure")
+            .str.replace("http://www.wikidata.org/entity/", "", literal=True)
+            .alias("compound_qid"),
+            pl.col("taxon")
+            .str.replace("http://www.wikidata.org/entity/", "", literal=True)
+            .alias("taxon_qid"),
+            pl.col("reference")
+            .str.replace("http://www.wikidata.org/entity/", "", literal=True)
+            .alias("reference_qid"),
+        ]
+    ).select(
+        [
             pl.col("name").alias("compound_name"),
             pl.col("smiles").alias("compound_smiles"),
             pl.col("inchikey").alias("compound_inchikey"),
@@ -528,7 +589,7 @@ def prepare_export_dataframe(df: pl.DataFrame) -> pl.DataFrame:
             "compound_qid",
             "taxon_qid",
             "reference_qid",
-        ])
+        ]
     )
 
 
@@ -844,7 +905,9 @@ def _(qid, results_df, run_button, taxon_input, taxon_warning):
             parts.append(mo.callout(mo.md(f"⚠️ {taxon_warning}"), kind="warn"))
         parts.append(
             mo.callout(
-                mo.md(f"No natural products found for **{taxon_input.value}** ({create_wikidata_link(qid)}) with the current filters."),
+                mo.md(
+                    f"No natural products found for **{taxon_input.value}** ({create_wikidata_link(qid)}) with the current filters."
+                ),
                 kind="warn",
             )
         )
@@ -856,7 +919,9 @@ def _(qid, results_df, run_button, taxon_input, taxon_warning):
         n_entries = len(results_df)
 
         summary_parts = [
-            mo.md(f"## Results Summary\n\nFound data for **{taxon_input.value}** {create_wikidata_link(qid)}"),
+            mo.md(
+                f"## Results Summary\n\nFound data for **{taxon_input.value}** {create_wikidata_link(qid)}"
+            ),
         ]
 
         if taxon_warning:
@@ -865,10 +930,26 @@ def _(qid, results_df, run_button, taxon_input, taxon_warning):
         summary_parts.append(
             mo.hstack(
                 [
-                    mo.stat(value=str(n_compounds), label=f"🧪 {pluralize('Compound', n_compounds)}", bordered=True),
-                    mo.stat(value=str(n_taxa), label=f"🌱 {pluralize('Taxon', n_taxa)}", bordered=True),
-                    mo.stat(value=str(n_refs), label=f"📚 {pluralize('Reference', n_refs)}", bordered=True),
-                    mo.stat(value=str(n_entries), label=f"📝 {pluralize('Entry', n_entries)}", bordered=True),
+                    mo.stat(
+                        value=str(n_compounds),
+                        label=f"🧪 {pluralize('Compound', n_compounds)}",
+                        bordered=True,
+                    ),
+                    mo.stat(
+                        value=str(n_taxa),
+                        label=f"🌱 {pluralize('Taxon', n_taxa)}",
+                        bordered=True,
+                    ),
+                    mo.stat(
+                        value=str(n_refs),
+                        label=f"📚 {pluralize('Reference', n_refs)}",
+                        bordered=True,
+                    ),
+                    mo.stat(
+                        value=str(n_entries),
+                        label=f"📝 {pluralize('Entry', n_entries)}",
+                        bordered=True,
+                    ),
                 ],
                 gap=2,
                 justify="start",
