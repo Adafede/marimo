@@ -224,8 +224,19 @@ def create_wikidata_link(qid: str) -> mo.Html:
 
 @app.function
 def pluralize(singular: str, count: int) -> str:
-    """Return singular or plural form based on count."""
-    return singular if count == 1 else f"{singular}s"
+    """Return singular or plural form based on count with special cases."""
+    if count == 1:
+        return singular
+
+    # Handle special plural forms
+    special_plurals = {
+        "Entry": "Entries",
+        "entry": "entries",
+        "Taxon": "Taxa",
+        "taxon": "taxa",
+    }
+
+    return special_plurals.get(singular, f"{singular}s")
 
 
 @app.function
