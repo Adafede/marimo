@@ -986,8 +986,9 @@ def _(results_df, run_button):
 
         # Create export table (preserves pub_date as actual date)
         export_df = prepare_export_dataframe(results_df)
+        export_data = export_df.to_dicts()
         export_table = mo.ui.table(
-            export_df,
+            export_data,
             selection=None,
             page_size=CONFIG["page_size_export"],
             show_column_summaries=False,
