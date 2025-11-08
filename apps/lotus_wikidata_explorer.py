@@ -187,17 +187,18 @@ def apply_mass_filter(
 def parse_molecular_formula(formula: str) -> Dict[str, int]:
     """Parse molecular formula and extract atom counts."""
     import re
+
     if not formula:
         return {}
 
     # Map Unicode subscript digits to regular digits
-    subscript_map = str.maketrans('₀₁₂₃₄₅₆₇₈₉', '0123456789')
+    subscript_map = str.maketrans("₀₁₂₃₄₅₆₇₈₉", "0123456789")
 
     # Convert subscript numbers to regular numbers
     normalized_formula = formula.translate(subscript_map)
 
     # Pattern to match element followed by optional number
-    pattern = r'([A-Z][a-z]?)(\d*)'
+    pattern = r"([A-Z][a-z]?)(\d*)"
     matches = re.findall(pattern, normalized_formula)
 
     atom_counts = {}
@@ -212,13 +213,22 @@ def parse_molecular_formula(formula: str) -> Dict[str, int]:
 def formula_matches_criteria(
     formula: str,
     exact_formula: Optional[str],
-    c_min: Optional[int], c_max: Optional[int],
-    h_min: Optional[int], h_max: Optional[int],
-    n_min: Optional[int], n_max: Optional[int],
-    o_min: Optional[int], o_max: Optional[int],
-    p_min: Optional[int], p_max: Optional[int],
-    s_min: Optional[int], s_max: Optional[int],
-    f_state: str, cl_state: str, br_state: str, i_state: str
+    c_min: Optional[int],
+    c_max: Optional[int],
+    h_min: Optional[int],
+    h_max: Optional[int],
+    n_min: Optional[int],
+    n_max: Optional[int],
+    o_min: Optional[int],
+    o_max: Optional[int],
+    p_min: Optional[int],
+    p_max: Optional[int],
+    s_min: Optional[int],
+    s_max: Optional[int],
+    f_state: str,
+    cl_state: str,
+    br_state: str,
+    i_state: str,
 ) -> bool:
     """Check if a molecular formula matches the specified criteria.
 
@@ -231,7 +241,7 @@ def formula_matches_criteria(
         return True  # Keep entries without formula
 
     # Normalize formula by converting subscripts to regular numbers
-    subscript_map = str.maketrans('₀₁₂₃₄₅₆₇₈₉', '0123456789')
+    subscript_map = str.maketrans("₀₁₂₃₄₅₆₇₈₉", "0123456789")
     normalized_formula = formula.translate(subscript_map)
 
     # If exact formula is specified, check for exact match
@@ -244,12 +254,12 @@ def formula_matches_criteria(
 
     # Check main elements ranges
     checks = [
-        ('C', c_min, c_max),
-        ('H', h_min, h_max),
-        ('N', n_min, n_max),
-        ('O', o_min, o_max),
-        ('P', p_min, p_max),
-        ('S', s_min, s_max),
+        ("C", c_min, c_max),
+        ("H", h_min, h_max),
+        ("N", n_min, n_max),
+        ("O", o_min, o_max),
+        ("P", p_min, p_max),
+        ("S", s_min, s_max),
     ]
 
     for element, min_val, max_val in checks:
@@ -262,10 +272,10 @@ def formula_matches_criteria(
 
     # Check halogens with state-based logic
     halogen_checks = [
-        ('F', f_state),
-        ('Cl', cl_state),
-        ('Br', br_state),
-        ('I', i_state),
+        ("F", f_state),
+        ("Cl", cl_state),
+        ("Br", br_state),
+        ("I", i_state),
     ]
 
     for halogen, state in halogen_checks:
@@ -283,22 +293,49 @@ def formula_matches_criteria(
 def apply_formula_filter(
     df: pl.DataFrame,
     exact_formula: Optional[str],
-    c_min: Optional[int], c_max: Optional[int],
-    h_min: Optional[int], h_max: Optional[int],
-    n_min: Optional[int], n_max: Optional[int],
-    o_min: Optional[int], o_max: Optional[int],
-    p_min: Optional[int], p_max: Optional[int],
-    s_min: Optional[int], s_max: Optional[int],
-    f_state: str, cl_state: str, br_state: str, i_state: str
+    c_min: Optional[int],
+    c_max: Optional[int],
+    h_min: Optional[int],
+    h_max: Optional[int],
+    n_min: Optional[int],
+    n_max: Optional[int],
+    o_min: Optional[int],
+    o_max: Optional[int],
+    p_min: Optional[int],
+    p_max: Optional[int],
+    s_min: Optional[int],
+    s_max: Optional[int],
+    f_state: str,
+    cl_state: str,
+    br_state: str,
+    i_state: str,
 ) -> pl.DataFrame:
     """Apply molecular formula filters to the dataframe."""
     if "mf" not in df.columns:
         return df
 
     # If no filter is specified, return as is
-    if (exact_formula is None or not exact_formula.strip()) and \
-       all(v is None for v in [c_min, c_max, h_min, h_max, n_min, n_max, o_min, o_max, p_min, p_max, s_min, s_max]) and \
-       all(state == "allowed" for state in [f_state, cl_state, br_state, i_state]):
+    if (
+        (exact_formula is None or not exact_formula.strip())
+        and all(
+            v is None
+            for v in [
+                c_min,
+                c_max,
+                h_min,
+                h_max,
+                n_min,
+                n_max,
+                o_min,
+                o_max,
+                p_min,
+                p_max,
+                s_min,
+                s_max,
+            ]
+        )
+        and all(state == "allowed" for state in [f_state, cl_state, br_state, i_state])
+    ):
         return df
 
     # Apply filter row by row
@@ -306,10 +343,24 @@ def apply_formula_filter(
     for row in df.iter_rows(named=True):
         formula = row.get("mf", "")
         matches = formula_matches_criteria(
-            formula, exact_formula,
-            c_min, c_max, h_min, h_max, n_min, n_max,
-            o_min, o_max, p_min, p_max, s_min, s_max,
-            f_state, cl_state, br_state, i_state
+            formula,
+            exact_formula,
+            c_min,
+            c_max,
+            h_min,
+            h_max,
+            n_min,
+            n_max,
+            o_min,
+            o_max,
+            p_min,
+            p_max,
+            s_min,
+            s_max,
+            f_state,
+            cl_state,
+            br_state,
+            i_state,
         )
         mask.append(matches)
 
@@ -324,14 +375,22 @@ def query_wikidata(
     mass_min: Optional[float] = None,
     mass_max: Optional[float] = None,
     exact_formula: Optional[str] = None,
-    c_min: Optional[int] = None, c_max: Optional[int] = None,
-    h_min: Optional[int] = None, h_max: Optional[int] = None,
-    n_min: Optional[int] = None, n_max: Optional[int] = None,
-    o_min: Optional[int] = None, o_max: Optional[int] = None,
-    p_min: Optional[int] = None, p_max: Optional[int] = None,
-    s_min: Optional[int] = None, s_max: Optional[int] = None,
-    f_state: str = "allowed", cl_state: str = "allowed",
-    br_state: str = "allowed", i_state: str = "allowed"
+    c_min: Optional[int] = None,
+    c_max: Optional[int] = None,
+    h_min: Optional[int] = None,
+    h_max: Optional[int] = None,
+    n_min: Optional[int] = None,
+    n_max: Optional[int] = None,
+    o_min: Optional[int] = None,
+    o_max: Optional[int] = None,
+    p_min: Optional[int] = None,
+    p_max: Optional[int] = None,
+    s_min: Optional[int] = None,
+    s_max: Optional[int] = None,
+    f_state: str = "allowed",
+    cl_state: str = "allowed",
+    br_state: str = "allowed",
+    i_state: str = "allowed",
 ) -> pl.DataFrame:
     query = build_compounds_query(qid)
     results = execute_sparql(query)
@@ -384,10 +443,24 @@ def query_wikidata(
     df = apply_year_filter(df, year_start, year_end)
     df = apply_mass_filter(df, mass_min, mass_max)
     df = apply_formula_filter(
-        df, exact_formula,
-        c_min, c_max, h_min, h_max, n_min, n_max,
-        o_min, o_max, p_min, p_max, s_min, s_max,
-        f_state, cl_state, br_state, i_state
+        df,
+        exact_formula,
+        c_min,
+        c_max,
+        h_min,
+        h_max,
+        n_min,
+        n_max,
+        o_min,
+        o_max,
+        p_min,
+        p_max,
+        s_min,
+        s_max,
+        f_state,
+        cl_state,
+        br_state,
+        i_state,
     )
 
     return df.unique(subset=["structure", "taxon", "reference"], keep="first").sort(
@@ -629,18 +702,22 @@ def _(
     ]
 
     if formula_filter.value:
-        filters_ui.extend([
-            exact_formula,
-            mo.md("**Element ranges** (leave empty to ignore)"),
-            mo.hstack([c_min, c_max], gap=2, widths="equal"),
-            mo.hstack([h_min, h_max], gap=2, widths="equal"),
-            mo.hstack([n_min, n_max], gap=2, widths="equal"),
-            mo.hstack([o_min, o_max], gap=2, widths="equal"),
-            mo.hstack([p_min, p_max], gap=2, widths="equal"),
-            mo.hstack([s_min, s_max], gap=2, widths="equal"),
-            mo.md("**Halogens** (allowed / required / excluded)"),
-            mo.hstack([f_state, cl_state, br_state, i_state], gap=2, widths="equal"),
-        ])
+        filters_ui.extend(
+            [
+                exact_formula,
+                mo.md("**Element ranges** (leave empty to ignore)"),
+                mo.hstack([c_min, c_max], gap=2, widths="equal"),
+                mo.hstack([h_min, h_max], gap=2, widths="equal"),
+                mo.hstack([n_min, n_max], gap=2, widths="equal"),
+                mo.hstack([o_min, o_max], gap=2, widths="equal"),
+                mo.hstack([p_min, p_max], gap=2, widths="equal"),
+                mo.hstack([s_min, s_max], gap=2, widths="equal"),
+                mo.md("**Halogens** (allowed / required / excluded)"),
+                mo.hstack(
+                    [f_state, cl_state, br_state, i_state], gap=2, widths="equal"
+                ),
+            ]
+        )
 
     filters_ui.append(run_button)
     mo.vstack(filters_ui)
@@ -703,7 +780,9 @@ def _(
 
                 # Formula filters
                 if formula_filter.value:
-                    exact_f = exact_formula.value if exact_formula.value.strip() else None
+                    exact_f = (
+                        exact_formula.value if exact_formula.value.strip() else None
+                    )
                     _c_min = c_min.value
                     _c_max = c_max.value
                     _h_min = h_min.value
@@ -728,11 +807,28 @@ def _(
                     _f_state = _cl_state = _br_state = _i_state = "allowed"
 
                 results_df = query_wikidata(
-                    qid, y_start, y_end, m_min, m_max,
+                    qid,
+                    y_start,
+                    y_end,
+                    m_min,
+                    m_max,
                     exact_f,
-                    _c_min, _c_max, _h_min, _h_max, _n_min, _n_max,
-                    _o_min, _o_max, _p_min, _p_max, _s_min, _s_max,
-                    _f_state, _cl_state, _br_state, _i_state
+                    _c_min,
+                    _c_max,
+                    _h_min,
+                    _h_max,
+                    _n_min,
+                    _n_max,
+                    _o_min,
+                    _o_max,
+                    _p_min,
+                    _p_max,
+                    _s_min,
+                    _s_max,
+                    _f_state,
+                    _cl_state,
+                    _br_state,
+                    _i_state,
                 )
             except Exception as e:
                 mo.stop(
