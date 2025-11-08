@@ -49,8 +49,9 @@ with app.setup:
 
 @app.function
 def build_taxon_search_query(taxon_name: str) -> str:
+    """Build SPARQL query to find taxa by scientific name. Returns up to 10 results."""
     return f"""
-    SELECT ?item WHERE {{
+    SELECT ?item ?name WHERE {{
       SERVICE wikibase:mwapi {{
         bd:serviceParam wikibase:endpoint "www.wikidata.org";
                         wikibase:api "EntitySearch";
@@ -59,8 +60,7 @@ def build_taxon_search_query(taxon_name: str) -> str:
         ?item wikibase:apiOutputItem mwapi:item.
         ?num wikibase:apiOrdinal true.
       }}
-      ?item wdt:P225 ?search.
-      FILTER (?num = 0)
+      ?item wdt:P225 ?name.
     }}
     """
 
@@ -125,16 +125,65 @@ def create_structure_image_url(smiles: str) -> str:
 
 
 @app.function
-def taxon_name_to_qid(taxon_name: str) -> Optional[str]:
+@lru_cache(maxsize=256)
+def resolve_taxon_to_qid(taxon_input: str) -> tuple[Optional[str], Optional[str]]:
+    """
+    Resolve taxon name or QID to a valid QID.
+
+    Returns:
+        (qid, warning_message) where warning_message is None if no issues
+    """
+    taxon_input = taxon_input.strip()
+
+    # Check if input is already a QID (Q followed by digits)
+    if taxon_input.upper().startswith("Q") and taxon_input[1:].isdigit():
+        return taxon_input.upper(), None
+
+    # Otherwise, search for the taxon by name using EntitySearch
     try:
-        query = build_taxon_search_query(taxon_name)
+        query = build_taxon_search_query(taxon_input)
         results = execute_sparql(query)
         bindings = results.get("results", {}).get("bindings", [])
-        if bindings:
-            return extract_qid(bindings[0].get("item", {}).get("value", ""))
+
+        if not bindings:
+            return None, None
+
+        # Extract all matching QIDs and their scientific names
+        matches = []
+        for binding in bindings:
+            qid = extract_qid(binding.get("item", {}).get("value", ""))
+            name = binding.get("name", {}).get("value", "")
+            if qid and name:
+                matches.append((qid, name))
+
+        if not matches:
+            return None, None
+
+        # Check for exact name match (case-insensitive)
+        exact_matches = [
+            (qid, name) for qid, name in matches
+            if name.lower() == taxon_input.lower()
+        ]
+
+        if len(exact_matches) == 1:
+            return exact_matches[0][0], None
+        elif len(exact_matches) > 1:
+            # Multiple exact matches - ambiguous, return first with warning
+            qid_list = ", ".join([qid for qid, _ in exact_matches])
+            warning = f"Ambiguous taxon name. Multiple QIDs found: {qid_list}. Using {exact_matches[0][0]}. For precision, please use a specific QID."
+            return exact_matches[0][0], warning
+
+        # No exact match, use the first result
+        if len(matches) > 1:
+            # Show top matches for context
+            qid_list = ", ".join([f"{qid} ({name})" for qid, name in matches[:3]])
+            warning = f"No exact match. Similar taxa found: {qid_list}. Using {matches[0][0]}. For precision, use a QID directly."
+            return matches[0][0], warning
+
+        return matches[0][0], None
+
     except Exception:
-        pass
-    return None
+        return None, None
 
 
 @app.function
@@ -608,8 +657,8 @@ def _():
 
     taxon_input = mo.ui.text(
         value="Gentiana lutea",
-        label="🔬 Taxon name",
-        placeholder="e.g., Swertia, Artemisia, Homo sapiens, ...",
+        label="🔬 Taxon name or QID",
+        placeholder="e.g., Swertia chirayita, Anabaena, Q157115, ...",
         full_width=True,
     )
 
@@ -756,17 +805,18 @@ def _(
     if not run_button.value:
         results_df = None
         qid = None
+        taxon_warning = None
     else:
-        taxon_name = taxon_input.value.strip()
+        taxon_input_str = taxon_input.value.strip()
         start_time = time.time()
-        with mo.status.spinner(title=f"🔎 Querying Wikidata for {taxon_name}..."):
-            qid = taxon_name_to_qid(taxon_name)
+        with mo.status.spinner(title=f"🔎 Querying Wikidata for {taxon_input_str}..."):
+            qid, taxon_warning = resolve_taxon_to_qid(taxon_input_str)
             if not qid:
                 mo.stop(
                     True,
                     mo.callout(
                         mo.md(
-                            f"**Taxon not found:** Could not find '{taxon_name}' in Wikidata. Please check the spelling or try a different taxonomic name."
+                            f"**Taxon not found:** Could not find '{taxon_input_str}' in Wikidata. Please check the spelling or try a different taxonomic name."
                         ),
                         kind="warn",
                     ),
@@ -836,20 +886,27 @@ def _(
                 )
         elapsed = round(time.time() - start_time, 2)
         mo.md(f"⏱️ Query completed in **{elapsed}s**.")
-    return qid, results_df
+    return qid, results_df, taxon_warning
 
 
 @app.cell
-def _(qid, results_df, run_button, taxon_input):
+def _(qid, results_df, run_button, taxon_input, taxon_warning):
     if not run_button.value or results_df is None:
         summary_display = mo.Html("")
     elif len(results_df) == 0:
-        summary_display = mo.callout(
-            mo.md(
-                f"No natural products found for **{taxon_input.value}** ({create_link(f'https://www.wikidata.org/wiki/{qid}', qid)}) with the current filters."
-            ),
-            kind="warn",
+        # Show no compounds message, and taxon warning if present
+        parts = []
+        if taxon_warning:
+            parts.append(mo.callout(mo.md(f"⚠️ {taxon_warning}"), kind="warn"))
+        parts.append(
+            mo.callout(
+                mo.md(
+                    f"No natural products found for **{taxon_input.value}** ({create_link(f'https://www.wikidata.org/wiki/{qid}', qid)}) with the current filters."
+                ),
+                kind="warn",
+            )
         )
+        summary_display = mo.vstack(parts) if len(parts) > 1 else parts[0]
     else:
         n_compounds = results_df.n_unique(subset=["structure"])
         n_taxa = results_df.n_unique(subset=["taxon"])
@@ -861,34 +918,43 @@ def _(qid, results_df, run_button, taxon_input):
         reference_label = "📚 Reference" if n_refs == 1 else "📚 References"
         entry_label = "📝 Entry" if len(results_df) == 1 else "📝 Entries"
 
-        summary_display = mo.vstack(
-            [
-                mo.md(
-                    f"""
+        summary_parts = [
+            mo.md(
+                f"""
             ## Results Summary
 
             Found data for **{taxon_input.value}** {create_link(f"https://www.wikidata.org/wiki/{qid}", qid)}
             """
-                ),
-                mo.hstack(
-                    [
-                        mo.stat(
-                            value=str(n_compounds), label=compound_label, bordered=True
-                        ),
-                        mo.stat(value=str(n_taxa), label=taxon_label, bordered=True),
-                        mo.stat(
-                            value=str(n_refs), label=reference_label, bordered=True
-                        ),
-                        mo.stat(
-                            value=str(len(results_df)), label=entry_label, bordered=True
-                        ),
-                    ],
-                    gap=2,
-                    justify="start",
-                    wrap=True,
-                ),
-            ]
+            ),
+        ]
+
+        # Add warning if there was ambiguity
+        if taxon_warning:
+            summary_parts.append(
+                mo.callout(mo.md(f"⚠️ {taxon_warning}"), kind="warn")
+            )
+
+        summary_parts.append(
+            mo.hstack(
+                [
+                    mo.stat(
+                        value=str(n_compounds), label=compound_label, bordered=True
+                    ),
+                    mo.stat(value=str(n_taxa), label=taxon_label, bordered=True),
+                    mo.stat(
+                        value=str(n_refs), label=reference_label, bordered=True
+                    ),
+                    mo.stat(
+                        value=str(len(results_df)), label=entry_label, bordered=True
+                    ),
+                ],
+                gap=2,
+                justify="start",
+                wrap=True,
+            )
         )
+
+        summary_display = mo.vstack(summary_parts)
 
     summary_display
     return
