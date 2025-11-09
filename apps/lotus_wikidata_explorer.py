@@ -1757,24 +1757,38 @@ def _(
             mo.md("No compounds match your search criteria."), kind="neutral"
         )
     else:
-        # For large datasets, only prepare display data for first page to avoid hanging
-        # The table will lazily load more as user pages through
         total_rows = len(results_df)
-        initial_batch_size = min(CONFIG["page_size_default"] * 2, total_rows)  # Load 2 pages worth
 
-        # Only create display rows for initial batch (much faster for large datasets)
-        display_data = [
-            create_display_row(row)
-            for row in results_df.head(initial_batch_size).iter_rows(named=True)
-        ]
-
-        # Add note if we're showing a subset
-        if total_rows > initial_batch_size:
+        # For large datasets (>100 rows), use simplified display without images
+        # This allows users to browse all data efficiently
+        if total_rows > 100:
+            # Create simplified display data without 2D depictions
+            display_data = [
+                {
+                    "Compound": row["name"],
+                    "Compound SMILES": row["smiles"],
+                    "Compound InChIKey": row["inchikey"],
+                    "Taxon": row["taxon_name"],
+                    "Reference title": row["ref_title"] or "—",
+                    "Reference DOI": create_link(f"https://doi.org/{doi}", doi)
+                    if (doi := row["ref_doi"])
+                    else mo.Html("—"),
+                    "Compound QID": create_wikidata_link(extract_qid(row["structure"])),
+                    "Taxon QID": create_wikidata_link(extract_qid(row["taxon"])),
+                    "Reference QID": create_wikidata_link(extract_qid(row["reference"])),
+                }
+                for row in results_df.iter_rows(named=True)
+            ]
             display_note = mo.callout(
-                mo.md(f"**Note:** Displaying first {initial_batch_size} of {total_rows} results for performance. Use export functions to access all data."),
+                mo.md(f"**Large dataset ({total_rows} rows):** 2D structure depictions hidden for performance. View structures via SMILES or download the data."),
                 kind="info"
             )
         else:
+            # For smaller datasets, include 2D depictions
+            display_data = [
+                create_display_row(row)
+                for row in results_df.iter_rows(named=True)
+            ]
             display_note = mo.Html("")
 
         display_table = mo.ui.table(
@@ -1786,20 +1800,8 @@ def _(
 
         # Create export table (preserves pub_date as actual date)
         export_df = prepare_export_dataframe(results_df)
-
-        # For large datasets, show only a preview in the export table
-        # Full data is available via downloads
-        export_preview_size = min(CONFIG["page_size_export"] * 4, len(export_df))  # 4 pages worth
-        export_preview_df = export_df.head(export_preview_size)
-        export_data = export_preview_df.to_dicts()
-
-        if len(export_df) > export_preview_size:
-            export_note = mo.callout(
-                mo.md(f"**Export Preview:** Showing first {export_preview_size} of {len(export_df)} rows. Download files contain all data."),
-                kind="info"
-            )
-        else:
-            export_note = mo.Html("")
+        export_data = export_df.to_dicts()
+        export_note = mo.Html("")
 
         export_table = mo.ui.table(
             export_data,
