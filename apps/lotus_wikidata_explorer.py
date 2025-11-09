@@ -834,6 +834,98 @@ Licensed under AGPL-3.0.
 """
 
 
+@app.function
+def export_to_rdf_turtle(df: pl.DataFrame, taxon_input: str, qid: str) -> str:
+    """
+    Export data to RDF Turtle format following W3C standards.
+
+    Uses standard ontologies:
+    - CHEMINF (Chemical Information Ontology)
+    - SIO (Semanticscience Integrated Ontology)
+    - WD (Wikidata)
+    - schema.org
+    """
+    from urllib.parse import quote as url_quote
+
+    # RDF prefixes
+    turtle = """@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix wd: <http://www.wikidata.org/entity/> .
+@prefix wdt: <http://www.wikidata.org/prop/direct/> .
+@prefix cheminf: <http://semanticscience.org/resource/CHEMINF_> .
+@prefix sio: <http://semanticscience.org/resource/SIO_> .
+@prefix schema: <http://schema.org/> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix bibo: <http://purl.org/ontology/bibo/> .
+
+# Dataset Metadata
+<https://lotus.naturalproducts.net/dataset/{url_quote(taxon_input)}> a schema:Dataset ;
+    schema:name "LOTUS Natural Products Data for {taxon_input}"^^xsd:string ;
+    schema:description "Chemical compounds and their taxonomic associations from LOTUS database"^^xsd:string ;
+    schema:dateCreated "{datetime.now().isoformat()}"^^xsd:dateTime ;
+    schema:license <https://creativecommons.org/publicdomain/zero/1.0/> ;
+    schema:provider <https://www.wikidata.org/> , <https://lotus.naturalproducts.net/> ;
+    schema:about wd:{qid} ;
+    dcterms:source <https://www.wikidata.org/> ;
+    schema:numberOfRecords {len(df)} .
+
+"""
+
+    # Add compound data
+    for row in df.iter_rows(named=True):
+        compound_qid = row.get("compound_qid", "")
+        if not compound_qid:
+            continue
+
+        turtle += f"\n# Compound {row.get('compound_name', 'Unknown')}\n"
+        turtle += f"wd:{compound_qid} a schema:MolecularEntity ;\n"
+
+        if row.get("compound_name"):
+            turtle += f'    rdfs:label "{row["compound_name"]}"^^xsd:string ;\n'
+
+        if row.get("compound_inchikey"):
+            turtle += f'    cheminf:000059 "{row["compound_inchikey"]}"^^xsd:string ;  # InChIKey\n'
+
+        if row.get("compound_smiles"):
+            turtle += f'    cheminf:000018 "{row["compound_smiles"]}"^^xsd:string ;  # SMILES\n'
+
+        if row.get("molecular_formula"):
+            turtle += f'    cheminf:000042 "{row["molecular_formula"]}"^^xsd:string ;  # molecular formula\n'
+
+        if row.get("compound_mass"):
+            turtle += f'    sio:000218 {row["compound_mass"]}^^xsd:float ;  # molecular mass\n'
+
+        # Database cross-references
+        if row.get("pubchem_cid"):
+            turtle += f'    sio:000008 <http://pubchem.ncbi.nlm.nih.gov/compound/{row["pubchem_cid"]}> ;  # PubChem\n'
+
+        if row.get("chebi_id"):
+            turtle += f'    sio:000008 <http://purl.obolibrary.org/obo/CHEBI_{row["chebi_id"]}> ;  # ChEBI\n'
+
+        if row.get("chembl_id"):
+            turtle += f'    sio:000008 <https://www.ebi.ac.uk/chembl/compound_report_card/{row["chembl_id"]}> ;  # ChEMBL\n'
+
+        # Taxonomic association
+        if row.get("taxon_qid"):
+            turtle += f'    sio:000255 wd:{row["taxon_qid"]} ;  # found in taxon\n'
+
+        # Reference
+        if row.get("reference_qid"):
+            turtle += f'    dcterms:source wd:{row["reference_qid"]} ;  # bibliographic reference\n'
+
+        # Remove trailing ;\n and add .\n
+        turtle = turtle.rstrip(";\n") + " .\n"
+
+    # Add taxon information
+    if qid:
+        turtle += f"\n# Taxon Information\n"
+        turtle += f"wd:{qid} a schema:Taxon ;\n"
+        turtle += f'    rdfs:label "{taxon_input}"^^xsd:string .\n'
+
+    return turtle
+
+
 @app.cell
 def _():
     mo.md("""
@@ -1296,6 +1388,7 @@ def _(
         # Create export files
         csv_data = export_df.write_csv()
         json_data = export_df.write_json()
+        rdf_data = export_to_rdf_turtle(export_df, taxon_input.value, qid)
 
         # Get active filters for metadata
         active_filters = {
@@ -1341,6 +1434,12 @@ def _(
                     filename=f"lotus_data_{taxon_input.value.replace(' ', '_')}_{datetime.now().strftime('%Y%m%d')}.json",
                     label="📥 JSON",
                     mimetype="application/json",
+                ),
+                mo.download(
+                    data=rdf_data,
+                    filename=f"lotus_data_{taxon_input.value.replace(' ', '_')}_{datetime.now().strftime('%Y%m%d')}.ttl",
+                    label="📥 RDF/Turtle",
+                    mimetype="text/turtle",
                 ),
                 mo.download(
                     data=metadata_json,
