@@ -5,6 +5,7 @@
 #     "astral==3.2",
 #     "polars==1.35.1",
 #     "pyarrow==22.0.0",
+#     "rdflib==7.1.1",
 #     "sparqlwrapper==2.0.0",
 # ]
 # [tool.marimo.display]
@@ -854,40 +855,81 @@ Licensed under AGPL-3.0.
 @app.function
 def export_to_rdf_turtle(df: pl.DataFrame, taxon_input: str, qid: str) -> str:
     """
-    Export data to RDF Turtle format following W3C standards.
+    Export data to RDF Turtle format using rdflib following W3C standards.
 
     Uses standard ontologies:
     - CHEMINF (Chemical Information Ontology)
     - SIO (Semanticscience Integrated Ontology)
     - WD (Wikidata)
     - schema.org
+    - DCTERMS (Dublin Core Terms)
     """
+    from rdflib import Graph, Namespace, Literal, URIRef
+    from rdflib.namespace import RDF, RDFS, XSD, DCTERMS
     from urllib.parse import quote as url_quote
 
-    # RDF prefixes
-    turtle = """@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
-@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
-@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
-@prefix wd: <http://www.wikidata.org/entity/> .
-@prefix wdt: <http://www.wikidata.org/prop/direct/> .
-@prefix cheminf: <http://semanticscience.org/resource/CHEMINF_> .
-@prefix sio: <http://semanticscience.org/resource/SIO_> .
-@prefix schema: <http://schema.org/> .
-@prefix dcterms: <http://purl.org/dc/terms/> .
-@prefix bibo: <http://purl.org/ontology/bibo/> .
+    # Initialize graph
+    g = Graph()
 
-# Dataset Metadata
-<https://lotus.naturalproducts.net/dataset/{url_quote(taxon_input)}> a schema:Dataset ;
-    schema:name "LOTUS Data for {taxon_input}"^^xsd:string ;
-    schema:description "Chemical compounds found in taxon from Wikidata"^^xsd:string ;
-    schema:dateCreated "{datetime.now().isoformat()}"^^xsd:dateTime ;
-    schema:license <https://creativecommons.org/publicdomain/zero/1.0/> ;
-    schema:provider <https://www.wikidata.org/> ;
-    schema:about wd:{qid} ;
-    dcterms:source <https://www.wikidata.org/> ;
-    schema:numberOfRecords {len(df)} .
+    # Define namespaces
+    WD = Namespace("http://www.wikidata.org/entity/")
+    WDT = Namespace("http://www.wikidata.org/prop/direct/")
+    CHEMINF = Namespace("http://semanticscience.org/resource/CHEMINF_")
+    SIO = Namespace("http://semanticscience.org/resource/SIO_")
+    SCHEMA = Namespace("http://schema.org/")
+    BIBO = Namespace("http://purl.org/ontology/bibo/")
 
-"""
+    # Bind prefixes for cleaner output
+    g.bind("wd", WD)
+    g.bind("wdt", WDT)
+    g.bind("cheminf", CHEMINF)
+    g.bind("sio", SIO)
+    g.bind("schema", SCHEMA)
+    g.bind("dcterms", DCTERMS)
+    g.bind("bibo", BIBO)
+
+    # Dataset URI
+    dataset_uri = URIRef(
+        f"https://lotus.naturalproducts.net/dataset/{url_quote(taxon_input)}"
+    )
+
+    # Dataset metadata
+    g.add((dataset_uri, RDF.type, SCHEMA.Dataset))
+    g.add(
+        (
+            dataset_uri,
+            SCHEMA.name,
+            Literal(f"LOTUS Data for {taxon_input}", datatype=XSD.string),
+        )
+    )
+    g.add(
+        (
+            dataset_uri,
+            SCHEMA.description,
+            Literal(
+                f"Chemical compounds found in taxon {taxon_input} from Wikidata",
+                datatype=XSD.string,
+            ),
+        )
+    )
+    g.add(
+        (
+            dataset_uri,
+            SCHEMA.dateCreated,
+            Literal(datetime.now().isoformat(), datatype=XSD.dateTime),
+        )
+    )
+    g.add(
+        (
+            dataset_uri,
+            SCHEMA.license,
+            URIRef("https://creativecommons.org/publicdomain/zero/1.0/"),
+        )
+    )
+    g.add((dataset_uri, SCHEMA.provider, URIRef("https://www.wikidata.org/")))
+    g.add((dataset_uri, SCHEMA.about, WD[qid]))
+    g.add((dataset_uri, DCTERMS.source, URIRef("https://www.wikidata.org/")))
+    g.add((dataset_uri, SCHEMA.numberOfRecords, Literal(len(df), datatype=XSD.integer)))
 
     # Add compound data
     for row in df.iter_rows(named=True):
@@ -895,52 +937,114 @@ def export_to_rdf_turtle(df: pl.DataFrame, taxon_input: str, qid: str) -> str:
         if not compound_qid:
             continue
 
-        turtle += f"\n# Compound {row.get('compound_name', 'Unknown')}\n"
-        turtle += f"wd:{compound_qid} a schema:MolecularEntity ;\n"
+        compound_uri = WD[compound_qid]
 
+        # Link compound to dataset
+        g.add((dataset_uri, SCHEMA.hasPart, compound_uri))
+
+        # Compound type
+        g.add((compound_uri, RDF.type, SCHEMA.MolecularEntity))
+
+        # Compound label
         if row.get("compound_name"):
-            turtle += f'    rdfs:label "{row["compound_name"]}"^^xsd:string ;\n'
+            g.add(
+                (
+                    compound_uri,
+                    RDFS.label,
+                    Literal(row["compound_name"], datatype=XSD.string),
+                )
+            )
 
+        # InChIKey
         if row.get("compound_inchikey"):
-            turtle += f'    cheminf:000059 "{row["compound_inchikey"]}"^^xsd:string ;  # InChIKey\n'
+            g.add(
+                (
+                    compound_uri,
+                    CHEMINF["000059"],
+                    Literal(row["compound_inchikey"], datatype=XSD.string),
+                )
+            )
 
+        # SMILES
         if row.get("compound_smiles"):
-            turtle += f'    cheminf:000018 "{row["compound_smiles"]}"^^xsd:string ;  # SMILES\n'
+            g.add(
+                (
+                    compound_uri,
+                    CHEMINF["000018"],
+                    Literal(row["compound_smiles"], datatype=XSD.string),
+                )
+            )
 
+        # Molecular formula
         if row.get("molecular_formula"):
-            turtle += f'    cheminf:000042 "{row["molecular_formula"]}"^^xsd:string ;  # molecular formula\n'
+            g.add(
+                (
+                    compound_uri,
+                    CHEMINF["000042"],
+                    Literal(row["molecular_formula"], datatype=XSD.string),
+                )
+            )
 
-        if row.get("compound_mass"):
-            turtle += f'    sio:000218 {row["compound_mass"]}^^xsd:float ;  # molecular mass\n'
+        # Molecular mass
+        if row.get("compound_mass") is not None:
+            g.add(
+                (
+                    compound_uri,
+                    SIO["000218"],
+                    Literal(row["compound_mass"], datatype=XSD.float),
+                )
+            )
 
-        # Database cross-references
-        if row.get("pubchem_cid"):
-            turtle += f'    sio:000008 <http://pubchem.ncbi.nlm.nih.gov/compound/{row["pubchem_cid"]}> ;  # PubChem\n'
-
-        if row.get("chebi_id"):
-            turtle += f'    sio:000008 <http://purl.obolibrary.org/obo/CHEBI_{row["chebi_id"]}> ;  # ChEBI\n'
-
-        if row.get("chembl_id"):
-            turtle += f'    sio:000008 <https://www.ebi.ac.uk/chembl/compound_report_card/{row["chembl_id"]}> ;  # ChEMBL\n'
-
-        # Taxonomic association
+        # Taxonomic association (found in taxon)
         if row.get("taxon_qid"):
-            turtle += f'    sio:000255 wd:{row["taxon_qid"]} ;  # found in taxon\n'
+            g.add((compound_uri, SIO["000255"], WD[row["taxon_qid"]]))
+
+        # Taxon name
+        if row.get("taxon_name") and row.get("taxon_qid"):
+            taxon_uri = WD[row["taxon_qid"]]
+            g.add(
+                (taxon_uri, RDFS.label, Literal(row["taxon_name"], datatype=XSD.string))
+            )
+            g.add((taxon_uri, RDF.type, SCHEMA.Taxon))
 
         # Reference
         if row.get("reference_qid"):
-            turtle += f'    dcterms:source wd:{row["reference_qid"]} ;  # bibliographic reference\n'
+            ref_uri = WD[row["reference_qid"]]
+            g.add((compound_uri, DCTERMS.source, ref_uri))
 
-        # Remove trailing ;\n and add .\n
-        turtle = turtle.rstrip(";\n") + " .\n"
+            # Reference metadata
+            if row.get("reference_title"):
+                g.add(
+                    (
+                        ref_uri,
+                        DCTERMS.title,
+                        Literal(row["reference_title"], datatype=XSD.string),
+                    )
+                )
+
+            if row.get("reference_doi"):
+                # URL-encode the DOI to handle special characters like <, >, etc.
+                encoded_doi = url_quote(row["reference_doi"], safe="")
+                doi_uri = URIRef(f"https://doi.org/{encoded_doi}")
+                g.add((ref_uri, SCHEMA.identifier, doi_uri))
+
+            if row.get("reference_date"):
+                g.add(
+                    (
+                        ref_uri,
+                        DCTERMS.date,
+                        Literal(str(row["reference_date"]), datatype=XSD.date),
+                    )
+                )
 
     # Add taxon information
     if qid:
-        turtle += f"\n# Taxon Information\n"
-        turtle += f"wd:{qid} a schema:Taxon ;\n"
-        turtle += f'    rdfs:label "{taxon_input}"^^xsd:string .\n'
+        taxon_uri = WD[qid]
+        g.add((taxon_uri, RDF.type, SCHEMA.Taxon))
+        g.add((taxon_uri, RDFS.label, Literal(taxon_input, datatype=XSD.string)))
 
-    return turtle
+    # Serialize to Turtle format
+    return g.serialize(format="turtle")
 
 
 @app.cell
