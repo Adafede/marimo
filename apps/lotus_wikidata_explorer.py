@@ -250,16 +250,39 @@ def create_structure_image_url(smiles: str) -> str:
 
 
 @app.function
+def build_sparql_values_clause(
+    variable: str, values: list, use_wd_prefix: bool = True
+) -> str:
+    """
+    Build a SPARQL VALUES clause for a list of values.
+
+    Args:
+        variable: SPARQL variable name (e.g., 'taxon', 'compound')
+        values: List of QIDs or URIs
+        use_wd_prefix: Whether to prefix values with 'wd:' (default True)
+
+    Returns:
+        SPARQL VALUES clause string
+
+    Example:
+        >>> build_sparql_values_clause('taxon', ['Q12345', 'Q67890'])
+        'VALUES ?taxon { wd:Q12345 wd:Q67890 }'
+    """
+    if use_wd_prefix:
+        values_str = " ".join(f"wd:{v}" for v in values)
+    else:
+        values_str = " ".join(f"<{v}>" for v in values)
+
+    return f"VALUES ?{variable} {{ {values_str} }}"
+
+
+@app.function
 def build_taxon_details_query(qids: list) -> str:
     """Build SPARQL query to fetch taxon details (label, description and parent taxon)."""
-    qids_str = " ".join(f"wd:{qid}" for qid in qids)
+    values_clause = build_sparql_values_clause("taxon", qids)
     return f"""
-    PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-    PREFIX schema: <http://schema.org/>
-    PREFIX wd: <http://www.wikidata.org/entity/>
-    PREFIX wdt: <http://www.wikidata.org/prop/direct/>
     SELECT ?taxon ?taxonLabel ?taxonDescription ?taxon_parent ?taxon_parentLabel WHERE {{
-      VALUES ?taxon {{ {qids_str} }}
+      {values_clause}
       OPTIONAL {{ 
         ?taxon rdfs:label ?taxonLabel.
          FILTER(LANG(?taxonLabel) IN ("en", "mul"))
@@ -488,6 +511,165 @@ def create_wikidata_link(qid: str) -> mo.Html:
 def pluralize(singular: str, count: int) -> str:
     """Return singular or plural form based on count with special cases."""
     return singular if count == 1 else PLURAL_MAP.get(singular, f"{singular}s")
+
+
+@app.function
+def serialize_element_range(element_range: ElementRange) -> Optional[Dict[str, int]]:
+    """Convert ElementRange to dictionary for export, returns None if not active."""
+    if not element_range.is_active():
+        return None
+    return {
+        "min": element_range.min_val,
+        "max": element_range.max_val,
+    }
+
+
+@app.function
+def serialize_formula_filters(
+    filters: Optional[FormulaFilters],
+) -> Optional[Dict[str, Any]]:
+    """Convert FormulaFilters to dictionary for metadata export."""
+    if not filters or not filters.is_active():
+        return None
+
+    result = {}
+
+    # Exact formula
+    if filters.exact_formula and filters.exact_formula.strip():
+        result["exact_formula"] = filters.exact_formula.strip()
+
+    # Element ranges
+    for element_name, element_range in [
+        ("carbon", filters.c),
+        ("hydrogen", filters.h),
+        ("nitrogen", filters.n),
+        ("oxygen", filters.o),
+        ("phosphorus", filters.p),
+        ("sulfur", filters.s),
+    ]:
+        range_dict = serialize_element_range(element_range)
+        if range_dict:
+            result[element_name] = range_dict
+
+    # Halogen states (only include if not "allowed")
+    halogen_states = {}
+    for halogen_name, state in [
+        ("fluorine", filters.f_state),
+        ("chlorine", filters.cl_state),
+        ("bromine", filters.br_state),
+        ("iodine", filters.i_state),
+    ]:
+        if state != "allowed":
+            halogen_states[halogen_name] = state
+
+    if halogen_states:
+        result["halogens"] = halogen_states
+
+    return result if result else None
+
+
+@app.function
+def build_active_filters_dict(
+    mass_filter_active: bool,
+    mass_min_val: Optional[float],
+    mass_max_val: Optional[float],
+    year_filter_active: bool,
+    year_start_val: Optional[int],
+    year_end_val: Optional[int],
+    formula_filters: Optional[FormulaFilters],
+) -> Dict[str, Any]:
+    """
+    Build a dictionary of active filters for metadata export.
+
+    This function follows DRY principle by centralizing filter serialization logic.
+    """
+    filters = {}
+
+    # Mass filter
+    if mass_filter_active and (mass_min_val is not None or mass_max_val is not None):
+        filters["mass"] = {
+            "min": mass_min_val,
+            "max": mass_max_val,
+        }
+
+    # Year filter
+    if year_filter_active and (year_start_val is not None or year_end_val is not None):
+        filters["publication_year"] = {
+            "start": year_start_val,
+            "end": year_end_val,
+        }
+
+    # Formula filter
+    formula_dict = serialize_formula_filters(formula_filters)
+    if formula_dict:
+        filters["molecular_formula"] = formula_dict
+
+    return filters
+
+
+@app.function
+def generate_filename(
+    taxon_name: str, file_type: str, prefix: str = "lotus_data"
+) -> str:
+    """
+    Generate standardized filename for exports.
+
+    Args:
+        taxon_name: Name of the taxon
+        file_type: File extension (e.g., 'csv', 'json', 'ttl')
+        prefix: Filename prefix (default: 'lotus_data')
+
+    Returns:
+        Standardized filename with date
+    """
+    safe_name = taxon_name.replace(" ", "_")
+    date_str = datetime.now().strftime("%Y%m%d")
+    return f"{prefix}_{safe_name}_{date_str}.{file_type}"
+
+
+@app.function
+def create_download_buttons(
+    csv_data: str,
+    json_data: str,
+    rdf_data: str,
+    metadata_json: str,
+    taxon_name: str,
+) -> mo.Html:
+    """
+    Create download buttons for all export formats.
+
+    This function centralizes download button creation for consistency (DRY).
+    """
+    return mo.hstack(
+        [
+            mo.download(
+                data=csv_data,
+                filename=generate_filename(taxon_name, "csv"),
+                label="📥 CSV",
+                mimetype="text/csv",
+            ),
+            mo.download(
+                data=json_data,
+                filename=generate_filename(taxon_name, "json"),
+                label="📥 JSON",
+                mimetype="application/json",
+            ),
+            mo.download(
+                data=rdf_data,
+                filename=generate_filename(taxon_name, "ttl"),
+                label="📥 RDF/Turtle",
+                mimetype="text/turtle",
+            ),
+            mo.download(
+                data=metadata_json,
+                filename=generate_filename(taxon_name, "json", prefix="lotus_metadata"),
+                label="📋 Metadata",
+                mimetype="application/json",
+            ),
+        ],
+        gap=2,
+        wrap=True,
+    )
 
 
 @app.function
@@ -773,7 +955,7 @@ def create_export_metadata(
 
     Returns machine-readable metadata with provenance, access info, and citations.
     """
-    return {
+    metadata = {
         "@context": "https://schema.org/",
         "@type": "Dataset",
         "name": f"LOTUS Data for {taxon_input}",
@@ -837,11 +1019,16 @@ def create_export_metadata(
         "search_parameters": {
             "taxon": taxon_input,
             "taxon_qid": qid,
-            "filters": filters,
         },
         "sparql_endpoint": "https://query.wikidata.org/sparql",
         # "sparql_endpoint": "https://qlever.dev/wikidata",
     }
+
+    # Add filters if any are active
+    if filters:
+        metadata["search_parameters"]["filters"] = filters
+
+    return metadata
 
 
 @app.function
@@ -1517,13 +1704,30 @@ def _(
 
 @app.cell
 def _(
+    br_state,
+    c_max,
+    c_min,
+    cl_state,
+    exact_formula,
+    f_state,
     formula_filter,
+    h_max,
+    h_min,
+    i_state,
     mass_filter,
     mass_max,
     mass_min,
+    n_max,
+    n_min,
+    o_max,
+    o_min,
+    p_max,
+    p_min,
     qid,
     results_df,
     run_button,
+    s_max,
+    s_min,
     state_auto_run,
     taxon_input,
     year_end,
@@ -1565,26 +1769,35 @@ def _(
         json_data = export_df.write_json()
         rdf_data = export_to_rdf_turtle(export_df, taxon_input.value, qid)
 
-        # Get active filters for metadata
-        active_filters = {
-            "mass_filter": mass_filter.value if "mass_filter" in dir() else False,
-            "mass_min": mass_min.value
-            if "mass_min" in dir() and mass_filter.value
-            else None,
-            "mass_max": mass_max.value
-            if "mass_max" in dir() and mass_filter.value
-            else None,
-            "year_filter": year_filter.value if "year_filter" in dir() else False,
-            "year_start": year_start.value
-            if "year_start" in dir() and year_filter.value
-            else None,
-            "year_end": year_end.value
-            if "year_end" in dir() and year_filter.value
-            else None,
-            "formula_filter": formula_filter.value
-            if "formula_filter" in dir()
-            else False,
-        }
+        # Build formula filters if active (private variable to avoid collision)
+        _formula_filt = None
+        if formula_filter.value:
+            _formula_filt = FormulaFilters(
+                exact_formula=exact_formula.value
+                if exact_formula.value.strip()
+                else None,
+                c=ElementRange(c_min.value, c_max.value),
+                h=ElementRange(h_min.value, h_max.value),
+                n=ElementRange(n_min.value, n_max.value),
+                o=ElementRange(o_min.value, o_max.value),
+                p=ElementRange(p_min.value, p_max.value),
+                s=ElementRange(s_min.value, s_max.value),
+                f_state=f_state.value,
+                cl_state=cl_state.value,
+                br_state=br_state.value,
+                i_state=i_state.value,
+            )
+
+        # Get active filters for metadata using helper function
+        active_filters = build_active_filters_dict(
+            mass_filter_active=mass_filter.value,
+            mass_min_val=mass_min.value if mass_filter.value else None,
+            mass_max_val=mass_max.value if mass_filter.value else None,
+            year_filter_active=year_filter.value,
+            year_start_val=year_start.value if year_filter.value else None,
+            year_end_val=year_end.value if year_filter.value else None,
+            formula_filters=_formula_filt,
+        )
 
         metadata = create_export_metadata(
             export_df, taxon_input.value, qid, active_filters
@@ -1595,36 +1808,13 @@ def _(
 
         citation_text = create_citation_text(taxon_input.value)
 
-        # Download buttons
-        download_buttons = mo.hstack(
-            [
-                mo.download(
-                    data=csv_data,
-                    filename=f"lotus_data_{taxon_input.value.replace(' ', '_')}_{datetime.now().strftime('%Y%m%d')}.csv",
-                    label="📥 CSV",
-                    mimetype="text/csv",
-                ),
-                mo.download(
-                    data=json_data,
-                    filename=f"lotus_data_{taxon_input.value.replace(' ', '_')}_{datetime.now().strftime('%Y%m%d')}.json",
-                    label="📥 JSON",
-                    mimetype="application/json",
-                ),
-                mo.download(
-                    data=rdf_data,
-                    filename=f"lotus_data_{taxon_input.value.replace(' ', '_')}_{datetime.now().strftime('%Y%m%d')}.ttl",
-                    label="📥 RDF/Turtle",
-                    mimetype="text/turtle",
-                ),
-                mo.download(
-                    data=metadata_json,
-                    filename=f"lotus_metadata_{taxon_input.value.replace(' ', '_')}_{datetime.now().strftime('%Y%m%d')}.json",
-                    label="📋 Metadata",
-                    mimetype="application/json",
-                ),
-            ],
-            gap=2,
-            wrap=True,
+        # Create download buttons using helper function
+        download_buttons = create_download_buttons(
+            csv_data=csv_data,
+            json_data=json_data,
+            rdf_data=rdf_data,
+            metadata_json=metadata_json,
+            taxon_name=taxon_input.value,
         )
 
         table_output = mo.vstack(
