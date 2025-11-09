@@ -21,9 +21,10 @@ with app.setup:
     import polars as pl
     import re
     import time
+    from dataclasses import dataclass, field
     from datetime import datetime
     from functools import lru_cache
-    from typing import Optional, Dict, Any
+    from typing import Optional, Dict, Any, Tuple
     from urllib.parse import quote
     from SPARQLWrapper import SPARQLWrapper, JSON
 
@@ -42,6 +43,10 @@ with app.setup:
         "user_agent": "LOTUS Explorer/0.0.1",
     }
 
+    # Wikidata URLs (constants)
+    WIKIDATA_ENTITY_PREFIX = "http://www.wikidata.org/entity/"
+    WIKIDATA_WIKI_PREFIX = "https://www.wikidata.org/wiki/"
+
     # Shared SPARQL instance
     SPARQL = SPARQLWrapper("https://query.wikidata.org/sparql")
     SPARQL.setReturnFormat(JSON)
@@ -51,6 +56,70 @@ with app.setup:
     SUBSCRIPT_MAP = str.maketrans("₀₁₂₃₄₅₆₇₈₉", "0123456789")
     # Regex pattern for molecular formula parsing (compiled once)
     FORMULA_PATTERN = re.compile(r"([A-Z][a-z]?)(\d*)")
+
+    # Pluralization map (constant)
+    PLURAL_MAP = {
+        "Entry": "Entries",
+        "entry": "entries",
+        "Taxon": "Taxa",
+        "taxon": "taxa",
+    }
+
+    # ====================================================================
+    # DATA CLASSES (SOLID - Single Responsibility)
+    # ====================================================================
+
+    @dataclass(frozen=True)
+    class ElementRange:
+        """Range for element count in molecular formula."""
+
+        min_val: Optional[int] = None
+        max_val: Optional[int] = None
+
+        def is_active(self) -> bool:
+            """Check if range filter is active."""
+            return self.min_val is not None or self.max_val is not None
+
+        def matches(self, count: int) -> bool:
+            """Check if count is within range."""
+            if not self.is_active():
+                return True
+            if self.min_val is not None and count < self.min_val:
+                return False
+            if self.max_val is not None and count > self.max_val:
+                return False
+            return True
+
+    @dataclass(frozen=True)
+    class FormulaFilters:
+        """Molecular formula filtering criteria."""
+
+        exact_formula: Optional[str] = None
+        c: ElementRange = field(default_factory=ElementRange)
+        h: ElementRange = field(default_factory=ElementRange)
+        n: ElementRange = field(default_factory=ElementRange)
+        o: ElementRange = field(default_factory=ElementRange)
+        p: ElementRange = field(default_factory=ElementRange)
+        s: ElementRange = field(default_factory=ElementRange)
+        f_state: str = "allowed"
+        cl_state: str = "allowed"
+        br_state: str = "allowed"
+        i_state: str = "allowed"
+
+        def is_active(self) -> bool:
+            """Check if any filter is active."""
+            if self.exact_formula and self.exact_formula.strip():
+                return True
+            if any(
+                r.is_active() for r in [self.c, self.h, self.n, self.o, self.p, self.s]
+            ):
+                return True
+            if any(
+                s != "allowed"
+                for s in [self.f_state, self.cl_state, self.br_state, self.i_state]
+            ):
+                return True
+            return False
 
 
 @app.function
@@ -120,9 +189,10 @@ def execute_sparql(
 
 
 @app.function
-@lru_cache(maxsize=128)
+@lru_cache(maxsize=512)
 def extract_qid(url: str) -> str:
-    return url.replace("http://www.wikidata.org/entity/", "")
+    """Extract QID from Wikidata entity URL. Cached for performance."""
+    return url.replace(WIKIDATA_ENTITY_PREFIX, "")
 
 
 @app.function
@@ -136,7 +206,7 @@ def create_structure_image_url(smiles: str) -> str:
 
 @app.function
 @lru_cache(maxsize=256)
-def resolve_taxon_to_qid(taxon_input: str) -> tuple[Optional[str], Optional[str]]:
+def resolve_taxon_to_qid(taxon_input: str) -> Tuple[Optional[str], Optional[str]]:
     """
     Resolve taxon name or QID to a valid QID.
 
@@ -145,11 +215,11 @@ def resolve_taxon_to_qid(taxon_input: str) -> tuple[Optional[str], Optional[str]
     """
     taxon_input = taxon_input.strip()
 
-    # Check if input is already a QID (Q followed by digits)
+    # Early return if input is already a QID
     if taxon_input.upper().startswith("Q") and taxon_input[1:].isdigit():
         return taxon_input.upper(), None
 
-    # Otherwise, search for the taxon by name using EntitySearch
+    # Search for taxon by name
     try:
         query = build_taxon_search_query(taxon_input)
         results = execute_sparql(query)
@@ -158,34 +228,38 @@ def resolve_taxon_to_qid(taxon_input: str) -> tuple[Optional[str], Optional[str]
         if not bindings:
             return None, None
 
-        # Extract all matching QIDs and their scientific names
-        matches = []
-        for binding in bindings:
-            qid = extract_qid(binding.get("item", {}).get("value", ""))
-            name = binding.get("name", {}).get("value", "")
-            if qid and name:
-                matches.append((qid, name))
+        # Extract matches (list comprehension for speed)
+        matches = [
+            (extract_qid(b["item"]["value"]), b["name"]["value"])
+            for b in bindings
+            if "item" in b
+            and "name" in b
+            and "value" in b["item"]
+            and "value" in b["name"]
+        ]
 
         if not matches:
             return None, None
 
-        # Check for exact name match (case-insensitive)
+        # Find exact matches (case-insensitive)
+        taxon_lower = taxon_input.lower()
         exact_matches = [
-            (qid, name) for qid, name in matches if name.lower() == taxon_input.lower()
+            (qid, name) for qid, name in matches if name.lower() == taxon_lower
         ]
 
+        # Single exact match - perfect
         if len(exact_matches) == 1:
             return exact_matches[0][0], None
-        elif len(exact_matches) > 1:
-            # Multiple exact matches - ambiguous, return first with warning
-            qid_list = ", ".join([qid for qid, _ in exact_matches])
+
+        # Multiple exact matches - ambiguous
+        if len(exact_matches) > 1:
+            qid_list = ", ".join(qid for qid, _ in exact_matches)
             warning = f"Ambiguous taxon name. Multiple QIDs found: {qid_list}. Using {exact_matches[0][0]}. For precision, please use a specific QID."
             return exact_matches[0][0], warning
 
-        # No exact match, use the first result
+        # No exact match - use first result with warning
         if len(matches) > 1:
-            # Show top matches for context
-            qid_list = ", ".join([f"{qid} ({name})" for qid, name in matches[:3]])
+            qid_list = ", ".join(f"{qid} ({name})" for qid, name in matches[:3])
             warning = f"No exact match. Similar taxa found: {qid_list}. Using {matches[0][0]}. For precision, use a QID directly."
             return matches[0][0], warning
 
@@ -218,42 +292,52 @@ def create_link(url: str, text: str) -> mo.Html:
 @app.function
 def create_wikidata_link(qid: str) -> mo.Html:
     """Create a Wikidata link for a QID."""
-    return (
-        create_link(f"https://www.wikidata.org/wiki/{qid}", qid)
-        if qid
-        else mo.Html("—")
-    )
+    return create_link(f"{WIKIDATA_WIKI_PREFIX}{qid}", qid) if qid else mo.Html("—")
 
 
 @app.function
 def pluralize(singular: str, count: int) -> str:
     """Return singular or plural form based on count with special cases."""
-    if count == 1:
-        return singular
+    return singular if count == 1 else PLURAL_MAP.get(singular, f"{singular}s")
 
-    # Handle special plural forms
-    special_plurals = {
-        "Entry": "Entries",
-        "entry": "entries",
-        "Taxon": "Taxa",
-        "taxon": "taxa",
-    }
 
-    return special_plurals.get(singular, f"{singular}s")
+@app.function
+def apply_range_filter(
+    df: pl.DataFrame,
+    column: str,
+    min_val: Optional[float],
+    max_val: Optional[float],
+    extract_func=None,
+) -> pl.DataFrame:
+    """
+    Generic range filter for DataFrame columns.
+
+    Args:
+        df: DataFrame to filter
+        column: Column name to filter on
+        min_val: Minimum value (inclusive)
+        max_val: Maximum value (inclusive)
+        extract_func: Optional function to extract value from column (e.g., dt.year())
+    """
+    if min_val is None or max_val is None or column not in df.columns:
+        return df
+
+    col_expr = pl.col(column)
+    if extract_func:
+        col_expr = extract_func(col_expr)
+
+    return df.filter(
+        pl.col(column).is_null() | ((col_expr >= min_val) & (col_expr <= max_val))
+    )
 
 
 @app.function
 def apply_year_filter(
     df: pl.DataFrame, year_start: Optional[int], year_end: Optional[int]
 ) -> pl.DataFrame:
-    if year_start is None or year_end is None or "pub_date" not in df.columns:
-        return df
-    return df.filter(
-        pl.col("pub_date").is_null()
-        | (
-            (pl.col("pub_date").dt.year() >= year_start)
-            & (pl.col("pub_date").dt.year() <= year_end)
-        )
+    """Apply year range filter to publication dates."""
+    return apply_range_filter(
+        df, "pub_date", year_start, year_end, extract_func=lambda col: col.dt.year()
     )
 
 
@@ -261,12 +345,8 @@ def apply_year_filter(
 def apply_mass_filter(
     df: pl.DataFrame, mass_min: Optional[float], mass_max: Optional[float]
 ) -> pl.DataFrame:
-    if mass_min is None or mass_max is None or "mass" not in df.columns:
-        return df
-    return df.filter(
-        pl.col("mass").is_null()
-        | ((pl.col("mass") >= mass_min) & (pl.col("mass") <= mass_max))
-    )
+    """Apply mass range filter."""
+    return apply_range_filter(df, "mass", mass_min, mass_max)
 
 
 @app.function
@@ -289,71 +369,52 @@ def parse_molecular_formula(formula: str) -> tuple:
 
 
 @app.function
-def formula_matches_criteria(
-    formula: str,
-    exact_formula: Optional[str],
-    c_min: Optional[int],
-    c_max: Optional[int],
-    h_min: Optional[int],
-    h_max: Optional[int],
-    n_min: Optional[int],
-    n_max: Optional[int],
-    o_min: Optional[int],
-    o_max: Optional[int],
-    p_min: Optional[int],
-    p_max: Optional[int],
-    s_min: Optional[int],
-    s_max: Optional[int],
-    f_state: str,
-    cl_state: str,
-    br_state: str,
-    i_state: str,
-) -> bool:
-    """Check if a molecular formula matches the specified criteria.
+def formula_matches_criteria(formula: str, filters: FormulaFilters) -> bool:
+    """
+    Check if a molecular formula matches the specified criteria.
 
-    Halogen states can be:
-    - "allowed": no restriction (default)
-    - "required": must be present (count > 0)
-    - "excluded": must not be present (count = 0)
+    Args:
+        formula: Molecular formula to check
+        filters: FormulaFilters dataclass with all criteria
     """
     if not formula:
         return True  # Keep entries without formula
 
-    # Normalize formula by converting subscripts to regular numbers
+    # Normalize formula
     normalized_formula = formula.translate(SUBSCRIPT_MAP)
 
-    # If exact formula is specified, check for exact match
-    if exact_formula and exact_formula.strip():
-        normalized_exact = exact_formula.strip().translate(SUBSCRIPT_MAP)
+    # Check exact formula match
+    if filters.exact_formula and filters.exact_formula.strip():
+        normalized_exact = filters.exact_formula.strip().translate(SUBSCRIPT_MAP)
         return normalized_formula == normalized_exact
 
-    # Parse the formula (cached)
+    # Parse formula (cached)
     atom_tuple = parse_molecular_formula(formula)
     atoms = dict(atom_tuple)
 
-    # Check main elements ranges
-    for element, min_val, max_val in [
-        ("C", c_min, c_max),
-        ("H", h_min, h_max),
-        ("N", n_min, n_max),
-        ("O", o_min, o_max),
-        ("P", p_min, p_max),
-        ("S", s_min, s_max),
-    ]:
-        if min_val is not None or max_val is not None:
-            count = atoms.get(element, 0)
-            if (min_val is not None and count < min_val) or (
-                max_val is not None and count > max_val
-            ):
-                return False
+    # Check element ranges
+    elements_to_check = [
+        ("C", filters.c),
+        ("H", filters.h),
+        ("N", filters.n),
+        ("O", filters.o),
+        ("P", filters.p),
+        ("S", filters.s),
+    ]
 
-    # Check halogens with state-based logic
-    for halogen, state in [
-        ("F", f_state),
-        ("Cl", cl_state),
-        ("Br", br_state),
-        ("I", i_state),
-    ]:
+    for element, elem_range in elements_to_check:
+        if not elem_range.matches(atoms.get(element, 0)):
+            return False
+
+    # Check halogens
+    halogens = [
+        ("F", filters.f_state),
+        ("Cl", filters.cl_state),
+        ("Br", filters.br_state),
+        ("I", filters.i_state),
+    ]
+
+    for halogen, state in halogens:
         count = atoms.get(halogen, 0)
         if (state == "required" and count == 0) or (state == "excluded" and count > 0):
             return False
@@ -362,76 +423,14 @@ def formula_matches_criteria(
 
 
 @app.function
-def apply_formula_filter(
-    df: pl.DataFrame,
-    exact_formula: Optional[str],
-    c_min: Optional[int],
-    c_max: Optional[int],
-    h_min: Optional[int],
-    h_max: Optional[int],
-    n_min: Optional[int],
-    n_max: Optional[int],
-    o_min: Optional[int],
-    o_max: Optional[int],
-    p_min: Optional[int],
-    p_max: Optional[int],
-    s_min: Optional[int],
-    s_max: Optional[int],
-    f_state: str,
-    cl_state: str,
-    br_state: str,
-    i_state: str,
-) -> pl.DataFrame:
+def apply_formula_filter(df: pl.DataFrame, filters: FormulaFilters) -> pl.DataFrame:
     """Apply molecular formula filters to the dataframe."""
-    if "mf" not in df.columns:
+    if "mf" not in df.columns or not filters.is_active():
         return df
 
-    # If no filter is specified, return as is
-    if (
-        (exact_formula is None or not exact_formula.strip())
-        and all(
-            v is None
-            for v in [
-                c_min,
-                c_max,
-                h_min,
-                h_max,
-                n_min,
-                n_max,
-                o_min,
-                o_max,
-                p_min,
-                p_max,
-                s_min,
-                s_max,
-            ]
-        )
-        and all(state == "allowed" for state in [f_state, cl_state, br_state, i_state])
-    ):
-        return df
-
-    # Apply filter with list comprehension (faster than loop + append)
+    # Apply filter using list comprehension (vectorized would be faster but not possible with complex logic)
     mask = [
-        formula_matches_criteria(
-            row.get("mf", ""),
-            exact_formula,
-            c_min,
-            c_max,
-            h_min,
-            h_max,
-            n_min,
-            n_max,
-            o_min,
-            o_max,
-            p_min,
-            p_max,
-            s_min,
-            s_max,
-            f_state,
-            cl_state,
-            br_state,
-            i_state,
-        )
+        formula_matches_criteria(row.get("mf", ""), filters)
         for row in df.iter_rows(named=True)
     ]
 
@@ -445,24 +444,19 @@ def query_wikidata(
     year_end: Optional[int] = None,
     mass_min: Optional[float] = None,
     mass_max: Optional[float] = None,
-    exact_formula: Optional[str] = None,
-    c_min: Optional[int] = None,
-    c_max: Optional[int] = None,
-    h_min: Optional[int] = None,
-    h_max: Optional[int] = None,
-    n_min: Optional[int] = None,
-    n_max: Optional[int] = None,
-    o_min: Optional[int] = None,
-    o_max: Optional[int] = None,
-    p_min: Optional[int] = None,
-    p_max: Optional[int] = None,
-    s_min: Optional[int] = None,
-    s_max: Optional[int] = None,
-    f_state: str = "allowed",
-    cl_state: str = "allowed",
-    br_state: str = "allowed",
-    i_state: str = "allowed",
+    formula_filters: Optional[FormulaFilters] = None,
 ) -> pl.DataFrame:
+    """
+    Query Wikidata for compounds associated with a taxon.
+
+    Args:
+        qid: Wikidata QID for taxon
+        year_start: Filter start year (inclusive)
+        year_end: Filter end year (inclusive)
+        mass_min: Minimum mass in Daltons
+        mass_max: Maximum mass in Daltons
+        formula_filters: Molecular formula filter criteria
+    """
     query = build_compounds_query(qid)
     results = execute_sparql(query)
     bindings = results.get("results", {}).get("bindings", [])
@@ -470,7 +464,7 @@ def query_wikidata(
     if not bindings:
         return pl.DataFrame()
 
-    # Process results more efficiently
+    # Process results efficiently with list comprehension
     rows = [
         {
             "structure": get_binding_value(b, "structure"),
@@ -481,9 +475,11 @@ def query_wikidata(
             "taxon_name": get_binding_value(b, "taxon_name"),
             "taxon": get_binding_value(b, "taxon"),
             "ref_title": get_binding_value(b, "ref_title"),
-            "ref_doi": get_binding_value(b, "ref_doi").split("doi.org/")[-1]
-            if (doi := get_binding_value(b, "ref_doi")) and doi.startswith("http")
-            else get_binding_value(b, "ref_doi"),
+            "ref_doi": (
+                doi.split("doi.org/")[-1]
+                if (doi := get_binding_value(b, "ref_doi")) and doi.startswith("http")
+                else get_binding_value(b, "ref_doi")
+            ),
             "reference": get_binding_value(b, "ref_qid"),
             "pub_date": get_binding_value(b, "pub_date", None),
             "mass": float(mass_raw)
@@ -496,41 +492,25 @@ def query_wikidata(
 
     df = pl.DataFrame(rows)
 
-    # Optimize date conversion with single chain
-    df = df.with_columns(
-        pl.when(pl.col("pub_date").is_not_null())
-        .then(
-            pl.col("pub_date")
-            .str.strptime(pl.Datetime, format="%Y-%m-%dT%H:%M:%SZ", strict=False)
-            .dt.date()
+    # Optimize date conversion
+    if "pub_date" in df.columns:
+        df = df.with_columns(
+            pl.when(pl.col("pub_date").is_not_null())
+            .then(
+                pl.col("pub_date")
+                .str.strptime(pl.Datetime, format="%Y-%m-%dT%H:%M:%SZ", strict=False)
+                .dt.date()
+            )
+            .otherwise(None)
+            .alias("pub_date")
         )
-        .otherwise(None)
-        .alias("pub_date")
-    )
 
-    # Apply filters (only if they're active)
+    # Apply filters (chain for efficiency)
     df = apply_year_filter(df, year_start, year_end)
     df = apply_mass_filter(df, mass_min, mass_max)
-    df = apply_formula_filter(
-        df,
-        exact_formula,
-        c_min,
-        c_max,
-        h_min,
-        h_max,
-        n_min,
-        n_max,
-        o_min,
-        o_max,
-        p_min,
-        p_max,
-        s_min,
-        s_max,
-        f_state,
-        cl_state,
-        br_state,
-        i_state,
-    )
+
+    if formula_filters:
+        df = apply_formula_filter(df, formula_filters)
 
     return df.unique(subset=["structure", "taxon", "reference"], keep="first").sort(
         "name"
@@ -568,13 +548,13 @@ def prepare_export_dataframe(df: pl.DataFrame) -> pl.DataFrame:
     return df.with_columns(
         [
             pl.col("structure")
-            .str.replace("http://www.wikidata.org/entity/", "", literal=True)
+            .str.replace(WIKIDATA_ENTITY_PREFIX, "", literal=True)
             .alias("compound_qid"),
             pl.col("taxon")
-            .str.replace("http://www.wikidata.org/entity/", "", literal=True)
+            .str.replace(WIKIDATA_ENTITY_PREFIX, "", literal=True)
             .alias("taxon_qid"),
             pl.col("reference")
-            .str.replace("http://www.wikidata.org/entity/", "", literal=True)
+            .str.replace(WIKIDATA_ENTITY_PREFIX, "", literal=True)
             .alias("reference_qid"),
         ]
     ).select(
@@ -903,57 +883,27 @@ def _(
                 m_min = mass_min.value if mass_filter.value else None
                 m_max = mass_max.value if mass_filter.value else None
 
-                # Formula filters
+                # Build formula filters using dataclass
+                formula_filt = None
                 if formula_filter.value:
-                    exact_f = (
-                        exact_formula.value if exact_formula.value.strip() else None
+                    formula_filt = FormulaFilters(
+                        exact_formula=exact_formula.value
+                        if exact_formula.value.strip()
+                        else None,
+                        c=ElementRange(c_min.value, c_max.value),
+                        h=ElementRange(h_min.value, h_max.value),
+                        n=ElementRange(n_min.value, n_max.value),
+                        o=ElementRange(o_min.value, o_max.value),
+                        p=ElementRange(p_min.value, p_max.value),
+                        s=ElementRange(s_min.value, s_max.value),
+                        f_state=f_state.value,
+                        cl_state=cl_state.value,
+                        br_state=br_state.value,
+                        i_state=i_state.value,
                     )
-                    _c_min = c_min.value
-                    _c_max = c_max.value
-                    _h_min = h_min.value
-                    _h_max = h_max.value
-                    _n_min = n_min.value
-                    _n_max = n_max.value
-                    _o_min = o_min.value
-                    _o_max = o_max.value
-                    _p_min = p_min.value
-                    _p_max = p_max.value
-                    _s_min = s_min.value
-                    _s_max = s_max.value
-                    _f_state = f_state.value
-                    _cl_state = cl_state.value
-                    _br_state = br_state.value
-                    _i_state = i_state.value
-                else:
-                    exact_f = None
-                    _c_min = _c_max = _h_min = _h_max = None
-                    _n_min = _n_max = _o_min = _o_max = None
-                    _p_min = _p_max = _s_min = _s_max = None
-                    _f_state = _cl_state = _br_state = _i_state = "allowed"
 
                 results_df = query_wikidata(
-                    qid,
-                    y_start,
-                    y_end,
-                    m_min,
-                    m_max,
-                    exact_f,
-                    _c_min,
-                    _c_max,
-                    _h_min,
-                    _h_max,
-                    _n_min,
-                    _n_max,
-                    _o_min,
-                    _o_max,
-                    _p_min,
-                    _p_max,
-                    _s_min,
-                    _s_max,
-                    _f_state,
-                    _cl_state,
-                    _br_state,
-                    _i_state,
+                    qid, y_start, y_end, m_min, m_max, formula_filt
                 )
             except Exception as e:
                 mo.stop(
@@ -1166,6 +1116,15 @@ def _(url_params):
         except (ValueError, AttributeError):
             return default
 
+    def get_element_range_params(
+        prefix: str, default_max: int
+    ) -> Tuple[Optional[int], Optional[int]]:
+        """Helper to get min/max for an element range."""
+        return (
+            get_url_param(f"{prefix}_min", None, int),
+            get_url_param(f"{prefix}_max", default_max, int),
+        )
+
     # Extract all parameters from URL
     url_taxon = get_url_param("taxon")
     url_mass_filter = (
@@ -1178,40 +1137,33 @@ def _(url_params):
     )
     url_year_start = get_url_param("year_start", 1900, int)
     url_year_end = get_url_param("year_end", 2025, int)
+
+    # Check if formula filter is active
     url_formula_filter = any(
         [
             get_url_param("exact_formula"),
-            get_url_param("c_min"),
-            get_url_param("c_max"),
-            get_url_param("h_min"),
-            get_url_param("h_max"),
-            get_url_param("n_min"),
-            get_url_param("n_max"),
-            get_url_param("o_min"),
-            get_url_param("o_max"),
-            get_url_param("p_min"),
-            get_url_param("p_max"),
-            get_url_param("s_min"),
-            get_url_param("s_max"),
+            *[
+                get_url_param(f"{e}_min") or get_url_param(f"{e}_max")
+                for e in ["c", "h", "n", "o", "p", "s"]
+            ],
             get_url_param("f_state", "allowed") != "allowed",
             get_url_param("cl_state", "allowed") != "allowed",
             get_url_param("br_state", "allowed") != "allowed",
             get_url_param("i_state", "allowed") != "allowed",
         ]
     )
+
     url_exact_formula = get_url_param("exact_formula", "")
-    url_c_min = get_url_param("c_min", None, int)
-    url_c_max = get_url_param("c_max", 100, int)
-    url_h_min = get_url_param("h_min", None, int)
-    url_h_max = get_url_param("h_max", 200, int)
-    url_n_min = get_url_param("n_min", None, int)
-    url_n_max = get_url_param("n_max", 50, int)
-    url_o_min = get_url_param("o_min", None, int)
-    url_o_max = get_url_param("o_max", 50, int)
-    url_p_min = get_url_param("p_min", None, int)
-    url_p_max = get_url_param("p_max", 20, int)
-    url_s_min = get_url_param("s_min", None, int)
-    url_s_max = get_url_param("s_max", 20, int)
+
+    # Use helper for element ranges
+    url_c_min, url_c_max = get_element_range_params("c", 100)
+    url_h_min, url_h_max = get_element_range_params("h", 200)
+    url_n_min, url_n_max = get_element_range_params("n", 50)
+    url_o_min, url_o_max = get_element_range_params("o", 50)
+    url_p_min, url_p_max = get_element_range_params("p", 20)
+    url_s_min, url_s_max = get_element_range_params("s", 20)
+
+    # Halogen states
     url_f_state = get_url_param("f_state", "allowed")
     url_cl_state = get_url_param("cl_state", "allowed")
     url_br_state = get_url_param("br_state", "allowed")
