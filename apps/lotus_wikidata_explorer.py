@@ -2,7 +2,6 @@
 # requires-python = ">=3.12"
 # dependencies = [
 #     "marimo",
-#     "astral==3.2",
 #     "polars==1.35.1",
 #     "pyarrow==22.0.0",
 #     "rdflib==7.1.1",
@@ -238,21 +237,7 @@ def execute_sparql(
     raise Exception("Unexpected error in execute_sparql")
 
 
-@app.function
-def clear_all_caches():
-    """
-    Clear all LRU caches in the application.
 
-    Useful when Wikidata has been edited and you want to see fresh data
-    immediately without waiting for cache expiration.
-    """
-    execute_sparql.cache_clear()
-    extract_qid.cache_clear()
-    create_structure_image_url.cache_clear()
-    parse_molecular_formula.cache_clear()
-    return (
-        "✅ All caches cleared! Your next search will fetch fresh data from Wikidata."
-    )
 
 
 @app.function
@@ -1458,17 +1443,10 @@ def _(
 
     run_button = mo.ui.run_button(label="🔍 Search Wikidata")
 
-    cache_clear_button = mo.ui.button(
-        label="🔄 Clear Cache",
-        value=0,
-        kind="neutral",
-        tooltip="Clear cached queries to see fresh Wikidata edits. Use this if you just edited Wikidata and want to see your changes immediately.",
-    )
     return (
         br_state,
         c_max,
         c_min,
-        cache_clear_button,
         cl_state,
         exact_formula,
         f_state,
@@ -1652,7 +1630,6 @@ def _(
 
 @app.cell
 def _(
-    cache_clear_button,
     qid,
     results_df,
     run_button,
@@ -1723,22 +1700,6 @@ def _(
             )
         )
 
-        # Add cache clear button below the stats
-        summary_parts.append(
-            mo.hstack(
-                [
-                    cache_clear_button,
-                    mo.md("_Clear cache to see fresh Wikidata edits_"),
-                ],
-                gap=2,
-                justify="start",
-            )
-        )
-
-        # Show success message when cache is cleared
-        if cache_clear_button.value > 0:
-            cache_message = clear_all_caches()
-            summary_parts.append(mo.callout(mo.md(cache_message), kind="success"))
 
         summary_display = mo.vstack(summary_parts)
 
@@ -1964,12 +1925,6 @@ def _():
             4. **Download** your results in CSV, JSON, RDF/Turtle, or with full metadata
 
             ### Features
-
-            #### Cache Management 🔄
-            - Queries are cached for performance
-            - **Just edited Wikidata?** Click "🔄 Clear Cache" to see your changes immediately
-            - Cache automatically refreshes for new queries
-            - Clearing cache fetches fresh data from Wikidata
 
             #### Taxon Search
             - Search by scientific name (case-insensitive)
