@@ -1204,7 +1204,8 @@ def _(qid, results_df, run_button, state_auto_run, taxon_input, taxon_warning):
 
         summary_parts = [
             mo.md(
-                f"## Results Summary\n\nFound data for **{taxon_input.value}** {create_wikidata_link(qid)}"
+                f"## Results\n"
+                f"### Summary\n\nFound data for **{taxon_input.value}** {create_wikidata_link(qid)}"
             ),
         ]
 
@@ -1354,8 +1355,9 @@ def _(
 
         table_output = mo.vstack(
             [
-                mo.md("### Data Tables"),
+                mo.md("### Download"),
                 download_buttons,
+                mo.md("### Tables"),
                 mo.ui.tabs(
                     {
                         "🖼️  Display": display_table,
