@@ -145,16 +145,16 @@ with app.setup:
 def build_taxon_search_query(taxon_name: str) -> str:
     """Build SPARQL query to find taxa by scientific name. Returns up to 10 results."""
     return f"""
-    SELECT ?item ?name WHERE {{
+    SELECT ?taxon ?taxon_name WHERE {{
       SERVICE wikibase:mwapi {{
         bd:serviceParam wikibase:endpoint "www.wikidata.org";
                         wikibase:api "EntitySearch";
                         mwapi:search "{taxon_name}";
                         mwapi:language "mul".
-        ?item wikibase:apiOutputItem mwapi:item.
+        ?taxon wikibase:apiOutputItem mwapi:item.
         ?num wikibase:apiOrdinal true.
       }}
-      ?item wdt:P225 ?name.
+      ?taxon wdt:P225 ?taxon_name.
     }}
     """
 
@@ -162,25 +162,25 @@ def build_taxon_search_query(taxon_name: str) -> str:
 @app.function
 def build_compounds_query(qid: str) -> str:
     return f"""
-    SELECT DISTINCT ?structure ?structureLabel ?inchikey ?smiles_iso ?smiles_conn
-                   ?taxon_name ?taxon ?ref_title ?ref_doi ?ref_qid ?pub_date ?mass ?mf
+    SELECT DISTINCT ?compound ?compoundLabel ?compound_inchikey ?compound_smiles_iso ?compound_smiles_conn  ?compound_mass ?compound_formula
+                   ?taxon_name ?taxon ?ref_title ?ref_doi ?ref_qid ?ref_date
     WHERE {{
       ?taxon (wdt:P171*) wd:{qid};
              wdt:P225 ?taxon_name. 
-      ?structure wdt:P235 ?inchikey;
-                 wdt:P233 ?smiles_conn;
-                 p:P703 ?statement.
+      ?compound wdt:P235 ?compound_inchikey;
+                wdt:P233 ?compound_smiles_conn;
+                p:P703 ?statement.
       ?statement ps:P703 ?taxon;
                  prov:wasDerivedFrom ?ref.
       ?ref pr:P248 ?ref_qid.
-      OPTIONAL {{ ?structure wdt:P2017 ?smiles_iso. }}
-      OPTIONAL {{ ?structure wdt:P2067 ?mass. }}
-      OPTIONAL {{ ?structure wdt:P274 ?mf. }}
+      OPTIONAL {{ ?compound wdt:P2017 ?compound_smiles_iso. }}
+      OPTIONAL {{ ?compound wdt:P2067 ?compound_mass. }}
+      OPTIONAL {{ ?compound wdt:P274 ?compound_formula. }}
       OPTIONAL {{
         SERVICE <https://query-scholarly.wikidata.org/sparql> {{
           ?ref_qid wdt:P1476 ?ref_title;
                    wdt:P356 ?ref_doi;
-                   wdt:P577 ?pub_date.
+                   wdt:P577 ?ref_date.
         }}
       }}
       SERVICE wikibase:label {{ bd:serviceParam wikibase:language "[AUTO_LANGUAGE],en". }}
@@ -234,9 +234,9 @@ def build_taxon_details_query(qids: list) -> str:
     """Build SPARQL query to fetch taxon details (description and parent taxon)."""
     qids_str = " ".join(f"wd:{qid}" for qid in qids)
     return f"""
-    SELECT ?item ?itemLabel ?itemDescription ?parentLabel WHERE {{
-      VALUES ?item {{ {qids_str} }}
-      OPTIONAL {{ ?item wdt:P171 ?parent. }}
+    SELECT ?taxon ?taxonLabel ?taxonDescription ?taxon_parentLabel WHERE {{
+      VALUES ?taxon {{ {qids_str} }}
+      OPTIONAL {{ ?taxon wdt:P171 ?taxon_parent. }}
       SERVICE wikibase:label {{ bd:serviceParam wikibase:language "[AUTO_LANGUAGE],en". }}
     }}
     """
@@ -326,12 +326,12 @@ def resolve_taxon_to_qid(taxon_input: str) -> Tuple[Optional[str], Optional[mo.H
 
         # Extract matches (list comprehension for speed)
         matches = [
-            (extract_qid(b["item"]["value"]), b["name"]["value"])
+            (extract_qid(b["taxon"]["value"]), b["taxon_name"]["value"])
             for b in bindings
-            if "item" in b
-            and "name" in b
-            and "value" in b["item"]
-            and "value" in b["name"]
+            if "taxon" in b
+            and "taxon_name" in b
+            and "value" in b["taxon"]
+            and "value" in b["taxon_name"]
         ]
 
         if not matches:
@@ -358,11 +358,11 @@ def resolve_taxon_to_qid(taxon_input: str) -> Tuple[Optional[str], Optional[mo.H
             # Build a map of QID to details
             details_map = {}
             for b in details_bindings:
-                qid = extract_qid(get_binding_value(b, "item"))
+                qid = extract_qid(get_binding_value(b, "taxon"))
                 details_map[qid] = (
-                    get_binding_value(b, "itemLabel"),
-                    get_binding_value(b, "itemDescription"),
-                    get_binding_value(b, "parentLabel"),
+                    get_binding_value(b, "taxonLabel"),
+                    get_binding_value(b, "taxonDescription"),
+                    get_binding_value(b, "taxon_parentLabel"),
                 )
 
             # Create matches with details
@@ -392,11 +392,11 @@ def resolve_taxon_to_qid(taxon_input: str) -> Tuple[Optional[str], Optional[mo.H
             # Build a map of QID to details
             details_map = {}
             for b in details_bindings:
-                qid = extract_qid(get_binding_value(b, "item"))
+                qid = extract_qid(get_binding_value(b, "taxon"))
                 details_map[qid] = (
-                    get_binding_value(b, "itemLabel"),
-                    get_binding_value(b, "itemDescription"),
-                    get_binding_value(b, "parentLabel"),
+                    get_binding_value(b, "taxonLabel"),
+                    get_binding_value(b, "taxonDescription"),
+                    get_binding_value(b, "taxon_parentLabel"),
                 )
 
             # Create matches with details
@@ -619,11 +619,11 @@ def query_wikidata(
     # Process results efficiently with list comprehension
     rows = [
         {
-            "structure": get_binding_value(b, "structure"),
-            "name": get_binding_value(b, "structureLabel"),
-            "inchikey": get_binding_value(b, "inchikey"),
-            "smiles": get_binding_value(b, "smiles_iso")
-            or get_binding_value(b, "smiles_conn"),
+            "structure": get_binding_value(b, "compound"),
+            "name": get_binding_value(b, "compoundLabel"),
+            "inchikey": get_binding_value(b, "compound_inchikey"),
+            "smiles": get_binding_value(b, "compound_smiles_iso")
+            or get_binding_value(b, "compound_smiles_conn"),
             "taxon_name": get_binding_value(b, "taxon_name"),
             "taxon": get_binding_value(b, "taxon"),
             "ref_title": get_binding_value(b, "ref_title"),
@@ -633,11 +633,11 @@ def query_wikidata(
                 else get_binding_value(b, "ref_doi")
             ),
             "reference": get_binding_value(b, "ref_qid"),
-            "pub_date": get_binding_value(b, "pub_date", None),
+            "pub_date": get_binding_value(b, "ref_date", None),
             "mass": float(mass_raw)
-            if (mass_raw := get_binding_value(b, "mass", None))
+            if (mass_raw := get_binding_value(b, "compound_mass", None))
             else None,
-            "mf": get_binding_value(b, "mf"),
+            "mf": get_binding_value(b, "compound_formula"),
         }
         for b in bindings
     ]
