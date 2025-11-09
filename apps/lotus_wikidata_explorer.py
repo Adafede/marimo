@@ -861,11 +861,11 @@ def export_to_rdf_turtle(df: pl.DataFrame, taxon_input: str, qid: str) -> str:
 
 # Dataset Metadata
 <https://lotus.naturalproducts.net/dataset/{url_quote(taxon_input)}> a schema:Dataset ;
-    schema:name "LOTUS Natural Products Data for {taxon_input}"^^xsd:string ;
-    schema:description "Chemical compounds and their taxonomic associations from LOTUS database"^^xsd:string ;
+    schema:name "LOTUS Data for {taxon_input}"^^xsd:string ;
+    schema:description "Chemical compounds found in taxon from Wikidata"^^xsd:string ;
     schema:dateCreated "{datetime.now().isoformat()}"^^xsd:dateTime ;
     schema:license <https://creativecommons.org/publicdomain/zero/1.0/> ;
-    schema:provider <https://www.wikidata.org/> , <https://lotus.naturalproducts.net/> ;
+    schema:provider <https://www.wikidata.org/> ;
     schema:about wd:{qid} ;
     dcterms:source <https://www.wikidata.org/> ;
     schema:numberOfRecords {len(df)} .
