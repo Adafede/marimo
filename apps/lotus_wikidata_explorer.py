@@ -214,6 +214,23 @@ def execute_sparql(
 
 
 @app.function
+def clear_all_caches():
+    """
+    Clear all LRU caches in the application.
+
+    Useful when Wikidata has been edited and you want to see fresh data
+    immediately without waiting for cache expiration.
+    """
+    execute_sparql.cache_clear()
+    extract_qid.cache_clear()
+    create_structure_image_url.cache_clear()
+    parse_molecular_formula.cache_clear()
+    return (
+        "✅ All caches cleared! Your next search will fetch fresh data from Wikidata."
+    )
+
+
+@app.function
 @lru_cache(maxsize=512)
 def extract_qid(url: str) -> str:
     """Extract QID from Wikidata entity URL. Cached for performance."""
@@ -1085,10 +1102,18 @@ def _(
     )
 
     run_button = mo.ui.run_button(label="🔍 Search Wikidata")
+
+    cache_clear_button = mo.ui.button(
+        label="🔄 Clear Cache",
+        value=0,
+        kind="neutral",
+        tooltip="Clear cached queries to see fresh Wikidata edits. Use this if you just edited Wikidata and want to see your changes immediately.",
+    )
     return (
         br_state,
         c_max,
         c_min,
+        cache_clear_button,
         cl_state,
         exact_formula,
         f_state,
@@ -1177,6 +1202,7 @@ def _(
         )
 
     filters_ui.append(run_button)
+
     mo.vstack(filters_ui)
     return
 
@@ -1270,7 +1296,15 @@ def _(
 
 
 @app.cell
-def _(qid, results_df, run_button, state_auto_run, taxon_input, taxon_warning):
+def _(
+    cache_clear_button,
+    qid,
+    results_df,
+    run_button,
+    state_auto_run,
+    taxon_input,
+    taxon_warning,
+):
     # Display summary if either button was clicked or auto-run from URL
     if (not run_button.value and not state_auto_run) or results_df is None:
         summary_display = mo.Html("")
@@ -1333,6 +1367,23 @@ def _(qid, results_df, run_button, state_auto_run, taxon_input, taxon_warning):
                 wrap=True,
             )
         )
+
+        # Add cache clear button below the stats
+        summary_parts.append(
+            mo.hstack(
+                [
+                    cache_clear_button,
+                    mo.md("_Clear cache to see fresh Wikidata edits_"),
+                ],
+                gap=2,
+                justify="start",
+            )
+        )
+
+        # Show success message when cache is cleared
+        if cache_clear_button.value > 0:
+            cache_message = clear_all_caches()
+            summary_parts.append(mo.callout(mo.md(cache_message), kind="success"))
 
         summary_display = mo.vstack(summary_parts)
 
@@ -1521,9 +1572,15 @@ def _():
             1. **Enter a taxon name** (e.g., "Artemisia annua") or Wikidata QID (e.g., "Q157115")
             2. **Optional:** Apply filters for mass, publication year, or molecular formula
             3. **Click "🔍 Search Wikidata"** to retrieve data
-            4. **Download** your results in CSV, JSON, or with full metadata
+            4. **Download** your results in CSV, JSON, RDF/Turtle, or with full metadata
 
             ### Features
+
+            #### Cache Management 🔄
+            - Queries are cached for performance
+            - **Just edited Wikidata?** Click "🔄 Clear Cache" to see your changes immediately
+            - Cache automatically refreshes for new queries
+            - Clearing cache fetches fresh data from Wikidata
 
             #### Taxon Search
             - Search by scientific name (case-insensitive)
