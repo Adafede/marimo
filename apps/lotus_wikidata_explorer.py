@@ -1332,19 +1332,19 @@ def _(
                 mo.download(
                     data=csv_data,
                     filename=f"lotus_data_{taxon_input.value.replace(' ', '_')}_{datetime.now().strftime('%Y%m%d')}.csv",
-                    label="📥 Download CSV",
+                    label="📥 CSV",
                     mimetype="text/csv",
                 ),
                 mo.download(
                     data=json_data,
                     filename=f"lotus_data_{taxon_input.value.replace(' ', '_')}_{datetime.now().strftime('%Y%m%d')}.json",
-                    label="📥 Download JSON",
+                    label="📥 JSON",
                     mimetype="application/json",
                 ),
                 mo.download(
                     data=metadata_json,
                     filename=f"lotus_metadata_{taxon_input.value.replace(' ', '_')}_{datetime.now().strftime('%Y%m%d')}.json",
-                    label="📋 Download Metadata",
+                    label="📋 Metadata",
                     mimetype="application/json",
                 ),
             ],
