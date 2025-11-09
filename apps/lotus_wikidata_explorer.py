@@ -6,7 +6,7 @@
 #     "polars==1.35.1",
 #     "pyarrow==22.0.0",
 #     "rdflib==7.1.1",
-#     "sparqlwrapper==2.0.0",
+#     "requests==2.31.0",
 # ]
 # [tool.marimo.display]
 # theme = "system"
@@ -41,12 +41,12 @@ with app.setup:
     import polars as pl
     import re
     import time
+    import requests
     from dataclasses import dataclass, field
     from datetime import datetime
     from functools import lru_cache
     from typing import Optional, Dict, Any, Tuple
     from urllib.parse import quote
-    from SPARQLWrapper import SPARQLWrapper, JSON
 
     # ====================================================================
     # CONFIGURATION
@@ -59,18 +59,14 @@ with app.setup:
         "page_size_default": 15,
         "page_size_export": 25,
         "retry_backoff": 2,
+        # "sparql_endpoint": "https://query.wikidata.org/sparql",
+        "sparql_endpoint": "https://qlever.cs.uni-freiburg.de/api/wikidata",
         "user_agent": "LOTUS Explorer/0.0.1",
     }
 
     # Wikidata URLs (constants)
     WIKIDATA_ENTITY_PREFIX = "http://www.wikidata.org/entity/"
     WIKIDATA_WIKI_PREFIX = "https://www.wikidata.org/wiki/"
-
-    # Shared SPARQL instance
-    SPARQL = SPARQLWrapper("https://query.wikidata.org/sparql")
-    # SPARQL = SPARQLWrapper("https://qlever.dev/wikidata")
-    SPARQL.setReturnFormat(JSON)
-    SPARQL.addCustomHttpHeader("User-Agent", CONFIG["user_agent"])
 
     # Subscript translation map (constant for performance)
     SUBSCRIPT_MAP = str.maketrans("₀₁₂₃₄₅₆₇₈₉", "0123456789")
@@ -148,7 +144,9 @@ def build_taxon_search_query(taxon_name: str) -> str:
     return f"""
     PREFIX wdt: <http://www.wikidata.org/prop/direct/>
     SELECT ?taxon ?taxon_name WHERE {{
-      VALUES ?taxon_name {{ "{taxon_name}" }}
+      VALUES ?taxon_name {{
+        "{taxon_name}"
+      }}
       ?taxon wdt:P225 ?taxon_name.
     }}
     """
@@ -161,34 +159,39 @@ def build_compounds_query(qid: str) -> str:
     PREFIX pr: <http://www.wikidata.org/prop/reference/>
     PREFIX prov: <http://www.w3.org/ns/prov#>
     PREFIX ps: <http://www.wikidata.org/prop/statement/>
+    PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
     PREFIX wd: <http://www.wikidata.org/entity/>
     PREFIX wdt: <http://www.wikidata.org/prop/direct/>
-    SELECT DISTINCT ?compound ?compoundLabel ?compound_inchikey ?compound_smiles_iso ?compound_smiles_conn ?compound_mass ?compound_formula
-                   ?taxon_name ?taxon ?ref_title ?ref_doi ?ref_qid ?ref_date
-    WHERE {{
-      ?taxon (wdt:P171*) wd:{qid};
-             wdt:P225 ?taxon_name. 
-      ?compound wdt:P235 ?compound_inchikey;
-                wdt:P233 ?compound_smiles_conn;
-                p:P703 ?statement.
-      ?statement ps:P703 ?taxon;
-                 prov:wasDerivedFrom ?ref.
-      ?ref pr:P248 ?ref_qid.
-      OPTIONAL {{ ?compound wdt:P2017 ?compound_smiles_iso. }}
-      OPTIONAL {{ ?compound wdt:P2067 ?compound_mass. }}
-      OPTIONAL {{ ?compound wdt:P274 ?compound_formula. }}
-      OPTIONAL {{
-        SERVICE <https://query-scholarly.wikidata.org/sparql> {{
-          ?ref_qid wdt:P1476 ?ref_title;
-                   wdt:P356 ?ref_doi;
-                   wdt:P577 ?ref_date.
+    SELECT DISTINCT ?compound ?compoundLabel ?compound_inchikey ?compound_smiles_iso ?compound_smiles_conn ?compound_mass ?compound_formula ?taxon_name ?taxon ?ref_title ?ref_doi ?ref_qid ?ref_date WHERE {{
+      {{
+        SELECT DISTINCT ?compound ?compound_inchikey ?compound_smiles_iso ?compound_smiles_conn ?compound_mass ?compound_formula ?taxon_name ?taxon ?ref_title ?ref_doi ?ref_qid ?ref_date WHERE {{
+          ?taxon (wdt:P171*) wd:{qid};
+            wdt:P225 ?taxon_name.
+          ?compound wdt:P235 ?compound_inchikey;
+            wdt:P233 ?compound_smiles_conn;
+            p:P703 ?statement.
+          ?statement ps:P703 ?taxon;
+            prov:wasDerivedFrom ?ref.
+          ?ref pr:P248 ?ref_qid.
+          OPTIONAL {{ ?compound wdt:P2017 ?compound_smiles_iso. }}
+          OPTIONAL {{ ?compound wdt:P2067 ?compound_mass. }}
+          OPTIONAL {{ ?compound wdt:P274 ?compound_formula. }}
+          OPTIONAL {{
+            ?ref_qid wdt:P1476 ?ref_title;
+              wdt:P356 ?ref_doi;
+              wdt:P577 ?ref_date.
+          }}
         }}
       }}
-      OPTIONAL {{ 
-          ?compound rdfs:label ?compoundLabel.
-          FILTER(LANG(?compoundLabel) IN ("en", "mul"))
+      OPTIONAL {{
+        ?compound rdfs:label ?compoundLabel.
+        FILTER((LANG(?compoundLabel)) = "en")
         }}
-    }}
+      OPTIONAL {{
+        ?compound rdfs:label ?compoundLabel.
+        FILTER((LANG(?compoundLabel)) = "mul")
+        }}
+      }}
     """
 
 
@@ -200,16 +203,35 @@ def execute_sparql(
     """
     Execute SPARQL query with retry logic and exponential backoff.
 
-    Cached to improve performance and reduce load on Wikidata servers.
+    Uses requests library for direct HTTP POST to Qlever endpoint.
     Cache key is the query string itself.
     """
+    headers = {
+        "Accept": "application/sparql-results+json",
+        "Content-Type": "application/sparql-query",
+        "User-Agent": CONFIG["user_agent"],
+    }
+    params = {
+        "format": "json",
+        "query": query,
+    }
+
     for attempt in range(max_retries):
         try:
-            SPARQL.setQuery(query)
-            return SPARQL.query().convert()
+            response = requests.get(
+                url=CONFIG["sparql_endpoint"],
+                headers=headers,
+                params=params,
+                timeout=60,
+            )
+            response.raise_for_status()
+            return response.json()
         except Exception as e:
             if attempt == max_retries - 1:
-                raise Exception(f"Query failed after {max_retries} attempts: {str(e)}")
+                error_msg = f"Query failed after {max_retries} attempts: {str(e)}"
+                # Include query snippet in error for debugging
+                query_snippet = query[:200] + "..." if len(query) > 200 else query
+                raise Exception(f"{error_msg}\nQuery: {query_snippet}")
             wait_time = CONFIG["retry_backoff"] * (2**attempt)
             time.sleep(wait_time)
     # This line should never be reached, but satisfies type checker
@@ -281,22 +303,46 @@ def build_taxon_details_query(qids: list) -> str:
     """Build SPARQL query to fetch taxon details (label, description and parent taxon)."""
     values_clause = build_sparql_values_clause("taxon", qids)
     return f"""
+    PREFIX p: <http://www.wikidata.org/prop/>
+    PREFIX pr: <http://www.wikidata.org/prop/reference/>
+    PREFIX prov: <http://www.w3.org/ns/prov#>
+    PREFIX ps: <http://www.wikidata.org/prop/statement/>
+    PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+    PREFIX schema: <http://schema.org/>
+    PREFIX wd: <http://www.wikidata.org/entity/>
+    PREFIX wdt: <http://www.wikidata.org/prop/direct/>
     SELECT ?taxon ?taxonLabel ?taxonDescription ?taxon_parent ?taxon_parentLabel WHERE {{
-      {values_clause}
-      OPTIONAL {{ 
-        ?taxon rdfs:label ?taxonLabel.
-         FILTER(LANG(?taxonLabel) IN ("en", "mul"))
-      }}
-      OPTIONAL {{ 
-        ?taxon schema:description ?taxonDescription.
-        FILTER(LANG(?taxonDescription) = "en")
-      }}
-      OPTIONAL {{ 
-        ?taxon wdt:P171 ?taxon_parent.
-        OPTIONAL {{ 
-          ?taxon_parent rdfs:label ?taxon_parentLabel.
-          FILTER(LANG(?taxon_parentLabel) IN ("en", "mul"))
+    {{
+      SELECT ?taxon ?taxon_parent WHERE {{
+        {values_clause}
+        OPTIONAL {{
+          ?taxon wdt:P171 ?taxon_parent.
         }}
+      }}
+    }}
+    OPTIONAL {{
+      ?taxon rdfs:label ?taxonLabel.
+      FILTER(LANG(?taxonLabel) = "en")
+      }}
+      OPTIONAL {{
+      ?taxon rdfs:label ?taxonLabel.
+      FILTER(LANG(?taxonLabel) = "mul")
+      }}
+      OPTIONAL {{
+      ?taxon schema:description ?taxonDescription.
+      FILTER(LANG(?taxonDescription) = "en")
+      }}
+      OPTIONAL {{
+      ?taxon schema:description ?taxonDescription.
+      FILTER(LANG(?taxonDescription) = "mul")
+      }}
+      OPTIONAL {{
+      ?taxon_parent rdfs:label ?taxon_parentLabel.
+      FILTER(LANG(?taxon_parentLabel) = "en")
+      }}
+      OPTIONAL {{
+      ?taxon_parent rdfs:label ?taxon_parentLabel.
+      FILTER(LANG(?taxon_parentLabel) = "mul")
       }}
     }}
     """
@@ -1020,8 +1066,7 @@ def create_export_metadata(
             "taxon": taxon_input,
             "taxon_qid": qid,
         },
-        "sparql_endpoint": "https://query.wikidata.org/sparql",
-        # "sparql_endpoint": "https://qlever.dev/wikidata",
+        "sparql_endpoint": CONFIG["sparql_endpoint"],
     }
 
     # Add filters if any are active
