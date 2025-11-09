@@ -1738,12 +1738,20 @@ def _(
     year_start,
 ):
     # Display table if either button was clicked or auto-run from URL
+    # Initialize variables that may not be set in all branches
+    is_large_dataset = False
+    rdf_generation_data = None
+    rdf_generate_button = None
+    tables_output = None
+
     if (not run_button.value and not state_auto_run) or results_df is None:
         table_output = None
+        tables_output = None
     elif len(results_df) == 0:
         table_output = mo.callout(
             mo.md("No compounds match your search criteria."), kind="neutral"
         )
+        tables_output = None
     else:
         total_rows = len(results_df)
 
@@ -1859,19 +1867,68 @@ def _(
 
         citation_text = create_citation_text(taxon_input.value)
 
-        # Create download buttons using helper function
-        download_buttons = create_download_buttons(
-            csv_data=csv_data,
-            json_data=json_data,
-            rdf_data=rdf_data,
-            metadata_json=metadata_json,
-            taxon_name=taxon_input.value,
+        # Create download buttons - always include CSV, JSON, Metadata
+        # For large datasets, add RDF generation button instead of direct download
+        basic_buttons = [
+            mo.download(
+                data=csv_data,
+                filename=generate_filename(taxon_input.value, "csv"),
+                label="📥 CSV",
+                mimetype="text/csv",
+            ),
+            mo.download(
+                data=json_data,
+                filename=generate_filename(taxon_input.value, "json"),
+                label="📥 JSON",
+                mimetype="application/json",
+            ),
+        ]
+
+        if is_large_dataset:
+            # Add a button to generate RDF on demand
+            rdf_generate_button = mo.ui.run_button(
+                label="⚗️ Generate RDF/Turtle (may take time)"
+            )
+            basic_buttons.append(rdf_generate_button)
+        else:
+            # Not a large dataset
+            rdf_generate_button = None
+            if rdf_data is not None:
+                # Small dataset - RDF already generated
+                basic_buttons.append(
+                    mo.download(
+                        data=rdf_data,
+                        filename=generate_filename(taxon_input.value, "ttl"),
+                        label="📥 RDF/Turtle",
+                        mimetype="text/turtle",
+                    )
+                )
+
+        basic_buttons.append(
+            mo.download(
+                data=metadata_json,
+                filename=generate_filename(
+                    taxon_input.value, "json", prefix="lotus_metadata"
+                ),
+                label="📋 Metadata",
+                mimetype="application/json",
+            )
         )
 
+        download_buttons = mo.hstack(basic_buttons, gap=2, wrap=True)
+
+        # Create a placeholder that will be replaced by rdf_download_ui output
+        # The actual RDF UI is created in the next cell and will appear right after this cell
         table_output = mo.vstack(
             [
                 mo.md("### Download"),
                 download_buttons,
+            ]
+        )
+
+        # Tables output - will be displayed separately after RDF UI
+        tables_output = mo.vstack(
+            [
                 mo.md("### Tables"),
                 display_note,
                 export_note,
@@ -1887,6 +1944,72 @@ def _(
         )
 
     table_output
+    return (
+        is_large_dataset,
+        rdf_generate_button,
+        rdf_generation_data,
+        tables_output,
+    )
+
+
+@app.cell
+def _(is_large_dataset, rdf_generate_button, rdf_generation_data):
+    # Handle lazy RDF generation for large datasets
+    # This cell accesses rdf_generate_button.value, so it must be separate from the cell that creates it
+    if (
+        not is_large_dataset
+        or rdf_generate_button is None
+        or rdf_generation_data is None
+    ):
+        # Not a large dataset or no data - no RDF UI needed
+        rdf_download_ui = mo.Html("")
+    elif rdf_generate_button.value:
+        # User clicked the generate button - generate RDF
+        with mo.status.spinner(
+            title="🧪 Generating RDF/Turtle format... This may take a few minutes for large datasets."
+        ):
+            generated_rdf = export_to_rdf_turtle(
+                rdf_generation_data["export_df"],
+                rdf_generation_data["taxon_input"],
+                rdf_generation_data["qid"],
+            )
+
+        # Show download button with success message
+        rdf_download_ui = mo.vstack(
+            [
+                mo.callout(
+                    mo.md(
+                        f"✅ RDF/Turtle file generated successfully! ({len(rdf_generation_data['export_df'])} rows)"
+                    ),
+                    kind="success",
+                ),
+                mo.download(
+                    data=generated_rdf,
+                    filename=generate_filename(
+                        rdf_generation_data["taxon_input"], "ttl"
+                    ),
+                    label="📥 Download RDF/Turtle",
+                    mimetype="text/turtle",
+                ),
+            ]
+        )
+    else:
+        # Show info message before generation
+        rdf_download_ui = mo.callout(
+            mo.md(
+                f"**Large dataset ({len(rdf_generation_data['export_df'])} rows):** Click the 'Generate RDF/Turtle' button above to create the RDF export. Generation may take several minutes depending on dataset size."
+            ),
+            kind="info",
+        )
+
+    rdf_download_ui
+    return
+
+
+@app.cell
+def _(tables_output):
+    # Display the tables section (appears after RDF UI)
+    tables_output
     return
 
 
@@ -1968,10 +2091,11 @@ def _():
 
             - **CSV**: Spreadsheet-compatible format
             - **JSON**: Machine-readable structured data
-            - **RDF/Turtle**: Semantic web format (disabled for datasets >1000 rows for performance)
+            - **RDF/Turtle**: Semantic web format
+              - Small datasets (≤5000 rows): Generated automatically
+              - Large datasets (>5000 rows): Click "Generate RDF/Turtle" button to create on-demand (may take some time)
             - **Metadata**: Schema.org-compliant metadata with provenance
             - **Citation**: Proper citations for your publications
-
             **Note:** For large datasets (>1000 rows), RDF/Turtle export is automatically disabled to improve performance. Use CSV or JSON exports instead.
             """),
         }
