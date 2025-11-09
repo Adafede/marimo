@@ -58,7 +58,6 @@ with app.setup:
         "max_retries": 3,
         "page_size_default": 15,
         "page_size_export": 25,
-        "query_limit": 1_000_000,
         "retry_backoff": 2,
         "user_agent": "LOTUS Explorer/0.0.1",
     }
@@ -69,6 +68,7 @@ with app.setup:
 
     # Shared SPARQL instance
     SPARQL = SPARQLWrapper("https://query.wikidata.org/sparql")
+    # SPARQL = SPARQLWrapper("https://qlever.dev/wikidata")
     SPARQL.setReturnFormat(JSON)
     SPARQL.addCustomHttpHeader("User-Agent", CONFIG["user_agent"])
 
@@ -146,15 +146,9 @@ with app.setup:
 def build_taxon_search_query(taxon_name: str) -> str:
     """Build SPARQL query to find taxa by scientific name. Returns up to 10 results."""
     return f"""
+    PREFIX wdt: <http://www.wikidata.org/prop/direct/>
     SELECT ?taxon ?taxon_name WHERE {{
-      SERVICE wikibase:mwapi {{
-        bd:serviceParam wikibase:endpoint "www.wikidata.org";
-                        wikibase:api "EntitySearch";
-                        mwapi:search "{taxon_name}";
-                        mwapi:language "mul".
-        ?taxon wikibase:apiOutputItem mwapi:item.
-        ?num wikibase:apiOrdinal true.
-      }}
+      VALUES ?taxon_name {{ "{taxon_name}" }}
       ?taxon wdt:P225 ?taxon_name.
     }}
     """
@@ -163,7 +157,13 @@ def build_taxon_search_query(taxon_name: str) -> str:
 @app.function
 def build_compounds_query(qid: str) -> str:
     return f"""
-    SELECT DISTINCT ?compound ?compoundLabel ?compound_inchikey ?compound_smiles_iso ?compound_smiles_conn  ?compound_mass ?compound_formula
+    PREFIX p: <http://www.wikidata.org/prop/>
+    PREFIX pr: <http://www.wikidata.org/prop/reference/>
+    PREFIX prov: <http://www.w3.org/ns/prov#>
+    PREFIX ps: <http://www.wikidata.org/prop/statement/>
+    PREFIX wd: <http://www.wikidata.org/entity/>
+    PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+    SELECT DISTINCT ?compound ?compoundLabel ?compound_inchikey ?compound_smiles_iso ?compound_smiles_conn ?compound_mass ?compound_formula
                    ?taxon_name ?taxon ?ref_title ?ref_doi ?ref_qid ?ref_date
     WHERE {{
       ?taxon (wdt:P171*) wd:{qid};
@@ -184,9 +184,11 @@ def build_compounds_query(qid: str) -> str:
                    wdt:P577 ?ref_date.
         }}
       }}
-      SERVICE wikibase:label {{ bd:serviceParam wikibase:language "[AUTO_LANGUAGE],en". }}
+      OPTIONAL {{ 
+          ?compound rdfs:label ?compoundLabel.
+          FILTER(LANG(?compoundLabel) IN ("en", "mul"))
+        }}
     }}
-    LIMIT {CONFIG["query_limit"]}
     """
 
 
@@ -249,13 +251,30 @@ def create_structure_image_url(smiles: str) -> str:
 
 @app.function
 def build_taxon_details_query(qids: list) -> str:
-    """Build SPARQL query to fetch taxon details (description and parent taxon)."""
+    """Build SPARQL query to fetch taxon details (label, description and parent taxon)."""
     qids_str = " ".join(f"wd:{qid}" for qid in qids)
     return f"""
-    SELECT ?taxon ?taxonLabel ?taxonDescription ?taxon_parentLabel WHERE {{
+    PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+    PREFIX schema: <http://schema.org/>
+    PREFIX wd: <http://www.wikidata.org/entity/>
+    PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+    SELECT ?taxon ?taxonLabel ?taxonDescription ?taxon_parent ?taxon_parentLabel WHERE {{
       VALUES ?taxon {{ {qids_str} }}
-      OPTIONAL {{ ?taxon wdt:P171 ?taxon_parent. }}
-      SERVICE wikibase:label {{ bd:serviceParam wikibase:language "[AUTO_LANGUAGE],en". }}
+      OPTIONAL {{ 
+        ?taxon rdfs:label ?taxonLabel.
+         FILTER(LANG(?taxonLabel) IN ("en", "mul"))
+      }}
+      OPTIONAL {{ 
+        ?taxon schema:description ?taxonDescription.
+        FILTER(LANG(?taxonDescription) = "en")
+      }}
+      OPTIONAL {{ 
+        ?taxon wdt:P171 ?taxon_parent.
+        OPTIONAL {{ 
+          ?taxon_parent rdfs:label ?taxon_parentLabel.
+          FILTER(LANG(?taxon_parentLabel) IN ("en", "mul"))
+        }}
+      }}
     }}
     """
 
@@ -821,6 +840,7 @@ def create_export_metadata(
             "filters": filters,
         },
         "sparql_endpoint": "https://query.wikidata.org/sparql",
+        # "sparql_endpoint": "https://qlever.dev/wikidata",
     }
 
 
