@@ -224,13 +224,84 @@ def create_structure_image_url(smiles: str) -> str:
 
 
 @app.function
-@lru_cache(maxsize=256)
-def resolve_taxon_to_qid(taxon_input: str) -> Tuple[Optional[str], Optional[str]]:
+def build_taxon_details_query(qids: list) -> str:
+    """Build SPARQL query to fetch taxon details (description and parent taxon)."""
+    qids_str = " ".join(f"wd:{qid}" for qid in qids)
+    return f"""
+    SELECT ?item ?itemLabel ?itemDescription ?parentLabel WHERE {{
+      VALUES ?item {{ {qids_str} }}
+      OPTIONAL {{ ?item wdt:P171 ?parent. }}
+      SERVICE wikibase:label {{ bd:serviceParam wikibase:language "[AUTO_LANGUAGE],en". }}
+    }}
+    """
+
+
+@app.function
+def create_taxon_warning_html(
+    matches: list, selected_qid: str, is_exact: bool
+) -> mo.Html:
+    """
+    Create an HTML warning with clickable QID links and taxon details.
+
+    Args:
+        matches: List of (qid, name, description, parent) tuples
+        selected_qid: The QID that was selected
+        is_exact: Whether these are exact matches or similar matches
+    """
+    match_type = "exact matches" if is_exact else "similar taxa"
+    intro = (
+        f"Ambiguous taxon name. Multiple {match_type} found:"
+        if is_exact
+        else f"No exact match. Similar taxa found:"
+    )
+
+    # Build HTML list of matches
+    items = []
+    for qid, name, description, parent in matches:
+        # Create clickable link
+        link = f'<a href="{WIKIDATA_WIKI_PREFIX}{qid}" target="_blank" rel="noopener noreferrer" style="color: {CONFIG["color_hyperlink"]}; text-decoration: none; border-bottom: 1px solid transparent; font-weight: bold;">{qid}</a>'
+
+        # Build details string
+        details = []
+        if name:
+            details.append(f"<em>{name}</em>")
+        if description:
+            details.append(f"{description}")
+        if parent:
+            details.append(f"parent: {parent}")
+
+        details_str = " — ".join(details) if details else ""
+
+        # Highlight the selected one
+        if qid == selected_qid:
+            items.append(
+                f"<li>{link} {details_str} <strong>USING THIS ONE BELOW</strong></li>"
+            )
+        else:
+            items.append(f"<li>{link} {details_str}</li>")
+
+    items_html = "".join(items)
+
+    html = f"""
+    <div style="line-height: 1.6;">
+        {intro}
+        <ul style="margin: 0.5em 0; padding-left: 1.5em;">
+            {items_html}
+        </ul>
+        <em>For precision, please use a specific QID directly in the search box.</em>
+    </div>
+    """
+
+    return mo.Html(html)
+
+
+@app.function
+def resolve_taxon_to_qid(taxon_input: str) -> Tuple[Optional[str], Optional[mo.Html]]:
     """
     Resolve taxon name or QID to a valid QID.
 
     Returns:
-        (qid, warning_message) where warning_message is None if no issues
+        (qid, warning_html) where warning_html is None if no issues, or mo.Html with clickable links
     """
     taxon_input = taxon_input.strip()
 
@@ -270,17 +341,73 @@ def resolve_taxon_to_qid(taxon_input: str) -> Tuple[Optional[str], Optional[str]
         if len(exact_matches) == 1:
             return exact_matches[0][0], None
 
-        # Multiple exact matches - ambiguous
+        # Multiple exact matches or similar matches - need to fetch details
         if len(exact_matches) > 1:
-            qid_list = ", ".join(qid for qid, _ in exact_matches)
-            warning = f"Ambiguous taxon name. Multiple QIDs found: {qid_list}. Using {exact_matches[0][0]}. For precision, please use a specific QID."
-            return exact_matches[0][0], warning
+            # Get details for exact matches
+            qids = [qid for qid, _ in exact_matches]
+            details_query = build_taxon_details_query(qids)
+            details_results = execute_sparql(details_query)
+            details_bindings = details_results.get("results", {}).get("bindings", [])
+
+            # Build a map of QID to details
+            details_map = {}
+            for b in details_bindings:
+                qid = extract_qid(get_binding_value(b, "item"))
+                details_map[qid] = (
+                    get_binding_value(b, "itemLabel"),
+                    get_binding_value(b, "itemDescription"),
+                    get_binding_value(b, "parentLabel"),
+                )
+
+            # Create matches with details
+            matches_with_details = [
+                (
+                    qid,
+                    name,
+                    details_map.get(qid, ("", "", ""))[1],
+                    details_map.get(qid, ("", "", ""))[2],
+                )
+                for qid, name in exact_matches
+            ]
+
+            warning_html = create_taxon_warning_html(
+                matches_with_details, exact_matches[0][0], is_exact=True
+            )
+            return exact_matches[0][0], warning_html
 
         # No exact match - use first result with warning
         if len(matches) > 1:
-            qid_list = ", ".join(f"{qid} ({name})" for qid, name in matches[:3])
-            warning = f"No exact match. Similar taxa found: {qid_list}. Using {matches[0][0]}. For precision, use a QID directly."
-            return matches[0][0], warning
+            # Get details for similar matches (limit to 5)
+            qids = [qid for qid, _ in matches[:5]]
+            details_query = build_taxon_details_query(qids)
+            details_results = execute_sparql(details_query)
+            details_bindings = details_results.get("results", {}).get("bindings", [])
+
+            # Build a map of QID to details
+            details_map = {}
+            for b in details_bindings:
+                qid = extract_qid(get_binding_value(b, "item"))
+                details_map[qid] = (
+                    get_binding_value(b, "itemLabel"),
+                    get_binding_value(b, "itemDescription"),
+                    get_binding_value(b, "parentLabel"),
+                )
+
+            # Create matches with details
+            matches_with_details = [
+                (
+                    qid,
+                    name,
+                    details_map.get(qid, ("", "", ""))[1],
+                    details_map.get(qid, ("", "", ""))[2],
+                )
+                for qid, name in matches[:5]
+            ]
+
+            warning_html = create_taxon_warning_html(
+                matches_with_details, matches[0][0], is_exact=False
+            )
+            return matches[0][0], warning_html
 
         return matches[0][0], None
 
@@ -942,7 +1069,7 @@ def _(qid, results_df, run_button, state_auto_run, taxon_input, taxon_warning):
         # Show no compounds message, and taxon warning if present
         parts = []
         if taxon_warning:
-            parts.append(mo.callout(mo.md(f"⚠️ {taxon_warning}"), kind="warn"))
+            parts.append(mo.callout(taxon_warning, kind="warn"))
         parts.append(
             mo.callout(
                 mo.md(
@@ -965,7 +1092,7 @@ def _(qid, results_df, run_button, state_auto_run, taxon_input, taxon_warning):
         ]
 
         if taxon_warning:
-            summary_parts.append(mo.callout(mo.md(f"⚠️ {taxon_warning}"), kind="warn"))
+            summary_parts.append(mo.callout(taxon_warning, kind="warn"))
 
         summary_parts.append(
             mo.hstack(
