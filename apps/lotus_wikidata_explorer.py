@@ -237,9 +237,6 @@ def execute_sparql(
     raise Exception("Unexpected error in execute_sparql")
 
 
-
-
-
 @app.function
 @lru_cache(maxsize=512)
 def extract_qid(url: str) -> str:
@@ -1452,7 +1449,6 @@ def _(
     )
 
     run_button = mo.ui.run_button(label="🔍 Search Wikidata")
-
     return (
         br_state,
         c_max,
@@ -1639,14 +1635,7 @@ def _(
 
 
 @app.cell
-def _(
-    qid,
-    results_df,
-    run_button,
-    state_auto_run,
-    taxon_input,
-    taxon_warning,
-):
+def _(qid, results_df, run_button, state_auto_run, taxon_input, taxon_warning):
     # Display summary if either button was clicked or auto-run from URL
     if (not run_button.value and not state_auto_run) or results_df is None:
         summary_display = mo.Html("")
@@ -1710,7 +1699,6 @@ def _(
             )
         )
 
-
         summary_display = mo.vstack(summary_parts)
 
     summary_display
@@ -1759,9 +1747,9 @@ def _(
     else:
         total_rows = len(results_df)
 
-        # For large datasets (>100 rows), use simplified display without images
+        # For large datasets, use simplified display without images
         # This allows users to browse all data efficiently
-        if total_rows > 100:
+        if total_rows > 50000:
             # Create simplified display data without 2D depictions
             display_data = [
                 {
@@ -1775,19 +1763,22 @@ def _(
                     else mo.Html("—"),
                     "Compound QID": create_wikidata_link(extract_qid(row["structure"])),
                     "Taxon QID": create_wikidata_link(extract_qid(row["taxon"])),
-                    "Reference QID": create_wikidata_link(extract_qid(row["reference"])),
+                    "Reference QID": create_wikidata_link(
+                        extract_qid(row["reference"])
+                    ),
                 }
                 for row in results_df.iter_rows(named=True)
             ]
             display_note = mo.callout(
-                mo.md(f"**Large dataset ({total_rows} rows):** 2D structure depictions hidden for performance. View structures via SMILES or download the data."),
-                kind="info"
+                mo.md(
+                    f"**Large dataset ({total_rows} rows):** 2D structure depictions hidden for performance. View structures via SMILES or download the data."
+                ),
+                kind="info",
             )
         else:
             # For smaller datasets, include 2D depictions
             display_data = [
-                create_display_row(row)
-                for row in results_df.iter_rows(named=True)
+                create_display_row(row) for row in results_df.iter_rows(named=True)
             ]
             display_note = mo.Html("")
 
@@ -1814,15 +1805,20 @@ def _(
         csv_data = export_df.write_csv()
         json_data = export_df.write_json()
 
-        # For large datasets, skip RDF generation (too slow)
-        # Users can generate RDF from CSV/JSON if needed
-        if len(export_df) > 1000:
+        # For large datasets, defer RDF generation until user requests it
+        # For small datasets, generate it eagerly
+        is_large_dataset = len(export_df) > 1000
+        if is_large_dataset:
             rdf_data = None
-            mo.status.toast(
-                "⚠️ RDF export disabled for large datasets (>1000 rows). Use CSV or JSON instead."
-            )
+            # Store data needed for lazy RDF generation
+            rdf_generation_data = {
+                "export_df": export_df,
+                "taxon_input": taxon_input.value,
+                "qid": qid,
+            }
         else:
             rdf_data = export_to_rdf_turtle(export_df, taxon_input.value, qid)
+            rdf_generation_data = None
 
         # Build formula filters if active (private variable to avoid collision)
         _formula_filt = None
@@ -1975,7 +1971,7 @@ def _():
             - **RDF/Turtle**: Semantic web format (disabled for datasets >1000 rows for performance)
             - **Metadata**: Schema.org-compliant metadata with provenance
             - **Citation**: Proper citations for your publications
-            
+
             **Note:** For large datasets (>1000 rows), RDF/Turtle export is automatically disabled to improve performance. Use CSV or JSON exports instead.
             """),
         }
