@@ -662,7 +662,7 @@ def generate_filename(
 def create_download_buttons(
     csv_data: str,
     json_data: str,
-    rdf_data: str,
+    rdf_data: Optional[str],
     metadata_json: str,
     taxon_name: str,
 ) -> mo.Html:
@@ -671,33 +671,43 @@ def create_download_buttons(
 
     This function centralizes download button creation for consistency (DRY).
     """
-    return mo.hstack(
-        [
-            mo.download(
-                data=csv_data,
-                filename=generate_filename(taxon_name, "csv"),
-                label="📥 CSV",
-                mimetype="text/csv",
-            ),
-            mo.download(
-                data=json_data,
-                filename=generate_filename(taxon_name, "json"),
-                label="📥 JSON",
-                mimetype="application/json",
-            ),
+    buttons = [
+        mo.download(
+            data=csv_data,
+            filename=generate_filename(taxon_name, "csv"),
+            label="📥 CSV",
+            mimetype="text/csv",
+        ),
+        mo.download(
+            data=json_data,
+            filename=generate_filename(taxon_name, "json"),
+            label="📥 JSON",
+            mimetype="application/json",
+        ),
+    ]
+
+    # Only add RDF button if data was generated (not too large)
+    if rdf_data is not None:
+        buttons.append(
             mo.download(
                 data=rdf_data,
                 filename=generate_filename(taxon_name, "ttl"),
                 label="📥 RDF/Turtle",
                 mimetype="text/turtle",
-            ),
-            mo.download(
-                data=metadata_json,
-                filename=generate_filename(taxon_name, "json", prefix="lotus_metadata"),
-                label="📋 Metadata",
-                mimetype="application/json",
-            ),
-        ],
+            )
+        )
+
+    buttons.append(
+        mo.download(
+            data=metadata_json,
+            filename=generate_filename(taxon_name, "json", prefix="lotus_metadata"),
+            label="📋 Metadata",
+            mimetype="application/json",
+        )
+    )
+
+    return mo.hstack(
+        buttons,
         gap=2,
         wrap=True,
     )
@@ -1801,7 +1811,16 @@ def _(
         # Create export files (use full dataframe)
         csv_data = export_df.write_csv()
         json_data = export_df.write_json()
-        rdf_data = export_to_rdf_turtle(export_df, taxon_input.value, qid)
+
+        # For large datasets, skip RDF generation (too slow)
+        # Users can generate RDF from CSV/JSON if needed
+        if len(export_df) > 1000:
+            rdf_data = None
+            mo.status.toast(
+                "⚠️ RDF export disabled for large datasets (>1000 rows). Use CSV or JSON instead."
+            )
+        else:
+            rdf_data = export_to_rdf_turtle(export_df, taxon_input.value, qid)
 
         # Build formula filters if active (private variable to avoid collision)
         _formula_filt = None
@@ -1951,8 +1970,11 @@ def _():
 
             - **CSV**: Spreadsheet-compatible format
             - **JSON**: Machine-readable structured data
+            - **RDF/Turtle**: Semantic web format (disabled for datasets >1000 rows for performance)
             - **Metadata**: Schema.org-compliant metadata with provenance
             - **Citation**: Proper citations for your publications
+            
+            **Note:** For large datasets (>1000 rows), RDF/Turtle export is automatically disabled to improve performance. Use CSV or JSON exports instead.
             """),
         }
     )
