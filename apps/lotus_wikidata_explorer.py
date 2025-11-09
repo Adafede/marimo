@@ -190,10 +190,16 @@ def build_compounds_query(qid: str) -> str:
 
 
 @app.function
+@lru_cache(maxsize=128)
 def execute_sparql(
     query: str, max_retries: int = CONFIG["max_retries"]
 ) -> Dict[str, Any]:
-    """Execute SPARQL query with retry logic and exponential backoff."""
+    """
+    Execute SPARQL query with retry logic and exponential backoff.
+
+    Cached to improve performance and reduce load on Wikidata servers.
+    Cache key is the query string itself.
+    """
     for attempt in range(max_retries):
         try:
             SPARQL.setQuery(query)
@@ -708,6 +714,8 @@ def prepare_export_dataframe(df: pl.DataFrame) -> pl.DataFrame:
             pl.col("name").alias("compound_name"),
             pl.col("smiles").alias("compound_smiles"),
             pl.col("inchikey").alias("compound_inchikey"),
+            pl.col("mass").alias("compound_mass"),
+            pl.col("mf").alias("molecular_formula"),
             "taxon_name",
             pl.col("ref_title").alias("reference_title"),
             pl.col("ref_doi").alias("reference_doi"),
@@ -719,6 +727,113 @@ def prepare_export_dataframe(df: pl.DataFrame) -> pl.DataFrame:
     )
 
 
+@app.function
+def create_export_metadata(
+    df: pl.DataFrame, taxon_input: str, qid: str, filters: Dict[str, Any]
+) -> Dict[str, Any]:
+    """
+    Create metadata for exported data following FAIR principles.
+
+    Returns machine-readable metadata with provenance, access info, and citations.
+    """
+    return {
+        "@context": "https://schema.org/",
+        "@type": "Dataset",
+        "name": f"LOTUS Data for {taxon_input}",
+        "description": f"Chemical compounds found in taxon {taxon_input} (Wikidata QID: {qid})",
+        "version": "0.0.1",
+        "dateCreated": datetime.now().isoformat(),
+        "license": "https://creativecommons.org/publicdomain/zero/1.0/",
+        "creator": {
+            "@type": "SoftwareApplication",
+            "name": "LOTUS Wikidata Explorer",
+            "version": "0.0.1",
+            "url": "https://github.com/Adafede/marimo/blob/main/apps/lotus_wikidata_explorer.py",
+            "license": "https://www.gnu.org/licenses/agpl-3.0.html",
+        },
+        "provider": [
+            {
+                "@type": "Organization",
+                "name": "LOTUS Initiative",
+                "url": "https://www.wikidata.org/wiki/Q104225190",
+            },
+            {
+                "@type": "Organization",
+                "name": "Wikidata",
+                "url": "https://www.wikidata.org/",
+            },
+        ],
+        "citation": [
+            {
+                "@type": "ScholarlyArticle",
+                "name": "The LOTUS initiative for open knowledge management in natural products research",
+                "identifier": "https://doi.org/10.7554/eLife.70780",
+            }
+        ],
+        "distribution": [
+            {
+                "@type": "DataDownload",
+                "encodingFormat": "text/csv",
+                "contentUrl": "data:text/csv",
+            },
+            {
+                "@type": "DataDownload",
+                "encodingFormat": "application/json",
+                "contentUrl": "data:application/json",
+            },
+        ],
+        "numberOfRecords": len(df),
+        "variablesMeasured": [
+            "compound_name",
+            "compound_smiles",
+            "compound_inchikey",
+            "compound_mass",
+            "molecular_formula",
+            "taxon_name",
+            "reference_title",
+            "reference_doi",
+            "reference_date",
+            "compound_qid",
+            "taxon_qid",
+            "reference_qid",
+        ],
+        "search_parameters": {
+            "taxon": taxon_input,
+            "taxon_qid": qid,
+            "filters": filters,
+        },
+        "sparql_endpoint": "https://query.wikidata.org/sparql",
+    }
+
+
+@app.function
+def create_citation_text(taxon_input: str) -> str:
+    """Generate citation text for the exported data."""
+    current_date = datetime.now().strftime("%Y-%m-%d")
+    return f"""
+## How to Cite This Data
+
+### Dataset Citation
+LOTUS Initiative via Wikidata. ({datetime.now().year}). Data for {taxon_input}. 
+Retrieved from LOTUS Wikidata Explorer on {current_date}.
+Available under CC0 1.0 Universal (CC0 1.0) Public Domain Dedication.
+
+### Original LOTUS Initiative
+Rutz A, Sorokina M, Galgonek J, et al. (2022). The LOTUS initiative for open 
+knowledge management in natural products research. eLife 11:e70780.
+https://doi.org/10.7554/eLife.70780
+
+### Software
+LOTUS Wikidata Explorer v0.0.1. Available at: 
+https://github.com/Adafede/marimo/blob/main/apps/lotus_wikidata_explorer.py
+Licensed under AGPL-3.0.
+
+### Data Sources
+- Wikidata (https://www.wikidata.org) - CC0 1.0
+- LOTUS (https://www.wikidata.org/wiki/Q104225190) - CC0 1.0
+"""
+
+
 @app.cell
 def _():
     mo.md("""
@@ -728,6 +843,8 @@ def _():
     [Wikidata](https://www.wikidata.org/) for any taxon.
 
     Enter a taxon name to discover chemical compounds found in organisms of that taxonomic group.
+
+    💡 **New to this tool?** Open the "Help & Documentation" section below for a quick start guide.
     """)
     return
 
@@ -1131,7 +1248,20 @@ def _(qid, results_df, run_button, state_auto_run, taxon_input, taxon_warning):
 
 
 @app.cell
-def _(results_df, run_button, state_auto_run):
+def _(
+    formula_filter,
+    mass_filter,
+    mass_max,
+    mass_min,
+    qid,
+    results_df,
+    run_button,
+    state_auto_run,
+    taxon_input,
+    year_end,
+    year_filter,
+    year_start,
+):
     # Display table if either button was clicked or auto-run from URL
     if (not run_button.value and not state_auto_run) or results_df is None:
         table_output = None
@@ -1162,10 +1292,78 @@ def _(results_df, run_button, state_auto_run):
             show_column_summaries=False,
         )
 
+        # Create export files
+        csv_data = export_df.write_csv()
+        json_data = export_df.write_json()
+
+        # Get active filters for metadata
+        active_filters = {
+            "mass_filter": mass_filter.value if "mass_filter" in dir() else False,
+            "mass_min": mass_min.value
+            if "mass_min" in dir() and mass_filter.value
+            else None,
+            "mass_max": mass_max.value
+            if "mass_max" in dir() and mass_filter.value
+            else None,
+            "year_filter": year_filter.value if "year_filter" in dir() else False,
+            "year_start": year_start.value
+            if "year_start" in dir() and year_filter.value
+            else None,
+            "year_end": year_end.value
+            if "year_end" in dir() and year_filter.value
+            else None,
+            "formula_filter": formula_filter.value
+            if "formula_filter" in dir()
+            else False,
+        }
+
+        metadata = create_export_metadata(
+            export_df, taxon_input.value, qid, active_filters
+        )
+        import json
+
+        metadata_json = json.dumps(metadata, indent=2)
+
+        citation_text = create_citation_text(taxon_input.value)
+
+        # Download buttons
+        download_buttons = mo.hstack(
+            [
+                mo.download(
+                    data=csv_data,
+                    filename=f"lotus_data_{taxon_input.value.replace(' ', '_')}_{datetime.now().strftime('%Y%m%d')}.csv",
+                    label="📥 Download CSV",
+                    mimetype="text/csv",
+                ),
+                mo.download(
+                    data=json_data,
+                    filename=f"lotus_data_{taxon_input.value.replace(' ', '_')}_{datetime.now().strftime('%Y%m%d')}.json",
+                    label="📥 Download JSON",
+                    mimetype="application/json",
+                ),
+                mo.download(
+                    data=metadata_json,
+                    filename=f"lotus_metadata_{taxon_input.value.replace(' ', '_')}_{datetime.now().strftime('%Y%m%d')}.json",
+                    label="📋 Download Metadata",
+                    mimetype="application/json",
+                ),
+            ],
+            gap=2,
+            wrap=True,
+        )
+
         table_output = mo.vstack(
             [
                 mo.md("### Data Tables"),
-                mo.ui.tabs({"🖼️  Display": display_table, "📥 Export": export_table}),
+                download_buttons,
+                mo.ui.tabs(
+                    {
+                        "🖼️  Display": display_table,
+                        "📥 Export": export_table,
+                        "📖 Citation": mo.md(citation_text),
+                        "🏷️  Metadata": mo.md(f"```json\n{metadata_json}\n```"),
+                    }
+                ),
             ]
         )
 
@@ -1215,7 +1413,45 @@ def _():
             ```
 
             **Tip:** Copy the query parameters above and append them to your notebook URL.
-            """)
+            """),
+            "❓ Help & Documentation": mo.md("""
+            ### Quick Start Guide
+
+            1. **Enter a taxon name** (e.g., "Artemisia annua") or Wikidata QID (e.g., "Q157115")
+            2. **Optional:** Apply filters for mass, publication year, or molecular formula
+            3. **Click "🔍 Search Wikidata"** to retrieve data
+            4. **Download** your results in CSV, JSON, or with full metadata
+
+            ### Features
+
+            #### Taxon Search
+            - Search by scientific name (case-insensitive)
+            - Search directly by Wikidata QID for precision
+            - Handles ambiguous names with helpful suggestions
+
+            #### Filtering Options
+
+            **Mass Filter** ⚖  
+            Filter compounds by molecular mass (in Daltons)
+
+            **Molecular Formula Filter** ⚛  
+            - Search by exact formula (e.g., C15H10O5)
+            - Set element ranges (C, H, N, O, P, S)
+            - Control halogen presence (F, Cl, Br, I):
+              - *Allowed*: Can be present or absent
+              - *Required*: Must be present
+              - *Excluded*: Must not be present
+
+            **Publication Year Filter** ⏱  
+            Filter by the year references were published
+
+            #### Data Export
+
+            - **CSV**: Spreadsheet-compatible format
+            - **JSON**: Machine-readable structured data
+            - **Metadata**: Schema.org-compliant metadata with provenance
+            - **Citation**: Proper citations for your publications
+            """),
         }
     )
     return
