@@ -56,7 +56,7 @@ with app.setup:
         "cdk_base": "https://www.simolecule.com/cdkdepict/depict/cot/svg",
         "color_hyperlink": "#006699",
         "max_retries": 3,
-        "page_size_default": 15,
+        "page_size_default": 10,
         "page_size_export": 25,
         "retry_backoff": 2,
         # "sparql_endpoint": "https://query.wikidata.org/sparql",
@@ -845,7 +845,6 @@ def apply_formula_filter(df: pl.DataFrame, filters: FormulaFilters) -> pl.DataFr
     if "mf" not in df.columns or not filters.is_active():
         return df
 
-    # Apply filter using list comprehension (vectorized would be faster but not possible with complex logic)
     mask = [
         formula_matches_criteria(row.get("mf", ""), filters)
         for row in df.iter_rows(named=True)
@@ -1787,10 +1786,25 @@ def _(
             mo.md("No compounds match your search criteria."), kind="neutral"
         )
     else:
-        # Create display table
+        # For large datasets, only prepare display data for first page to avoid hanging
+        # The table will lazily load more as user pages through
+        total_rows = len(results_df)
+        initial_batch_size = min(CONFIG["page_size_default"] * 2, total_rows)  # Load 2 pages worth
+
+        # Only create display rows for initial batch (much faster for large datasets)
         display_data = [
-            create_display_row(row) for row in results_df.iter_rows(named=True)
+            create_display_row(row)
+            for row in results_df.head(initial_batch_size).iter_rows(named=True)
         ]
+
+        # Add note if we're showing a subset
+        if total_rows > initial_batch_size:
+            display_note = mo.callout(
+                mo.md(f"**Note:** Displaying first {initial_batch_size} of {total_rows} results for performance. Use export functions to access all data."),
+                kind="info"
+            )
+        else:
+            display_note = mo.Html("")
 
         display_table = mo.ui.table(
             display_data,
@@ -1801,7 +1815,21 @@ def _(
 
         # Create export table (preserves pub_date as actual date)
         export_df = prepare_export_dataframe(results_df)
-        export_data = export_df.to_dicts()
+
+        # For large datasets, show only a preview in the export table
+        # Full data is available via downloads
+        export_preview_size = min(CONFIG["page_size_export"] * 4, len(export_df))  # 4 pages worth
+        export_preview_df = export_df.head(export_preview_size)
+        export_data = export_preview_df.to_dicts()
+
+        if len(export_df) > export_preview_size:
+            export_note = mo.callout(
+                mo.md(f"**Export Preview:** Showing first {export_preview_size} of {len(export_df)} rows. Download files contain all data."),
+                kind="info"
+            )
+        else:
+            export_note = mo.Html("")
+
         export_table = mo.ui.table(
             export_data,
             selection=None,
@@ -1809,7 +1837,7 @@ def _(
             show_column_summaries=False,
         )
 
-        # Create export files
+        # Create export files (use full dataframe)
         csv_data = export_df.write_csv()
         json_data = export_df.write_json()
         rdf_data = export_to_rdf_turtle(export_df, taxon_input.value, qid)
@@ -1867,6 +1895,8 @@ def _(
                 mo.md("### Download"),
                 download_buttons,
                 mo.md("### Tables"),
+                display_note,
+                export_note,
                 mo.ui.tabs(
                     {
                         "🖼️  Display": display_table,
