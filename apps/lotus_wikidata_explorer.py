@@ -201,8 +201,6 @@ def execute_sparql(
 ) -> Dict[str, Any]:
     """
     Execute SPARQL query with retry logic and exponential backoff.
-
-    Uses requests library for direct HTTP POST to Qlever endpoint.
     Cache key is the query string itself.
     """
     headers = {
@@ -653,61 +651,6 @@ def generate_filename(
     safe_name = taxon_name.replace(" ", "_")
     date_str = datetime.now().strftime("%Y%m%d")
     return f"{prefix}_{safe_name}_{date_str}.{file_type}"
-
-
-@app.function
-def create_download_buttons(
-    csv_data: str,
-    json_data: str,
-    rdf_data: Optional[str],
-    metadata_json: str,
-    taxon_name: str,
-) -> mo.Html:
-    """
-    Create download buttons for all export formats.
-
-    This function centralizes download button creation for consistency (DRY).
-    """
-    buttons = [
-        mo.download(
-            data=csv_data,
-            filename=generate_filename(taxon_name, "csv"),
-            label="📥 CSV",
-            mimetype="text/csv",
-        ),
-        mo.download(
-            data=json_data,
-            filename=generate_filename(taxon_name, "json"),
-            label="📥 JSON",
-            mimetype="application/json",
-        ),
-    ]
-
-    # Only add RDF button if data was generated (not too large)
-    if rdf_data is not None:
-        buttons.append(
-            mo.download(
-                data=rdf_data,
-                filename=generate_filename(taxon_name, "ttl"),
-                label="📥 RDF/Turtle",
-                mimetype="text/turtle",
-            )
-        )
-
-    buttons.append(
-        mo.download(
-            data=metadata_json,
-            filename=generate_filename(taxon_name, "json", prefix="lotus_metadata"),
-            label="📋 Metadata",
-            mimetype="application/json",
-        )
-    )
-
-    return mo.hstack(
-        buttons,
-        gap=2,
-        wrap=True,
-    )
 
 
 @app.function
@@ -1755,10 +1698,10 @@ def _(
     else:
         total_rows = len(results_df)
 
-        # For large datasets, use simplified display without images
-        # This allows users to browse all data efficiently
+        # Adaptive display strategy:
+        # - Large datasets (>50000 rows): Hide 2D depictions for performance
+        # - Small datasets (≤50000 rows): Show 2D depictions
         if total_rows > 50000:
-            # Create simplified display data without 2D depictions
             display_data = [
                 {
                     "Compound": row["name"],
@@ -1784,7 +1727,7 @@ def _(
                 kind="info",
             )
         else:
-            # For smaller datasets, include 2D depictions
+            # Full display with 2D depictions
             display_data = [
                 create_display_row(row) for row in results_df.iter_rows(named=True)
             ]
@@ -1813,12 +1756,12 @@ def _(
         csv_data = export_df.write_csv()
         json_data = export_df.write_json()
 
-        # For large datasets, defer RDF generation until user requests it
-        # For small datasets, generate it eagerly
-        is_large_dataset = len(export_df) > 1000
+        # RDF generation strategy:
+        # - Large datasets (>5000 rows): Defer generation until user requests it
+        # - Small datasets (≤5000 rows): Generate immediately
+        is_large_dataset = len(export_df) > 5000
         if is_large_dataset:
             rdf_data = None
-            # Store data needed for lazy RDF generation
             rdf_generation_data = {
                 "export_df": export_df,
                 "taxon_input": taxon_input.value,
@@ -1828,7 +1771,7 @@ def _(
             rdf_data = export_to_rdf_turtle(export_df, taxon_input.value, qid)
             rdf_generation_data = None
 
-        # Build formula filters if active (private variable to avoid collision)
+        # Build formula filters for metadata
         _formula_filt = None
         if formula_filter.value:
             _formula_filt = FormulaFilters(
@@ -1885,16 +1828,15 @@ def _(
         ]
 
         if is_large_dataset:
-            # Add a button to generate RDF on demand
+            # Add RDF generation button for lazy loading
             rdf_generate_button = mo.ui.run_button(
                 label="⚗️ Generate RDF/Turtle (may take time)"
             )
             basic_buttons.append(rdf_generate_button)
         else:
-            # Not a large dataset
             rdf_generate_button = None
             if rdf_data is not None:
-                # Small dataset - RDF already generated
+                # Small dataset - add direct download button
                 basic_buttons.append(
                     mo.download(
                         data=rdf_data,
@@ -1917,8 +1859,7 @@ def _(
 
         download_buttons = mo.hstack(basic_buttons, gap=2, wrap=True)
 
-        # Create a placeholder that will be replaced by rdf_download_ui output
-        # The actual RDF UI is created in the next cell and will appear right after this cell
+        # Download section (displayed first)
         table_output = mo.vstack(
             [
                 mo.md("### Download"),
@@ -1926,7 +1867,7 @@ def _(
             ]
         )
 
-        # Tables output - will be displayed separately after RDF UI
+        # Tables section (displayed after RDF UI)
         tables_output = mo.vstack(
             [
                 mo.md("### Tables"),
@@ -1954,17 +1895,20 @@ def _(
 
 @app.cell
 def _(is_large_dataset, rdf_generate_button, rdf_generation_data):
-    # Handle lazy RDF generation for large datasets
-    # This cell accesses rdf_generate_button.value, so it must be separate from the cell that creates it
+    """
+    Handle lazy RDF generation for large datasets.
+
+    This cell is separate because marimo requires UI element values
+    to be accessed in a different cell than where they're created.
+    """
     if (
         not is_large_dataset
         or rdf_generate_button is None
         or rdf_generation_data is None
     ):
-        # Not a large dataset or no data - no RDF UI needed
         rdf_download_ui = mo.Html("")
     elif rdf_generate_button.value:
-        # User clicked the generate button - generate RDF
+        # Generate RDF when button is clicked
         with mo.status.spinner(
             title="🧪 Generating RDF/Turtle format... This may take a few minutes for large datasets."
         ):
@@ -1974,7 +1918,6 @@ def _(is_large_dataset, rdf_generate_button, rdf_generation_data):
                 rdf_generation_data["qid"],
             )
 
-        # Show download button with success message
         rdf_download_ui = mo.vstack(
             [
                 mo.callout(
@@ -1994,7 +1937,7 @@ def _(is_large_dataset, rdf_generate_button, rdf_generation_data):
             ]
         )
     else:
-        # Show info message before generation
+        # Show instructions before generation
         rdf_download_ui = mo.callout(
             mo.md(
                 f"**Large dataset ({len(rdf_generation_data['export_df'])} rows):** Click the 'Generate RDF/Turtle' button above to create the RDF export. Generation may take several minutes depending on dataset size."
@@ -2008,7 +1951,7 @@ def _(is_large_dataset, rdf_generate_button, rdf_generation_data):
 
 @app.cell
 def _(tables_output):
-    # Display the tables section (appears after RDF UI)
+    """Display the tables section (appears after RDF UI)."""
     tables_output
     return
 
