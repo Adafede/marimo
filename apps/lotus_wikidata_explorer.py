@@ -55,8 +55,9 @@ with app.setup:
         # API and External Services
         "cdk_base": "https://www.simolecule.com/cdkdepict/depict/cot/svg",
         "cors_proxy": "https://corsproxy.marimo.app/",  # CORS proxy for WASM mode
-        "sparql_endpoint": "https://qlever.cs.uni-freiburg.de/api/wikidata",  # QLever endpoint
-        # "sparql_endpoint": "https://qlever.cs.uni-freiburg.de/api/wikidata",
+        # "sparql_endpoint": "https://qlever.dev/wikidata",  # Fails CORS for now
+        "sparql_endpoint": "https://qlever.cs.uni-freiburg.de/api/wikidata",  # Somehow works?
+        # "sparql_endpoint": "https://query-legacy-full.wikidata.org/sparql", # Too slow
         "use_cors_proxy": False,  # Enable proxy for WASM compatibility
         "user_agent": "LOTUS Explorer/0.0.1 (https://github.com/Adafede/marimo/blob/main/apps/lotus_wikidata_explorer.py)",
         # Network Settings
@@ -1332,24 +1333,22 @@ def _():
     return
 
 
-# @app.cell
-# def _():
-#     mo.callout(
-#         mo.md("""
-#         ## ⚠️ Under Development
+@app.cell
+def _():
+    mo.callout(
+        mo.md("""
+        ## ⚠️ Under Development
 
-#         This application is currently under active development and may not work as expected in all deployment modes.
+        This application is under development and may not work as expected in all deployment modes.
 
-#         **Recommended way to run:**
-#         ```bash
-#         uvx marimo run https://raw.githubusercontent.com/Adafede/marimo/refs/heads/main/apps/lotus_wikidata_explorer.py
-#         ```
-
-#         This ensures you're using the latest stable version with proper server-side execution.
-#         """),
-#         kind="warn",
-#     )
-#     return
+        **Recommended way to run:**
+        ```bash
+        uvx marimo run https://raw.githubusercontent.com/Adafede/marimo/refs/heads/main/apps/lotus_wikidata_explorer.py
+        ```
+        """),
+        kind="warn",
+    )
+    return
 
 
 @app.cell
