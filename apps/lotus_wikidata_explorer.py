@@ -251,11 +251,9 @@ def build_compounds_query(qid: str) -> str:
         FILTER((LANG(?compoundLabel)) = "mul")
         }}
 
-      OPTIONAL {{
-        ?ref_qid wdt:P1476 ?ref_title;
-                 wdt:P356 ?ref_doi;
-                 wdt:P577 ?ref_date.
-      }}
+      OPTIONAL {{ ?ref_qid wdt:P1476 ?ref_title. }}
+      OPTIONAL {{ ?ref_qid wdt:P356 ?ref_doi. }}
+      OPTIONAL {{ ?ref_qid wdt:P577 ?ref_date. }}
     }}
     """
 
@@ -284,11 +282,9 @@ def build_all_compounds_query() -> str:
           ?ref pr:P248 ?ref_qid.
         }
       }
-	  OPTIONAL {
-      ?compound wdt:P2017 ?compound_smiles_iso.
-      ?compound wdt:P2067 ?compound_mass.
-      ?compound wdt:P274 ?compound_formula. 
-	  }
+	  OPTIONAL { ?compound wdt:P2017 ?compound_smiles_iso. }
+    OPTIONAL { ?compound wdt:P2067 ?compound_mass. }
+    OPTIONAL { ?compound wdt:P274 ?compound_formula. }
       OPTIONAL {
         ?compound rdfs:label ?compoundLabel .
         FILTER(LANG(?compoundLabel) = "en")
@@ -297,11 +293,9 @@ def build_all_compounds_query() -> str:
         ?compound rdfs:label ?compoundLabel .
         FILTER(LANG(?compoundLabel) = "mul")
       }
-      OPTIONAL {
-        ?ref_qid wdt:P1476 ?ref_title;
-        wdt:P356 ?ref_doi;
-        wdt:P577 ?ref_date.
-      }	
+      OPTIONAL { ?ref_qid wdt:P1476 ?ref_title. }
+      OPTIONAL { ?ref_qid wdt:P356 ?ref_doi. }
+      OPTIONAL { ?ref_qid  wdt:P577 ?ref_date. }
     }
     """
 
@@ -859,16 +853,25 @@ def apply_range_filter(
         max_val: Maximum value (inclusive)
         extract_func: Optional function to extract value from column (e.g., dt.year())
     """
-    if min_val is None or max_val is None or column not in df.columns:
+    if (min_val is None and max_val is None) or column not in df.columns:
         return df
 
     col_expr = pl.col(column)
     if extract_func:
         col_expr = extract_func(col_expr)
 
-    return df.filter(
-        pl.col(column).is_null() | ((col_expr >= min_val) & (col_expr <= max_val))
-    )
+    # Build filter condition based on which bounds are set
+    if min_val is not None and max_val is not None:
+        # Both bounds set
+        condition = (col_expr >= min_val) & (col_expr <= max_val)
+    elif min_val is not None:
+        # Only minimum bound set
+        condition = col_expr >= min_val
+    else:
+        # Only maximum bound set
+        condition = col_expr <= max_val
+
+    return df.filter(pl.col(column).is_null() | condition)
 
 
 @app.function
@@ -2482,17 +2485,29 @@ def _(
         state_formula_filter = url_formula_filter
         state_exact_formula = url_exact_formula if url_formula_filter else ""
         state_c_min = url_c_min if url_formula_filter else None
-        state_c_max = url_c_max if url_formula_filter else CONFIG["element_c_max"]
+        state_c_max = (
+            url_c_max if url_formula_filter else None
+        )  # Changed from CONFIG default
         state_h_min = url_h_min if url_formula_filter else None
-        state_h_max = url_h_max if url_formula_filter else CONFIG["element_h_max"]
+        state_h_max = (
+            url_h_max if url_formula_filter else None
+        )  # Changed from CONFIG default
         state_n_min = url_n_min if url_formula_filter else None
-        state_n_max = url_n_max if url_formula_filter else CONFIG["element_n_max"]
+        state_n_max = (
+            url_n_max if url_formula_filter else None
+        )  # Changed from CONFIG default
         state_o_min = url_o_min if url_formula_filter else None
-        state_o_max = url_o_max if url_formula_filter else CONFIG["element_o_max"]
+        state_o_max = (
+            url_o_max if url_formula_filter else None
+        )  # Changed from CONFIG default
         state_p_min = url_p_min if url_formula_filter else None
-        state_p_max = url_p_max if url_formula_filter else CONFIG["element_p_max"]
+        state_p_max = (
+            url_p_max if url_formula_filter else None
+        )  # Changed from CONFIG default
         state_s_min = url_s_min if url_formula_filter else None
-        state_s_max = url_s_max if url_formula_filter else CONFIG["element_s_max"]
+        state_s_max = (
+            url_s_max if url_formula_filter else None
+        )  # Changed from CONFIG default
         state_f_state = url_f_state if url_formula_filter else "allowed"
         state_cl_state = url_cl_state if url_formula_filter else "allowed"
         state_br_state = url_br_state if url_formula_filter else "allowed"
@@ -2513,17 +2528,17 @@ def _(
         state_formula_filter = False
         state_exact_formula = ""
         state_c_min = None
-        state_c_max = CONFIG["element_c_max"]
+        state_c_max = None  # Changed from CONFIG default
         state_h_min = None
-        state_h_max = CONFIG["element_h_max"]
+        state_h_max = None  # Changed from CONFIG default
         state_n_min = None
-        state_n_max = CONFIG["element_n_max"]
+        state_n_max = None  # Changed from CONFIG default
         state_o_min = None
-        state_o_max = CONFIG["element_o_max"]
+        state_o_max = None  # Changed from CONFIG default
         state_p_min = None
-        state_p_max = CONFIG["element_p_max"]
+        state_p_max = None  # Changed from CONFIG default
         state_s_min = None
-        state_s_max = CONFIG["element_s_max"]
+        state_s_max = None  # Changed from CONFIG default
         state_f_state = "allowed"
         state_cl_state = "allowed"
         state_br_state = "allowed"
