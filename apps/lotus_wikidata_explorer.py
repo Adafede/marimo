@@ -2,9 +2,9 @@
 # requires-python = ">=3.12"
 # dependencies = [
 #     "marimo",
-#     "polars==1.35.1",
+#     "polars==1.35.2",
 #     "pyarrow==22.0.0",
-#     "rdflib==7.1.1",
+#     "rdflib==7.4.0",
 #     "requests==2.31.0",
 # ]
 # [tool.marimo.display]
