@@ -10,6 +10,8 @@
 # ]
 # [tool.marimo.display]
 # theme = "system"
+# [tool.marimo.runtime]
+# output_max_bytes = 500_000_000
 # ///
 
 """
