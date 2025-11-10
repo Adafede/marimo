@@ -1332,24 +1332,24 @@ def _():
     return
 
 
-@app.cell
-def _():
-    mo.callout(
-        mo.md("""
-        ## ⚠️ Under Development
+# @app.cell
+# def _():
+#     mo.callout(
+#         mo.md("""
+#         ## ⚠️ Under Development
 
-        This application is currently under active development and may not work as expected in all deployment modes.
+#         This application is currently under active development and may not work as expected in all deployment modes.
 
-        **Recommended way to run:**
-        ```bash
-        uvx marimo run https://raw.githubusercontent.com/Adafede/marimo/refs/heads/main/apps/lotus_wikidata_explorer.py
-        ```
+#         **Recommended way to run:**
+#         ```bash
+#         uvx marimo run https://raw.githubusercontent.com/Adafede/marimo/refs/heads/main/apps/lotus_wikidata_explorer.py
+#         ```
 
-        This ensures you're using the latest stable version with proper server-side execution.
-        """),
-        kind="warn",
-    )
-    return
+#         This ensures you're using the latest stable version with proper server-side execution.
+#         """),
+#         kind="warn",
+#     )
+#     return
 
 
 @app.cell
