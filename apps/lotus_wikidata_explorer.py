@@ -813,6 +813,35 @@ def generate_filename(
 
 
 @app.function
+def compress_if_large(
+    data: str, filename: str, threshold_bytes: int = None
+) -> tuple[str, str, str]:
+    """
+    Compress data with gzip if it exceeds the threshold.
+
+    Args:
+        data: String data to potentially compress
+        filename: Original filename
+        threshold_bytes: Size threshold for compression (uses CONFIG if None)
+
+    Returns:
+        Tuple of (data_or_compressed, final_filename, mimetype)
+    """
+    if threshold_bytes is None:
+        threshold_bytes = CONFIG["download_embed_threshold_bytes"]
+
+    data_bytes = data.encode("utf-8")
+    data_size = len(data_bytes)
+
+    # Compress if data exceeds threshold
+    if data_size > threshold_bytes:
+        compressed_data = gzip.compress(data_bytes)
+        return (compressed_data, f"{filename}.gz", "application/gzip")
+    else:
+        return (data, filename, None)
+
+
+@app.function
 def apply_range_filter(
     df: pl.DataFrame,
     column: str,
@@ -2110,28 +2139,49 @@ def _(
             json_generation_data = None
             rdf_generation_data = None
             export_df_for_lazy = None
-            buttons.append(
-                mo.download(
-                    data=export_df.write_csv(),
-                    filename=generate_filename(taxon_input.value, "csv"),
-                    label="📥 CSV",
-                    mimetype="text/csv",
-                )
+
+            # Generate and compress CSV
+            _csv_raw = export_df.write_csv()
+            _csv_data, _csv_fname, _csv_mime = compress_if_large(
+                _csv_raw, generate_filename(taxon_input.value, "csv")
             )
             buttons.append(
                 mo.download(
-                    data=export_df.write_json(),
-                    filename=generate_filename(taxon_input.value, "json"),
-                    label="📥 JSON",
-                    mimetype="application/json",
+                    data=_csv_data,
+                    filename=_csv_fname,
+                    label="📥 CSV"
+                    + (" (gzipped)" if _csv_mime == "application/gzip" else ""),
+                    mimetype=_csv_mime if _csv_mime else "text/csv",
                 )
+            )
+
+            # Generate and compress JSON
+            _json_raw = export_df.write_json()
+            _json_data, _json_fname, _json_mime = compress_if_large(
+                _json_raw, generate_filename(taxon_input.value, "json")
             )
             buttons.append(
                 mo.download(
-                    data=export_to_rdf_turtle(export_df, taxon_input.value, qid),
-                    filename=generate_filename(taxon_input.value, "ttl"),
-                    label="📥 RDF/Turtle",
-                    mimetype="text/turtle",
+                    data=_json_data,
+                    filename=_json_fname,
+                    label="📥 JSON"
+                    + (" (gzipped)" if _json_mime == "application/gzip" else ""),
+                    mimetype=_json_mime if _json_mime else "application/json",
+                )
+            )
+
+            # Generate and compress RDF
+            _rdf_raw = export_to_rdf_turtle(export_df, taxon_input.value, qid)
+            _rdf_data, _rdf_fname, _rdf_mime = compress_if_large(
+                _rdf_raw, generate_filename(taxon_input.value, "ttl")
+            )
+            buttons.append(
+                mo.download(
+                    data=_rdf_data,
+                    filename=_rdf_fname,
+                    label="📥 RDF/Turtle"
+                    + (" (gzipped)" if _rdf_mime == "application/gzip" else ""),
+                    mimetype=_rdf_mime if _rdf_mime else "text/turtle",
                 )
             )
         # Metadata download
@@ -2213,8 +2263,11 @@ def _(
         and csv_generate_button is not None
         and csv_generate_button.value
     ):
-        with mo.status.spinner(title="📊 Generating CSV format..."):
-            csv_data = csv_generation_data.write_csv()
+        with mo.status.spinner(title="📄 Generating CSV format..."):
+            _csv_data_raw = csv_generation_data.write_csv()
+            _csv_data, _csv_filename, _csv_mimetype = compress_if_large(
+                _csv_data_raw, generate_filename(taxon_name, "csv")
+            )
         csv_download_ui = mo.vstack(
             [
                 mo.callout(
@@ -2222,10 +2275,11 @@ def _(
                     kind="success",
                 ),
                 mo.download(
-                    data=csv_data,
-                    filename=generate_filename(taxon_name, "csv"),
-                    label="📥 Download CSV",
-                    mimetype="text/csv",
+                    data=_csv_data,
+                    filename=_csv_filename,
+                    label="📥 Download CSV"
+                    + (" (gzipped)" if _csv_mimetype == "application/gzip" else ""),
+                    mimetype=_csv_mimetype if _csv_mimetype else "text/csv",
                 ),
             ]
         )
@@ -2238,8 +2292,11 @@ def _(
         and json_generate_button is not None
         and json_generate_button.value
     ):
-        with mo.status.spinner(title="📋 Generating JSON format..."):
-            json_data = json_generation_data.write_json()
+        with mo.status.spinner(title="📖 Generating JSON format..."):
+            _json_data_raw = json_generation_data.write_json()
+            _json_data, _json_filename, _json_mimetype = compress_if_large(
+                _json_data_raw, generate_filename(taxon_name, "json")
+            )
         json_download_ui = mo.vstack(
             [
                 mo.callout(
@@ -2247,10 +2304,11 @@ def _(
                     kind="success",
                 ),
                 mo.download(
-                    data=json_data,
-                    filename=generate_filename(taxon_name, "json"),
-                    label="📥 Download JSON",
-                    mimetype="application/json",
+                    data=_json_data,
+                    filename=_json_filename,
+                    label="📥 Download JSON"
+                    + (" (gzipped)" if _json_mimetype == "application/gzip" else ""),
+                    mimetype=_json_mimetype if _json_mimetype else "application/json",
                 ),
             ]
         )
@@ -2263,11 +2321,14 @@ def _(
         and rdf_generate_button is not None
         and rdf_generate_button.value
     ):
-        with mo.status.spinner(title="🧪 Generating RDF/Turtle format..."):
-            rdf_data = export_to_rdf_turtle(
+        with mo.status.spinner(title="🐢 Generating RDF/Turtle format..."):
+            _rdf_data_raw = export_to_rdf_turtle(
                 rdf_generation_data["export_df"],
                 rdf_generation_data["taxon_input"],
                 rdf_generation_data["qid"],
+            )
+            _rdf_data, _rdf_filename, _rdf_mimetype = compress_if_large(
+                _rdf_data_raw, generate_filename(taxon_name, "ttl")
             )
         rdf_download_ui = mo.vstack(
             [
@@ -2278,10 +2339,11 @@ def _(
                     kind="success",
                 ),
                 mo.download(
-                    data=rdf_data,
-                    filename=generate_filename(taxon_name, "ttl"),
-                    label="📥 Download RDF/Turtle",
-                    mimetype="text/turtle",
+                    data=_rdf_data,
+                    filename=_rdf_filename,
+                    label="📥 Download RDF/Turtle"
+                    + (" (gzipped)" if _rdf_mimetype == "application/gzip" else ""),
+                    mimetype=_rdf_mimetype if _rdf_mimetype else "text/turtle",
                 ),
             ]
         )
