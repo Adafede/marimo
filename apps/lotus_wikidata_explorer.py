@@ -57,20 +57,16 @@ with app.setup:
         "sparql_endpoint": "https://qlever.cs.uni-freiburg.de/api/wikidata",
         # "sparql_endpoint": "https://query.wikidata.org/sparql",  # Alternative endpoint
         "user_agent": "LOTUS Explorer/0.0.1",
-
         # Network Settings
         "max_retries": 3,
         "retry_backoff": 2,
-
         # UI Display
         "color_hyperlink": "#006699",
         "page_size_default": 10,
         "page_size_export": 25,
-
         # Performance Thresholds
         "display_image_threshold": 50000,  # Hide 2D depictions for datasets > this size
         "rdf_generation_threshold": 5000,  # Defer RDF generation for datasets > this size
-
         # Filter Default Values
         "year_range_start": 1700,  # Minimum year for publication date filter
         "year_range_end": 2025,  # Maximum year for publication date filter
@@ -78,14 +74,13 @@ with app.setup:
         "year_default_end": 2025,  # Default end year
         "mass_default_min": 0,  # Default minimum mass in Daltons
         "mass_default_max": 2000,  # Default maximum mass in Daltons
-
         # Molecular Formula Filter Ranges
         "element_c_max": 100,  # Carbon max range
         "element_h_max": 200,  # Hydrogen max range
-        "element_n_max": 50,   # Nitrogen max range
-        "element_o_max": 50,   # Oxygen max range
-        "element_p_max": 20,   # Phosphorus max range
-        "element_s_max": 20,   # Sulfur max range
+        "element_n_max": 50,  # Nitrogen max range
+        "element_o_max": 50,  # Oxygen max range
+        "element_p_max": 20,  # Phosphorus max range
+        "element_s_max": 20,  # Sulfur max range
     }
 
     # Wikidata URLs (constants)
@@ -216,6 +211,48 @@ def build_compounds_query(qid: str) -> str:
         FILTER((LANG(?compoundLabel)) = "mul")
         }}
       }}
+    """
+
+
+@app.function
+def build_all_compounds_query() -> str:
+    """Build simplified SPARQL query to get all compounds from all taxa (no taxon filtering)."""
+    return """
+    PREFIX p: <http://www.wikidata.org/prop/>
+    PREFIX pr: <http://www.wikidata.org/prop/reference/>
+    PREFIX prov: <http://www.w3.org/ns/prov#>
+    PREFIX ps: <http://www.wikidata.org/prop/statement/>
+    PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+    PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+    SELECT DISTINCT ?compound ?compoundLabel ?compound_inchikey ?compound_smiles_iso ?compound_smiles_conn ?compound_mass ?compound_formula ?taxon_name ?taxon ?ref_title ?ref_doi ?ref_qid ?ref_date WHERE {
+      {
+        SELECT DISTINCT ?compound ?compound_inchikey ?compound_smiles_iso ?compound_smiles_conn ?compound_mass ?compound_formula ?taxon_name ?taxon ?ref_title ?ref_doi ?ref_qid ?ref_date WHERE {
+          ?taxon wdt:P225 ?taxon_name.
+          ?compound wdt:P235 ?compound_inchikey;
+            wdt:P233 ?compound_smiles_conn;
+            p:P703 ?statement.
+          ?statement ps:P703 ?taxon;
+            prov:wasDerivedFrom ?ref.
+          ?ref pr:P248 ?ref_qid.
+          OPTIONAL { ?compound wdt:P2017 ?compound_smiles_iso. }
+          OPTIONAL { ?compound wdt:P2067 ?compound_mass. }
+          OPTIONAL { ?compound wdt:P274 ?compound_formula. }
+          OPTIONAL {
+            ?ref_qid wdt:P1476 ?ref_title;
+              wdt:P356 ?ref_doi;
+              wdt:P577 ?ref_date.
+          }
+        }
+      }
+      OPTIONAL {
+        ?compound rdfs:label ?compoundLabel.
+        FILTER((LANG(?compoundLabel)) = "en")
+        }
+      OPTIONAL {
+        ?compound rdfs:label ?compoundLabel.
+        FILTER((LANG(?compoundLabel)) = "mul")
+        }
+      }
     """
 
 
@@ -419,8 +456,15 @@ def resolve_taxon_to_qid(taxon_input: str) -> Tuple[Optional[str], Optional[mo.H
 
     Returns:
         (qid, warning_html) where warning_html is None if no issues, or mo.Html with clickable links
+
+    Special case:
+        If taxon_input is "*", returns ("*", None) to indicate all taxa
     """
     taxon_input = taxon_input.strip()
+
+    # Handle wildcard for all taxa
+    if taxon_input == "*":
+        return "*", None
 
     # Early return if input is already a QID
     if taxon_input.upper().startswith("Q") and taxon_input[1:].isdigit():
@@ -826,14 +870,19 @@ def query_wikidata(
     Query Wikidata for compounds associated with a taxon.
 
     Args:
-        qid: Wikidata QID for taxon
+        qid: Wikidata QID for taxon, or "*" for all taxa
         year_start: Filter start year (inclusive)
         year_end: Filter end year (inclusive)
         mass_min: Minimum mass in Daltons
         mass_max: Maximum mass in Daltons
         formula_filters: Molecular formula filter criteria
     """
-    query = build_compounds_query(qid)
+    # Use simplified query for wildcard, otherwise use taxon-specific query
+    if qid == "*":
+        query = build_all_compounds_query()
+    else:
+        query = build_compounds_query(qid)
+
     results = execute_sparql(query)
     bindings = results.get("results", {}).get("bindings", [])
 
@@ -1308,7 +1357,7 @@ def _(
         value=state_mass_min,
         start=0,
         stop=10000,
-        step=10,
+        step=0.001,
         label="Min mass (Da)",
         full_width=True,
     )
@@ -1317,7 +1366,7 @@ def _(
         value=state_mass_max,
         start=0,
         stop=10000,
-        step=10,
+        step=0.001,
         label="Max mass (Da)",
         full_width=True,
     )
@@ -1335,40 +1384,88 @@ def _(
     )
 
     c_min = mo.ui.number(
-        value=state_c_min, start=0, stop=CONFIG["element_c_max"], label="C min", full_width=True
+        value=state_c_min,
+        start=0,
+        stop=CONFIG["element_c_max"],
+        label="C min",
+        full_width=True,
     )
     c_max = mo.ui.number(
-        value=state_c_max, start=0, stop=CONFIG["element_c_max"], label="C max", full_width=True
+        value=state_c_max,
+        start=0,
+        stop=CONFIG["element_c_max"],
+        label="C max",
+        full_width=True,
     )
     h_min = mo.ui.number(
-        value=state_h_min, start=0, stop=CONFIG["element_h_max"], label="H min", full_width=True
+        value=state_h_min,
+        start=0,
+        stop=CONFIG["element_h_max"],
+        label="H min",
+        full_width=True,
     )
     h_max = mo.ui.number(
-        value=state_h_max, start=0, stop=CONFIG["element_h_max"], label="H max", full_width=True
+        value=state_h_max,
+        start=0,
+        stop=CONFIG["element_h_max"],
+        label="H max",
+        full_width=True,
     )
     n_min = mo.ui.number(
-        value=state_n_min, start=0, stop=CONFIG["element_n_max"], label="N min", full_width=True
+        value=state_n_min,
+        start=0,
+        stop=CONFIG["element_n_max"],
+        label="N min",
+        full_width=True,
     )
     n_max = mo.ui.number(
-        value=state_n_max, start=0, stop=CONFIG["element_n_max"], label="N max", full_width=True
+        value=state_n_max,
+        start=0,
+        stop=CONFIG["element_n_max"],
+        label="N max",
+        full_width=True,
     )
     o_min = mo.ui.number(
-        value=state_o_min, start=0, stop=CONFIG["element_o_max"], label="O min", full_width=True
+        value=state_o_min,
+        start=0,
+        stop=CONFIG["element_o_max"],
+        label="O min",
+        full_width=True,
     )
     o_max = mo.ui.number(
-        value=state_o_max, start=0, stop=CONFIG["element_o_max"], label="O max", full_width=True
+        value=state_o_max,
+        start=0,
+        stop=CONFIG["element_o_max"],
+        label="O max",
+        full_width=True,
     )
     p_min = mo.ui.number(
-        value=state_p_min, start=0, stop=CONFIG["element_p_max"], label="P min", full_width=True
+        value=state_p_min,
+        start=0,
+        stop=CONFIG["element_p_max"],
+        label="P min",
+        full_width=True,
     )
     p_max = mo.ui.number(
-        value=state_p_max, start=0, stop=CONFIG["element_p_max"], label="P max", full_width=True
+        value=state_p_max,
+        start=0,
+        stop=CONFIG["element_p_max"],
+        label="P max",
+        full_width=True,
     )
     s_min = mo.ui.number(
-        value=state_s_min, start=0, stop=CONFIG["element_s_max"], label="S min", full_width=True
+        value=state_s_min,
+        start=0,
+        stop=CONFIG["element_s_max"],
+        label="S min",
+        full_width=True,
     )
     s_max = mo.ui.number(
-        value=state_s_max, start=0, stop=CONFIG["element_s_max"], label="S max", full_width=True
+        value=state_s_max,
+        start=0,
+        stop=CONFIG["element_s_max"],
+        label="S max",
+        full_width=True,
     )
 
     # Halogen selectors (allowed/required/excluded)
@@ -1392,7 +1489,7 @@ def _(
     taxon_input = mo.ui.text(
         value=state_taxon,
         label="🔬 Taxon name or QID",
-        placeholder="e.g., Swertia chirayita, Anabaena, Q157115, ...",
+        placeholder="e.g., Swertia chirayita, Anabaena, Q157115, or * for all taxa",
         full_width=True,
     )
 
@@ -1552,7 +1649,14 @@ def _(
     else:
         taxon_input_str = taxon_input.value.strip()
         start_time = time.time()
-        with mo.status.spinner(title=f"🔎 Querying Wikidata for {taxon_input_str}..."):
+
+        # Customize spinner message for wildcard
+        if taxon_input_str == "*":
+            spinner_message = "🔎 Querying Wikidata for all taxa..."
+        else:
+            spinner_message = f"🔎 Querying Wikidata for {taxon_input_str}..."
+
+        with mo.status.spinner(title=spinner_message):
             qid, taxon_warning = resolve_taxon_to_qid(taxon_input_str)
             if not qid:
                 mo.stop(
@@ -1612,14 +1716,26 @@ def _(qid, results_df, run_button, state_auto_run, taxon_input, taxon_warning):
         parts = []
         if taxon_warning:
             parts.append(mo.callout(taxon_warning, kind="warn"))
-        parts.append(
-            mo.callout(
-                mo.md(
-                    f"No natural products found for **{taxon_input.value}** ({create_wikidata_link(qid)}) with the current filters."
-                ),
-                kind="warn",
+
+        # Handle wildcard case
+        if qid == "*":
+            parts.append(
+                mo.callout(
+                    mo.md(
+                        f"No natural products found for **all taxa** with the current filters."
+                    ),
+                    kind="warn",
+                )
             )
-        )
+        else:
+            parts.append(
+                mo.callout(
+                    mo.md(
+                        f"No natural products found for **{taxon_input.value}** ({create_wikidata_link(qid)}) with the current filters."
+                    ),
+                    kind="warn",
+                )
+            )
         summary_display = mo.vstack(parts) if len(parts) > 1 else parts[0]
     else:
         n_compounds = results_df.n_unique(subset=["structure"])
@@ -1627,12 +1743,18 @@ def _(qid, results_df, run_button, state_auto_run, taxon_input, taxon_warning):
         n_refs = results_df.n_unique(subset=["reference"])
         n_entries = len(results_df)
 
-        summary_parts = [
-            mo.md(
+        # Handle wildcard case for summary header
+        if qid == "*":
+            summary_header = mo.md(
+                f"## Results\n" f"### Summary\n\nFound data for **all taxa**"
+            )
+        else:
+            summary_header = mo.md(
                 f"## Results\n"
                 f"### Summary\n\nFound data for **{taxon_input.value}** {create_wikidata_link(qid)}"
-            ),
-        ]
+            )
+
+        summary_parts = [summary_header]
 
         if taxon_warning:
             summary_parts.append(mo.callout(taxon_warning, kind="warn"))
@@ -1990,7 +2112,7 @@ def _():
 
             ### Available Parameters
 
-            - `taxon` - Taxon name or QID (required)
+            - `taxon` - Taxon name, QID, or **"*"** for all taxa (required)
             - `mass_min`, `mass_max` - Mass range in Daltons
             - `year_start`, `year_end` - Publication year range
             - `exact_formula` - Exact molecular formula (e.g., C15H10O5)
@@ -2022,6 +2144,12 @@ def _():
             ?taxon=Artemisia&f_state=excluded&cl_state=required
             ```
 
+            #### Search all taxa with mass filter
+
+            ```text
+            ?taxon=*&mass_min=300&mass_max=500
+            ```
+
             **Tip:** Copy the query parameters above and append them to your notebook URL.
             """),
             "❓ Help & Documentation": mo.md("""
@@ -2037,6 +2165,7 @@ def _():
             #### Taxon Search
             - Search by scientific name (case-insensitive)
             - Search directly by Wikidata QID for precision
+            - Use **"*"** (asterisk) to query all taxa at once
             - Handles ambiguous names with helpful suggestions
 
             #### Filtering Options
@@ -2240,7 +2369,9 @@ def _(
 
         # Year filter state
         state_year_filter = url_year_filter
-        state_year_start = url_year_start if url_year_filter else CONFIG["year_default_start"]
+        state_year_start = (
+            url_year_start if url_year_filter else CONFIG["year_default_start"]
+        )
         state_year_end = url_year_end if url_year_filter else CONFIG["year_default_end"]
 
         # Formula filter state
