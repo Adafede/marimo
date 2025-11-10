@@ -52,15 +52,40 @@ with app.setup:
     # ====================================================================
 
     CONFIG = {
+        # API and External Services
         "cdk_base": "https://www.simolecule.com/cdkdepict/depict/cot/svg",
-        "color_hyperlink": "#006699",
+        "sparql_endpoint": "https://qlever.cs.uni-freiburg.de/api/wikidata",
+        # "sparql_endpoint": "https://query.wikidata.org/sparql",  # Alternative endpoint
+        "user_agent": "LOTUS Explorer/0.0.1",
+
+        # Network Settings
         "max_retries": 3,
+        "retry_backoff": 2,
+
+        # UI Display
+        "color_hyperlink": "#006699",
         "page_size_default": 10,
         "page_size_export": 25,
-        "retry_backoff": 2,
-        # "sparql_endpoint": "https://query.wikidata.org/sparql",
-        "sparql_endpoint": "https://qlever.cs.uni-freiburg.de/api/wikidata",
-        "user_agent": "LOTUS Explorer/0.0.1",
+
+        # Performance Thresholds
+        "display_image_threshold": 50000,  # Hide 2D depictions for datasets > this size
+        "rdf_generation_threshold": 5000,  # Defer RDF generation for datasets > this size
+
+        # Filter Default Values
+        "year_range_start": 1700,  # Minimum year for publication date filter
+        "year_range_end": 2025,  # Maximum year for publication date filter
+        "year_default_start": 1900,  # Default start year
+        "year_default_end": 2025,  # Default end year
+        "mass_default_min": 0,  # Default minimum mass in Daltons
+        "mass_default_max": 2000,  # Default maximum mass in Daltons
+
+        # Molecular Formula Filter Ranges
+        "element_c_max": 100,  # Carbon max range
+        "element_h_max": 200,  # Hydrogen max range
+        "element_n_max": 50,   # Nitrogen max range
+        "element_o_max": 50,   # Oxygen max range
+        "element_p_max": 20,   # Phosphorus max range
+        "element_s_max": 20,   # Sulfur max range
     }
 
     # Wikidata URLs (constants)
@@ -1310,40 +1335,40 @@ def _(
     )
 
     c_min = mo.ui.number(
-        value=state_c_min, start=0, stop=100, label="C min", full_width=True
+        value=state_c_min, start=0, stop=CONFIG["element_c_max"], label="C min", full_width=True
     )
     c_max = mo.ui.number(
-        value=state_c_max, start=0, stop=100, label="C max", full_width=True
+        value=state_c_max, start=0, stop=CONFIG["element_c_max"], label="C max", full_width=True
     )
     h_min = mo.ui.number(
-        value=state_h_min, start=0, stop=200, label="H min", full_width=True
+        value=state_h_min, start=0, stop=CONFIG["element_h_max"], label="H min", full_width=True
     )
     h_max = mo.ui.number(
-        value=state_h_max, start=0, stop=200, label="H max", full_width=True
+        value=state_h_max, start=0, stop=CONFIG["element_h_max"], label="H max", full_width=True
     )
     n_min = mo.ui.number(
-        value=state_n_min, start=0, stop=50, label="N min", full_width=True
+        value=state_n_min, start=0, stop=CONFIG["element_n_max"], label="N min", full_width=True
     )
     n_max = mo.ui.number(
-        value=state_n_max, start=0, stop=50, label="N max", full_width=True
+        value=state_n_max, start=0, stop=CONFIG["element_n_max"], label="N max", full_width=True
     )
     o_min = mo.ui.number(
-        value=state_o_min, start=0, stop=50, label="O min", full_width=True
+        value=state_o_min, start=0, stop=CONFIG["element_o_max"], label="O min", full_width=True
     )
     o_max = mo.ui.number(
-        value=state_o_max, start=0, stop=50, label="O max", full_width=True
+        value=state_o_max, start=0, stop=CONFIG["element_o_max"], label="O max", full_width=True
     )
     p_min = mo.ui.number(
-        value=state_p_min, start=0, stop=20, label="P min", full_width=True
+        value=state_p_min, start=0, stop=CONFIG["element_p_max"], label="P min", full_width=True
     )
     p_max = mo.ui.number(
-        value=state_p_max, start=0, stop=20, label="P max", full_width=True
+        value=state_p_max, start=0, stop=CONFIG["element_p_max"], label="P max", full_width=True
     )
     s_min = mo.ui.number(
-        value=state_s_min, start=0, stop=20, label="S min", full_width=True
+        value=state_s_min, start=0, stop=CONFIG["element_s_max"], label="S min", full_width=True
     )
     s_max = mo.ui.number(
-        value=state_s_max, start=0, stop=20, label="S max", full_width=True
+        value=state_s_max, start=0, stop=CONFIG["element_s_max"], label="S max", full_width=True
     )
 
     # Halogen selectors (allowed/required/excluded)
@@ -1377,7 +1402,7 @@ def _(
 
     year_start = mo.ui.number(
         value=state_year_start,
-        start=1700,
+        start=CONFIG["year_range_start"],
         stop=current_year,
         label="Start year",
         full_width=True,
@@ -1385,7 +1410,7 @@ def _(
 
     year_end = mo.ui.number(
         value=state_year_end,
-        start=1700,
+        start=CONFIG["year_range_start"],
         stop=current_year,
         label="End year",
         full_width=True,
@@ -1699,9 +1724,9 @@ def _(
         total_rows = len(results_df)
 
         # Adaptive display strategy:
-        # - Large datasets (>50000 rows): Hide 2D depictions for performance
-        # - Small datasets (≤50000 rows): Show 2D depictions
-        if total_rows > 50000:
+        # - Large datasets: Hide 2D depictions for performance
+        # - Small datasets: Show 2D depictions
+        if total_rows > CONFIG["display_image_threshold"]:
             display_data = [
                 {
                     "Compound": row["name"],
@@ -1757,9 +1782,9 @@ def _(
         json_data = export_df.write_json()
 
         # RDF generation strategy:
-        # - Large datasets (>5000 rows): Defer generation until user requests it
-        # - Small datasets (≤5000 rows): Generate immediately
-        is_large_dataset = len(export_df) > 5000
+        # - Large datasets: Defer generation until user requests it
+        # - Small datasets: Generate immediately
+        is_large_dataset = len(export_df) > CONFIG["rdf_generation_threshold"]
         if is_large_dataset:
             rdf_data = None
             rdf_generation_data = {
@@ -2035,11 +2060,12 @@ def _():
             - **CSV**: Spreadsheet-compatible format
             - **JSON**: Machine-readable structured data
             - **RDF/Turtle**: Semantic web format
-              - Small datasets (≤5000 rows): Generated automatically
-              - Large datasets (>5000 rows): Click "Generate RDF/Turtle" button to create on-demand (may take some time)
+              - Small datasets (≤{CONFIG["rdf_generation_threshold"]} rows): Generated automatically
+              - Large datasets (>{CONFIG["rdf_generation_threshold"]} rows): Click "Generate RDF/Turtle" button to create on-demand (may take several minutes)
             - **Metadata**: Schema.org-compliant metadata with provenance
             - **Citation**: Proper citations for your publications
-            **Note:** For large datasets (>1000 rows), RDF/Turtle export is automatically disabled to improve performance. Use CSV or JSON exports instead.
+
+            **Note:** For large datasets (>{CONFIG["rdf_generation_threshold"]} rows), RDF/Turtle generation is deferred for performance. Click the generation button when you're ready to create the RDF export. The process may take a few minutes depending on dataset size.
             """),
         }
     )
@@ -2101,13 +2127,13 @@ def _(url_params):
     url_mass_filter = (
         get_url_param("mass_min") is not None or get_url_param("mass_max") is not None
     )
-    url_mass_min = get_url_param("mass_min", 0, float)
-    url_mass_max = get_url_param("mass_max", 2000, float)
+    url_mass_min = get_url_param("mass_min", CONFIG["mass_default_min"], float)
+    url_mass_max = get_url_param("mass_max", CONFIG["mass_default_max"], float)
     url_year_filter = (
         get_url_param("year_start") is not None or get_url_param("year_end") is not None
     )
-    url_year_start = get_url_param("year_start", 1900, int)
-    url_year_end = get_url_param("year_end", 2025, int)
+    url_year_start = get_url_param("year_start", CONFIG["year_default_start"], int)
+    url_year_end = get_url_param("year_end", CONFIG["year_default_end"], int)
 
     # Check if formula filter is active
     url_formula_filter = any(
@@ -2127,12 +2153,12 @@ def _(url_params):
     url_exact_formula = get_url_param("exact_formula", "")
 
     # Use helper for element ranges
-    url_c_min, url_c_max = get_element_range_params("c", 100)
-    url_h_min, url_h_max = get_element_range_params("h", 200)
-    url_n_min, url_n_max = get_element_range_params("n", 50)
-    url_o_min, url_o_max = get_element_range_params("o", 50)
-    url_p_min, url_p_max = get_element_range_params("p", 20)
-    url_s_min, url_s_max = get_element_range_params("s", 20)
+    url_c_min, url_c_max = get_element_range_params("c", CONFIG["element_c_max"])
+    url_h_min, url_h_max = get_element_range_params("h", CONFIG["element_h_max"])
+    url_n_min, url_n_max = get_element_range_params("n", CONFIG["element_n_max"])
+    url_o_min, url_o_max = get_element_range_params("o", CONFIG["element_o_max"])
+    url_p_min, url_p_max = get_element_range_params("p", CONFIG["element_p_max"])
+    url_s_min, url_s_max = get_element_range_params("s", CONFIG["element_s_max"])
 
     # Halogen states
     url_f_state = get_url_param("f_state", "allowed")
@@ -2209,29 +2235,29 @@ def _(
 
         # Mass filter state
         state_mass_filter = url_mass_filter
-        state_mass_min = url_mass_min if url_mass_filter else 0
-        state_mass_max = url_mass_max if url_mass_filter else 2000
+        state_mass_min = url_mass_min if url_mass_filter else CONFIG["mass_default_min"]
+        state_mass_max = url_mass_max if url_mass_filter else CONFIG["mass_default_max"]
 
         # Year filter state
         state_year_filter = url_year_filter
-        state_year_start = url_year_start if url_year_filter else 1900
-        state_year_end = url_year_end if url_year_filter else 2025
+        state_year_start = url_year_start if url_year_filter else CONFIG["year_default_start"]
+        state_year_end = url_year_end if url_year_filter else CONFIG["year_default_end"]
 
         # Formula filter state
         state_formula_filter = url_formula_filter
         state_exact_formula = url_exact_formula if url_formula_filter else ""
         state_c_min = url_c_min if url_formula_filter else None
-        state_c_max = url_c_max if url_formula_filter else 100
+        state_c_max = url_c_max if url_formula_filter else CONFIG["element_c_max"]
         state_h_min = url_h_min if url_formula_filter else None
-        state_h_max = url_h_max if url_formula_filter else 200
+        state_h_max = url_h_max if url_formula_filter else CONFIG["element_h_max"]
         state_n_min = url_n_min if url_formula_filter else None
-        state_n_max = url_n_max if url_formula_filter else 50
+        state_n_max = url_n_max if url_formula_filter else CONFIG["element_n_max"]
         state_o_min = url_o_min if url_formula_filter else None
-        state_o_max = url_o_max if url_formula_filter else 50
+        state_o_max = url_o_max if url_formula_filter else CONFIG["element_o_max"]
         state_p_min = url_p_min if url_formula_filter else None
-        state_p_max = url_p_max if url_formula_filter else 20
+        state_p_max = url_p_max if url_formula_filter else CONFIG["element_p_max"]
         state_s_min = url_s_min if url_formula_filter else None
-        state_s_max = url_s_max if url_formula_filter else 20
+        state_s_max = url_s_max if url_formula_filter else CONFIG["element_s_max"]
         state_f_state = url_f_state if url_formula_filter else "allowed"
         state_cl_state = url_cl_state if url_formula_filter else "allowed"
         state_br_state = url_br_state if url_formula_filter else "allowed"
@@ -2244,25 +2270,25 @@ def _(
         # Default states when no URL parameters
         state_taxon = "Gentiana lutea"
         state_mass_filter = False
-        state_mass_min = 0
-        state_mass_max = 2000
+        state_mass_min = CONFIG["mass_default_min"]
+        state_mass_max = CONFIG["mass_default_max"]
         state_year_filter = False
-        state_year_start = 1900
-        state_year_end = 2025
+        state_year_start = CONFIG["year_default_start"]
+        state_year_end = CONFIG["year_default_end"]
         state_formula_filter = False
         state_exact_formula = ""
         state_c_min = None
-        state_c_max = 100
+        state_c_max = CONFIG["element_c_max"]
         state_h_min = None
-        state_h_max = 200
+        state_h_max = CONFIG["element_h_max"]
         state_n_min = None
-        state_n_max = 50
+        state_n_max = CONFIG["element_n_max"]
         state_o_min = None
-        state_o_max = 50
+        state_o_max = CONFIG["element_o_max"]
         state_p_min = None
-        state_p_max = 20
+        state_p_max = CONFIG["element_p_max"]
         state_s_min = None
-        state_s_max = 20
+        state_s_max = CONFIG["element_s_max"]
         state_f_state = "allowed"
         state_cl_state = "allowed"
         state_br_state = "allowed"
