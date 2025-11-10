@@ -33,8 +33,6 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import marimo
 
-marimo.config.runtime.output_max_bytes = 100_000_000
-
 __generated_with = "0.17.0"
 app = marimo.App(width="full", app_title="LOTUS Wikidata Explorer")
 
@@ -60,6 +58,9 @@ with app.setup:
     # CONFIGURATION
     # ====================================================================
 
+    mo._runtime.context.get_context().marimo_config["runtime"]["output_max_bytes"] = (
+        100_000_000
+    )
     CONFIG = {
         # External Services
         "cdk_base": "https://www.simolecule.com/cdkdepict/depict/cot/svg",
