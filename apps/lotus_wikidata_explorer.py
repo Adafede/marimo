@@ -43,6 +43,7 @@ with app.setup:
     import re
     import requests
     import time
+    import gzip
     from dataclasses import dataclass, field
     from datetime import datetime
     from functools import lru_cache
@@ -73,7 +74,8 @@ with app.setup:
         "page_size_export": 25,
         # Performance Thresholds
         "table_row_limit": 10000,  # Max rows for tables
-        "rdf_generation_threshold": 5000,  # Defer RDF generation for datasets > this size
+        "lazy_generation_threshold": 5000,  # Defer generation for datasets > this size
+        "download_embed_threshold_bytes": 8_000_000,  # Compress data > 8MB for download UI
         # Filter Default Values
         "year_range_start": 1700,  # Minimum year for publication date filter
         "year_default_start": 1900,  # Default start year
@@ -793,16 +795,21 @@ def generate_filename(
     Generate standardized filename for exports.
 
     Args:
-        taxon_name: Name of the taxon
+        taxon_name: Name of the taxon (or "*" for all taxa)
         file_type: File extension (e.g., 'csv', 'json', 'ttl')
         prefix: Filename prefix (default: 'lotus_data')
 
     Returns:
         Standardized filename with date
     """
-    safe_name = taxon_name.replace(" ", "_")
+    # Handle wildcard for all taxa
+    if taxon_name == "*":
+        safe_name = "all_taxa"
+    else:
+        safe_name = taxon_name.replace(" ", "_")
+
     date_str = datetime.now().strftime("%Y%m%d")
-    return f"{prefix}_{safe_name}_{date_str}.{file_type}"
+    return f"{date_str}_{prefix}_{safe_name}.{file_type}"
 
 
 @app.function
@@ -1968,28 +1975,72 @@ def _(
     year_filter,
     year_start,
 ):
-    # Display table if either button was clicked or auto-run from URL
-    # Initialize variables that may not be set in all branches
-    is_large_dataset = False
-    rdf_generation_data = None
-    rdf_generate_button = None
-    tables_output = None
-
+    # Replace previous generation logic: build UI but DO NOT display inline
     if (not run_button.value and not state_auto_run) or results_df is None:
-        table_output = None
-        tables_output = None
+        download_ui = mo.Html("")
+        tables_ui = mo.Html("")
+        ui_is_large_dataset = False
+        taxon_name = taxon_input.value
+        export_df_for_lazy = None
+        csv_generate_button = None
+        json_generate_button = None
+        rdf_generate_button = None
+        csv_generation_data = None
+        json_generation_data = None
+        rdf_generation_data = None
     elif len(results_df) == 0:
-        table_output = mo.callout(
+        download_ui = mo.callout(
             mo.md("No compounds match your search criteria."), kind="neutral"
         )
-        tables_output = None
+        tables_ui = mo.Html("")
+        ui_is_large_dataset = False
+        taxon_name = taxon_input.value
+        export_df_for_lazy = None
+        csv_generate_button = None
+        json_generate_button = None
+        rdf_generate_button = None
+        csv_generation_data = None
+        json_generation_data = None
+        rdf_generation_data = None
     else:
+        export_df = prepare_export_dataframe(results_df)
+        taxon_name = taxon_input.value
+        ui_is_large_dataset = len(export_df) > CONFIG["lazy_generation_threshold"]
+        # Build filters for metadata
+        _formula_filt = None
+        if formula_filter.value:
+            _formula_filt = FormulaFilters(
+                exact_formula=exact_formula.value
+                if exact_formula.value.strip()
+                else None,
+                c=ElementRange(c_min.value, c_max.value),
+                h=ElementRange(h_min.value, h_max.value),
+                n=ElementRange(n_min.value, n_max.value),
+                o=ElementRange(o_min.value, o_max.value),
+                p=ElementRange(p_min.value, p_max.value),
+                s=ElementRange(s_min.value, s_max.value),
+                f_state=f_state.value,
+                cl_state=cl_state.value,
+                br_state=br_state.value,
+                i_state=i_state.value,
+            )
+        active_filters = build_active_filters_dict(
+            mass_filter_active=mass_filter.value,
+            mass_min_val=mass_min.value if mass_filter.value else None,
+            mass_max_val=mass_max.value if mass_filter.value else None,
+            year_filter_active=year_filter.value,
+            year_start_val=year_start.value if year_filter.value else None,
+            year_end_val=year_end.value if year_filter.value else None,
+            formula_filters=_formula_filt,
+        )
+        metadata = create_export_metadata(
+            export_df, taxon_input.value, qid, active_filters
+        )
+        metadata_json = json.dumps(metadata, indent=2)
+        citation_text = create_citation_text(taxon_input.value)
+        # Display table data (apply row limit & depiction logic)
         total_rows = len(results_df)
-
-        # Adaptive display strategy with output size limits
-        # Use CONFIG table_row_limit to prevent massive outputs
         if total_rows > CONFIG["table_row_limit"]:
-            # Large dataset - limit rows and hide images
             limited_df = results_df.head(CONFIG["table_row_limit"])
             display_data = [
                 {
@@ -2009,7 +2060,6 @@ def _(
                 }
                 for row in limited_df.iter_rows(named=True)
             ]
-            # Single consolidated warning for large datasets
             display_note = mo.callout(
                 mo.md(
                     f"⚡ **Large dataset ({total_rows:,} rows)**\n\n"
@@ -2019,124 +2069,73 @@ def _(
                 kind="info",
             )
         else:
-            # Normal dataset - full display with 2D depictions
             display_data = [
                 create_display_row(row) for row in results_df.iter_rows(named=True)
             ]
             display_note = mo.Html("")
-
         display_table = mo.ui.table(
             display_data,
             selection=None,
             page_size=CONFIG["page_size_default"],
             show_column_summaries=False,
         )
-
-        # Create export table (preserves pub_date as actual date)
-        export_df = prepare_export_dataframe(results_df)
-        export_data = export_df.to_dicts()
-        export_note = mo.Html("")
-
         export_table = mo.ui.table(
-            export_data,
+            export_df.to_dicts(),
             selection=None,
             page_size=CONFIG["page_size_export"],
             show_column_summaries=False,
         )
-
-        # Create export files (use full dataframe)
-        csv_data = export_df.write_csv()
-        json_data = export_df.write_json()
-
-        # RDF generation strategy:
-        # - Large datasets: Defer generation until user requests it
-        # - Small datasets: Generate immediately
-        is_large_dataset = len(export_df) > CONFIG["rdf_generation_threshold"]
-        if is_large_dataset:
-            rdf_data = None
+        # Immediate or lazy downloads
+        buttons = []
+        if ui_is_large_dataset:
+            csv_generate_button = mo.ui.run_button(label="📄 Generate CSV")
+            json_generate_button = mo.ui.run_button(label="📖 Generate JSON")
+            rdf_generate_button = mo.ui.run_button(label="🐢 Generate RDF/Turtle")
+            buttons.extend(
+                [csv_generate_button, json_generate_button, rdf_generate_button]
+            )
+            csv_generation_data = export_df
+            json_generation_data = export_df
             rdf_generation_data = {
                 "export_df": export_df,
                 "taxon_input": taxon_input.value,
                 "qid": qid,
             }
+            export_df_for_lazy = export_df
         else:
-            rdf_data = export_to_rdf_turtle(export_df, taxon_input.value, qid)
-            rdf_generation_data = None
-
-        # Build formula filters for metadata
-        _formula_filt = None
-        if formula_filter.value:
-            _formula_filt = FormulaFilters(
-                exact_formula=exact_formula.value
-                if exact_formula.value.strip()
-                else None,
-                c=ElementRange(c_min.value, c_max.value),
-                h=ElementRange(h_min.value, h_max.value),
-                n=ElementRange(n_min.value, n_max.value),
-                o=ElementRange(o_min.value, o_max.value),
-                p=ElementRange(p_min.value, p_max.value),
-                s=ElementRange(s_min.value, s_max.value),
-                f_state=f_state.value,
-                cl_state=cl_state.value,
-                br_state=br_state.value,
-                i_state=i_state.value,
-            )
-
-        # Get active filters for metadata using helper function
-        active_filters = build_active_filters_dict(
-            mass_filter_active=mass_filter.value,
-            mass_min_val=mass_min.value if mass_filter.value else None,
-            mass_max_val=mass_max.value if mass_filter.value else None,
-            year_filter_active=year_filter.value,
-            year_start_val=year_start.value if year_filter.value else None,
-            year_end_val=year_end.value if year_filter.value else None,
-            formula_filters=_formula_filt,
-        )
-
-        metadata = create_export_metadata(
-            export_df, taxon_input.value, qid, active_filters
-        )
-        metadata_json = json.dumps(metadata, indent=2)
-
-        citation_text = create_citation_text(taxon_input.value)
-
-        # Create download buttons - always include CSV, JSON, Metadata
-        # For large datasets, add RDF generation button instead of direct download
-        basic_buttons = [
-            mo.download(
-                data=csv_data,
-                filename=generate_filename(taxon_input.value, "csv"),
-                label="📥 CSV",
-                mimetype="text/csv",
-            ),
-            mo.download(
-                data=json_data,
-                filename=generate_filename(taxon_input.value, "json"),
-                label="📥 JSON",
-                mimetype="application/json",
-            ),
-        ]
-
-        if is_large_dataset:
-            # Add RDF generation button for lazy loading
-            rdf_generate_button = mo.ui.run_button(
-                label="🐢 Generate RDF/Turtle"
-            )
-            basic_buttons.append(rdf_generate_button)
-        else:
+            csv_generate_button = None
+            json_generate_button = None
             rdf_generate_button = None
-            if rdf_data is not None:
-                # Small dataset - add direct download button
-                basic_buttons.append(
-                    mo.download(
-                        data=rdf_data,
-                        filename=generate_filename(taxon_input.value, "ttl"),
-                        label="📥 RDF/Turtle",
-                        mimetype="text/turtle",
-                    )
+            csv_generation_data = None
+            json_generation_data = None
+            rdf_generation_data = None
+            export_df_for_lazy = None
+            buttons.append(
+                mo.download(
+                    data=export_df.write_csv(),
+                    filename=generate_filename(taxon_input.value, "csv"),
+                    label="📥 CSV",
+                    mimetype="text/csv",
                 )
-
-        basic_buttons.append(
+            )
+            buttons.append(
+                mo.download(
+                    data=export_df.write_json(),
+                    filename=generate_filename(taxon_input.value, "json"),
+                    label="📥 JSON",
+                    mimetype="application/json",
+                )
+            )
+            buttons.append(
+                mo.download(
+                    data=export_to_rdf_turtle(export_df, taxon_input.value, qid),
+                    filename=generate_filename(taxon_input.value, "ttl"),
+                    label="📥 RDF/Turtle",
+                    mimetype="text/turtle",
+                )
+            )
+        # Metadata download
+        buttons.append(
             mo.download(
                 data=metadata_json,
                 filename=generate_filename(
@@ -2146,23 +2145,13 @@ def _(
                 mimetype="application/json",
             )
         )
-
-        download_buttons = mo.hstack(basic_buttons, gap=2, wrap=True)
-
-        # Download section (displayed first)
-        table_output = mo.vstack(
-            [
-                mo.md("### Download"),
-                download_buttons,
-            ]
+        download_ui = mo.vstack(
+            [mo.md("### Download"), mo.hstack(buttons, gap=2, wrap=True)]
         )
-
-        # Tables section (displayed after RDF UI)
-        tables_output = mo.vstack(
+        tables_ui = mo.vstack(
             [
                 mo.md("### Tables"),
                 display_note,
-                export_note,
                 mo.ui.tabs(
                     {
                         "🖼️  Display": display_table,
@@ -2173,273 +2162,183 @@ def _(
                 ),
             ]
         )
-
-    table_output
     return (
-        is_large_dataset,
+        csv_generate_button,
+        csv_generation_data,
+        download_ui,
+        json_generate_button,
+        json_generation_data,
         rdf_generate_button,
         rdf_generation_data,
-        tables_output,
+        tables_ui,
+        taxon_name,
+        ui_is_large_dataset,
     )
 
 
 @app.cell
-def _(is_large_dataset, rdf_generate_button, rdf_generation_data):
+def _():
+    mo.md(
+        """
+    ---
+    **Data:** <a href="https://www.wikidata.org/wiki/Q104225190" style="color:#990000;">LOTUS Initiative</a> & <a href="https://www.wikidata.org/" style="color:#990000;">Wikidata</a>  |  
+    **Code:** <a href="https://github.com/cdk/depict" style="color:#339966;">CDK Depict</a> & 
+    <a href="https://github.com/Adafede/marimo/blob/main/apps/lotus_wikidata_explorer.py" style="color:#339966;">lotus_wikidata_explorer.py</a>  |  
+    **License:** <a href="https://creativecommons.org/publicdomain/zero/1.0/" style="color:#006699;">CC0 1.0</a> for data & <a href="https://www.gnu.org/licenses/agpl-3.0.html" style="color:#006699;">AGPL-3.0</a> for code
     """
-    Handle lazy RDF generation for large datasets.
+    )
+    return
 
-    This cell is separate because marimo requires UI element values
-    to be accessed in a different cell than where they're created.
-    """
+
+@app.cell
+def _(download_ui):
+    download_ui
+    return
+
+
+@app.cell
+def _(
+    csv_generate_button,
+    csv_generation_data,
+    json_generate_button,
+    json_generation_data,
+    rdf_generate_button,
+    rdf_generation_data,
+    taxon_name,
+    ui_is_large_dataset,
+):
+    # Handle CSV generation
     if (
-        not is_large_dataset
-        or rdf_generate_button is None
-        or rdf_generation_data is None
+        ui_is_large_dataset
+        and csv_generate_button is not None
+        and csv_generate_button.value
     ):
-        rdf_download_ui = mo.Html("")
-    elif rdf_generate_button.value:
-        # Generate RDF when button is clicked
-        with mo.status.spinner(
-            title="Generating RDF/Turtle format... This may take a moment for large datasets."
-        ):
-            generated_rdf = export_to_rdf_turtle(
+        with mo.status.spinner(title="📊 Generating CSV format..."):
+            csv_data = csv_generation_data.write_csv()
+        csv_download_ui = mo.vstack(
+            [
+                mo.callout(
+                    mo.md(f"✅ CSV generated ({len(csv_generation_data):,} entries)"),
+                    kind="success",
+                ),
+                mo.download(
+                    data=csv_data,
+                    filename=generate_filename(taxon_name, "csv"),
+                    label="📥 Download CSV",
+                    mimetype="text/csv",
+                ),
+            ]
+        )
+    else:
+        csv_download_ui = mo.Html("")
+
+    # Handle JSON generation
+    if (
+        ui_is_large_dataset
+        and json_generate_button is not None
+        and json_generate_button.value
+    ):
+        with mo.status.spinner(title="📋 Generating JSON format..."):
+            json_data = json_generation_data.write_json()
+        json_download_ui = mo.vstack(
+            [
+                mo.callout(
+                    mo.md(f"✅ JSON generated ({len(json_generation_data):,} entries)"),
+                    kind="success",
+                ),
+                mo.download(
+                    data=json_data,
+                    filename=generate_filename(taxon_name, "json"),
+                    label="📥 Download JSON",
+                    mimetype="application/json",
+                ),
+            ]
+        )
+    else:
+        json_download_ui = mo.Html("")
+
+    # Handle RDF generation
+    if (
+        ui_is_large_dataset
+        and rdf_generate_button is not None
+        and rdf_generate_button.value
+    ):
+        with mo.status.spinner(title="🧪 Generating RDF/Turtle format..."):
+            rdf_data = export_to_rdf_turtle(
                 rdf_generation_data["export_df"],
                 rdf_generation_data["taxon_input"],
                 rdf_generation_data["qid"],
             )
-
         rdf_download_ui = mo.vstack(
             [
                 mo.callout(
                     mo.md(
-                        f"✅ RDF/Turtle file generated successfully! ({len(rdf_generation_data['export_df'])} rows)"
+                        f"✅ RDF/Turtle generated ({len(rdf_generation_data['export_df']):,} entries)"
                     ),
                     kind="success",
                 ),
                 mo.download(
-                    data=generated_rdf,
-                    filename=generate_filename(
-                        rdf_generation_data["taxon_input"], "ttl"
-                    ),
+                    data=rdf_data,
+                    filename=generate_filename(taxon_name, "ttl"),
                     label="📥 Download RDF/Turtle",
                     mimetype="text/turtle",
                 ),
             ]
         )
     else:
-        # Show instructions before generation
-        rdf_download_ui = mo.callout(
-            mo.md(
-                f"**Large dataset ({len(rdf_generation_data['export_df'])} rows):** Click the 'Generate RDF/Turtle' button above to create the RDF export. Generation may take several minutes depending on dataset size."
-            ),
-            kind="info",
-        )
+        rdf_download_ui = mo.Html("")
 
-    rdf_download_ui
+    # Show all generated downloads
+    mo.vstack([csv_download_ui, json_download_ui, rdf_download_ui], gap=2)
     return
 
 
 @app.cell
-def _(tables_output):
-    """Display the tables section (appears after RDF UI)."""
-    tables_output
+def _(tables_ui):
+    tables_ui
     return
 
 
 @app.cell
 def _():
-    mo.accordion(
-        {
-            "🔗 URL Query API": mo.md("""
-            You can query this notebook via URL parameters! When running locally or accessing the published version, add query parameters to automatically execute searches.
-
-            ### Available Parameters
-
-            - `taxon` - Taxon name, QID, or **"*"** for all taxa (required)
-            - `mass_min`, `mass_max` - Mass range in Daltons
-            - `year_start`, `year_end` - Publication year range
-            - `exact_formula` - Exact molecular formula (e.g., C15H10O5)
-            - `c_min`, `c_max` - Carbon count range
-            - `h_min`, `h_max` - Hydrogen count range
-            - `n_min`, `n_max` - Nitrogen count range
-            - `o_min`, `o_max` - Oxygen count range
-            - `p_min`, `p_max` - Phosphorus count range
-            - `s_min`, `s_max` - Sulfur count range
-            - `f_state`, `cl_state`, `br_state`, `i_state` - Halogen states (allowed/required/excluded)
-
-            ### Examples
-
-            #### Search by taxon name with mass filter
-
-            ```text
-            ?taxon=Swertia&mass_min=200&mass_max=600
-            ```
-
-            #### Search by QID with year and carbon range
-
-            ```text
-            ?taxon=Q157115&year_start=2000&c_min=15&c_max=25
-            ```
-
-            #### Search excluding fluorine and requiring chlorine
-
-            ```text
-            ?taxon=Artemisia&f_state=excluded&cl_state=required
-            ```
-
-            #### Search all taxa with mass filter
-
-            ```text
-            ?taxon=*&mass_min=300&mass_max=500
-            ```
-
-            **Tip:** Copy the query parameters above and append them to your notebook URL.
-            """),
-            "❓ Help & Documentation": mo.md("""
-            ### Quick Start Guide
-
-            1. **Enter a taxon name** (e.g., "Artemisia annua") or Wikidata QID (e.g., "Q157115")
-            2. **Optional:** Apply filters for mass, publication year, or molecular formula
-            3. **Click "🔍 Search Wikidata"** to retrieve data
-            4. **Download** your results in CSV, JSON, RDF/Turtle, or with full metadata
-
-            ### Features
-
-            #### Taxon Search
-            - Search by scientific name (case-insensitive)
-            - Search directly by Wikidata QID for precision
-            - Use **"*"** (asterisk) to query all taxa at once
-            - Handles ambiguous names with helpful suggestions
-
-            #### Filtering Options
-
-            **Mass Filter** ⚖  
-            Filter compounds by molecular mass (in Daltons)
-
-            **Molecular Formula Filter** ⚛  
-            - Search by exact formula (e.g., C15H10O5)
-            - Set element ranges (C, H, N, O, P, S)
-            - Control halogen presence (F, Cl, Br, I):
-              - *Allowed*: Can be present or absent
-              - *Required*: Must be present
-              - *Excluded*: Must not be present
-
-            **Publication Year Filter** ⏱  
-            Filter by the year references were published
-
-            #### Data Export
-
-            - **CSV**: Spreadsheet-compatible format
-            - **JSON**: Machine-readable structured data
-            - **RDF/Turtle**: Semantic web format
-              - Small datasets (≤{CONFIG["rdf_generation_threshold"]} rows): Generated automatically
-              - Large datasets (>{CONFIG["rdf_generation_threshold"]} rows): Click "Generate RDF/Turtle" button to create on-demand (may take several minutes)
-            - **Metadata**: Schema.org-compliant metadata with provenance
-            - **Citation**: Proper citations for your publications
-
-            **Note:** For large datasets (>{CONFIG["rdf_generation_threshold"]} rows), RDF/Turtle generation is deferred for performance. Click the generation button when you're ready to create the RDF export. The process may take a few minutes depending on dataset size.
-            """),
-        }
-    )
-    return
-
-
-@app.cell
-def _():
+    # URL parameter detection
     url_params = mo.query_params()
 
-    # Display URL query info if parameters are present
-    # QueryParams has keys() method, and we can access values with get()
-    if url_params and hasattr(url_params, "keys") and len(list(url_params.keys())) > 0:
-        param_list = [f"**{k}**: {url_params.get(k)}" for k in url_params.keys()]
-        mo.callout(
-            mo.md(f"""
-            ### 🔗 URL Query Detected
+    # Detect if we should auto-execute search
+    url_auto_search = "taxon" in url_params
 
-            {chr(10).join(param_list)}
+    # Get URL parameter values with defaults
+    url_taxon = url_params.get("taxon", "Gentiana lutea")
 
-            The search will auto-execute with these parameters.
-            """),
-            kind="info",
-        )
-    return (url_params,)
+    # Mass filter
+    url_mass_filter = url_params.get("mass_filter") == "true"
+    url_mass_min = float(url_params.get("mass_min", CONFIG["mass_default_min"]))
+    url_mass_max = float(url_params.get("mass_max", CONFIG["mass_default_max"]))
 
+    # Year filter
+    url_year_filter = url_params.get("year_filter") == "true"
+    url_year_start = int(url_params.get("year_start", CONFIG["year_default_start"]))
+    url_year_end = int(url_params.get("year_end", datetime.now().year))
 
-@app.cell
-def _(url_params):
-    # Parse URL parameters and set defaults for the query
-    def get_url_param(key: str, default=None, param_type=str):
-        """Get URL parameter with type conversion."""
-        value = url_params.get(key)
-        if value is None:
-            return default
-        try:
-            if param_type == bool:
-                return value.lower() in ("true", "1", "yes")
-            elif param_type == int:
-                return int(value)
-            elif param_type == float:
-                return float(value)
-            else:
-                return str(value)
-        except (ValueError, AttributeError):
-            return default
-
-    def get_element_range_params(
-        prefix: str, default_max: int
-    ) -> Tuple[Optional[int], Optional[int]]:
-        """Helper to get min/max for an element range."""
-        return (
-            get_url_param(f"{prefix}_min", None, int),
-            get_url_param(f"{prefix}_max", default_max, int),
-        )
-
-    # Extract all parameters from URL
-    url_taxon = get_url_param("taxon")
-    url_mass_filter = (
-        get_url_param("mass_min") is not None or get_url_param("mass_max") is not None
-    )
-    url_mass_min = get_url_param("mass_min", CONFIG["mass_default_min"], float)
-    url_mass_max = get_url_param("mass_max", CONFIG["mass_default_max"], float)
-    url_year_filter = (
-        get_url_param("year_start") is not None or get_url_param("year_end") is not None
-    )
-    url_year_start = get_url_param("year_start", CONFIG["year_default_start"], int)
-    url_year_end = get_url_param("year_end", datetime.now().year, int)
-
-    # Check if formula filter is active
-    url_formula_filter = any(
-        [
-            get_url_param("exact_formula"),
-            *[
-                get_url_param(f"{e}_min") or get_url_param(f"{e}_max")
-                for e in ["c", "h", "n", "o", "p", "s"]
-            ],
-            get_url_param("f_state", "allowed") != "allowed",
-            get_url_param("cl_state", "allowed") != "allowed",
-            get_url_param("br_state", "allowed") != "allowed",
-            get_url_param("i_state", "allowed") != "allowed",
-        ]
-    )
-
-    url_exact_formula = get_url_param("exact_formula", "")
-
-    # Use helper for element ranges
-    url_c_min, url_c_max = get_element_range_params("c", CONFIG["element_c_max"])
-    url_h_min, url_h_max = get_element_range_params("h", CONFIG["element_h_max"])
-    url_n_min, url_n_max = get_element_range_params("n", CONFIG["element_n_max"])
-    url_o_min, url_o_max = get_element_range_params("o", CONFIG["element_o_max"])
-    url_p_min, url_p_max = get_element_range_params("p", CONFIG["element_p_max"])
-    url_s_min, url_s_max = get_element_range_params("s", CONFIG["element_s_max"])
-
-    # Halogen states
-    url_f_state = get_url_param("f_state", "allowed")
-    url_cl_state = get_url_param("cl_state", "allowed")
-    url_br_state = get_url_param("br_state", "allowed")
-    url_i_state = get_url_param("i_state", "allowed")
-
-    # Auto-trigger search if taxon is in URL
-    url_auto_search = url_taxon is not None
+    # Formula filter
+    url_formula_filter = url_params.get("formula_filter") == "true"
+    url_exact_formula = url_params.get("exact_formula", "")
+    url_c_min = int(url_params["c_min"]) if "c_min" in url_params else None
+    url_c_max = int(url_params.get("c_max", CONFIG["element_c_max"]))
+    url_h_min = int(url_params["h_min"]) if "h_min" in url_params else None
+    url_h_max = int(url_params.get("h_max", CONFIG["element_h_max"]))
+    url_n_min = int(url_params["n_min"]) if "n_min" in url_params else None
+    url_n_max = int(url_params.get("n_max", CONFIG["element_n_max"]))
+    url_o_min = int(url_params["o_min"]) if "o_min" in url_params else None
+    url_o_max = int(url_params.get("o_max", CONFIG["element_o_max"]))
+    url_p_min = int(url_params["p_min"]) if "p_min" in url_params else None
+    url_p_max = int(url_params.get("p_max", CONFIG["element_p_max"]))
+    url_s_min = int(url_params["s_min"]) if "s_min" in url_params else None
+    url_s_max = int(url_params.get("s_max", CONFIG["element_s_max"]))
+    url_f_state = url_params.get("f_state", "allowed")
+    url_cl_state = url_params.get("cl_state", "allowed")
+    url_br_state = url_params.get("br_state", "allowed")
+    url_i_state = url_params.get("i_state", "allowed")
     return (
         url_auto_search,
         url_br_state,
@@ -2596,20 +2495,6 @@ def _(
         state_year_filter,
         state_year_start,
     )
-
-
-@app.cell
-def _():
-    mo.md(
-        """
-    ---
-    **Data:** <a href="https://www.wikidata.org/wiki/Q104225190" style="color:#990000;">LOTUS Initiative</a> & <a href="https://www.wikidata.org/" style="color:#990000;">Wikidata</a>  |  
-    **Code:** <a href="https://github.com/cdk/depict" style="color:#339966;">CDK Depict</a> & 
-    <a href="https://github.com/Adafede/marimo/blob/main/apps/lotus_wikidata_explorer.py" style="color:#339966;">lotus_wikidata_explorer.py</a>  |  
-    **License:** <a href="https://creativecommons.org/publicdomain/zero/1.0/" style="color:#006699;">CC0 1.0</a> for data & <a href="https://www.gnu.org/licenses/agpl-3.0.html" style="color:#006699;">AGPL-3.0</a> for code
-    """
-    )
-    return
 
 
 if __name__ == "__main__":
