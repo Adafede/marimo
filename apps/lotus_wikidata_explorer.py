@@ -33,6 +33,8 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import marimo
 
+marimo.config.runtime.output_max_bytes = 100_000_000
+
 __generated_with = "0.17.0"
 app = marimo.App(width="full", app_title="LOTUS Wikidata Explorer")
 
@@ -1492,7 +1494,8 @@ def _():
 
 @app.cell
 def _():
-    mo.accordion(
+    # URL Query API section (left)
+    url_api_section = mo.accordion(
         {
             "🔗 URL Query API": mo.md("""
             You can query this notebook via URL parameters! When running locally or accessing the published version, add query parameters to automatically execute searches.
@@ -1541,7 +1544,13 @@ def _():
             ```
 
             **Tip:** Copy the query parameters above and append them to your notebook URL.
-            """),
+            """)
+        }
+    )
+
+    # Help & Documentation section (right)
+    help_section = mo.accordion(
+        {
             "❓ Help & Documentation": mo.md("""
             ### Quick Start Guide
 
@@ -1585,9 +1594,12 @@ def _():
             - **Citation**: Proper citations for your publications
 
             **Note:** For large datasets (>{CONFIG["lazy_generation_threshold"]:,} rows), export generation is deferred for performance. Click the generation buttons when you're ready to create exports. Files are automatically compressed when >8MB.
-            """),
+            """)
         }
     )
+
+    # Display side by side
+    mo.hstack([url_api_section, help_section], gap=2, widths="equal")
     return
 
 
@@ -2041,10 +2053,18 @@ def _(
 
 
 @app.cell
-def _(qid, results_df, run_button, state_auto_run, taxon_input, taxon_warning):
+def _(
+    download_ui,
+    qid,
+    results_df,
+    run_button,
+    state_auto_run,
+    taxon_input,
+    taxon_warning,
+):
     # Display summary if either button was clicked or auto-run from URL
     if (not run_button.value and not state_auto_run) or results_df is None:
-        summary_display = mo.Html("")
+        summary_and_downloads = mo.Html("")
     elif len(results_df) == 0:
         # Show no compounds message, and taxon warning if present
         parts = []
@@ -2070,59 +2090,81 @@ def _(qid, results_df, run_button, state_auto_run, taxon_input, taxon_warning):
                     kind="warn",
                 )
             )
-        summary_display = mo.vstack(parts) if len(parts) > 1 else parts[0]
+        summary_and_downloads = mo.vstack(parts) if len(parts) > 1 else parts[0]
     else:
         n_compounds = results_df.n_unique(subset=["structure"])
         n_taxa = results_df.n_unique(subset=["taxon"])
         n_refs = results_df.n_unique(subset=["reference"])
         n_entries = len(results_df)
 
-        # Handle wildcard case for summary header
+        # Results header (on its own line)
+        results_header = mo.md("## Results")
+
+        # Taxon info
         if qid == "*":
-            summary_header = mo.md("## Results\n\n**Search scope:** All taxa in LOTUS")
+            taxon_info = mo.md("**Search scope:** All taxa in LOTUS")
         else:
-            summary_header = mo.md(
-                f"## Results\n\n**Taxon:** {taxon_input.value} {create_wikidata_link(qid)}"
+            taxon_info = mo.md(
+                f"**Taxon:** {taxon_input.value} {create_wikidata_link(qid)}"
             )
 
-        summary_parts = [summary_header]
-
-        if taxon_warning:
-            summary_parts.append(mo.callout(taxon_warning, kind="warn"))
-
-        summary_parts.append(
-            mo.hstack(
-                [
-                    mo.stat(
-                        value=f"{n_compounds:,}",
-                        label=f"🧪 {pluralize('Compound', n_compounds)}",
-                        bordered=True,
-                    ),
-                    mo.stat(
-                        value=f"{n_taxa:,}",
-                        label=f"🌱 {pluralize('Taxon', n_taxa)}",
-                        bordered=True,
-                    ),
-                    mo.stat(
-                        value=f"{n_refs:,}",
-                        label=f"📚 {pluralize('Reference', n_refs)}",
-                        bordered=True,
-                    ),
-                    mo.stat(
-                        value=f"{n_entries:,}",
-                        label=f"📝 {pluralize('Entry', n_entries)}",
-                        bordered=True,
-                    ),
-                ],
-                gap=2,
-                justify="start",
-                wrap=True,
-            )
+        # Stats cards
+        stats_cards = mo.hstack(
+            [
+                mo.stat(
+                    value=f"{n_compounds:,}",
+                    label=f"🧪 {pluralize('Compound', n_compounds)}",
+                    bordered=True,
+                ),
+                mo.stat(
+                    value=f"{n_taxa:,}",
+                    label=f"🌱 {pluralize('Taxon', n_taxa)}",
+                    bordered=True,
+                ),
+                mo.stat(
+                    value=f"{n_refs:,}",
+                    label=f"📚 {pluralize('Reference', n_refs)}",
+                    bordered=True,
+                ),
+                mo.stat(
+                    value=f"{n_entries:,}",
+                    label=f"📝 {pluralize('Entry', n_entries)}",
+                    bordered=True,
+                ),
+            ],
+            gap=2,
+            justify="start",
+            wrap=False,
         )
 
-        summary_display = mo.vstack(summary_parts)
+        # Taxon info and stats on same line
+        taxon_and_stats = mo.hstack(
+            [taxon_info, stats_cards],
+            justify="space-between",
+            align="start",
+        )
 
-    summary_display
+        # Build summary section (left)
+        if taxon_warning:
+            summary_section = mo.vstack(
+                [
+                    results_header,
+                    taxon_and_stats,
+                    mo.callout(taxon_warning, kind="warn"),
+                ]
+            )
+        else:
+            summary_section = mo.vstack([results_header, taxon_and_stats])
+
+        # Combine summary (left) and downloads (right) side by side
+        summary_and_downloads = mo.hstack(
+            [summary_section, download_ui],
+            justify="space-between",
+            align="start",
+            gap=4,
+        )
+
+    summary_and_downloads
     return
 
 
@@ -2413,12 +2455,6 @@ def _(
         taxon_name,
         ui_is_large_dataset,
     )
-
-
-@app.cell
-def _(download_ui):
-    download_ui
-    return
 
 
 @app.cell
