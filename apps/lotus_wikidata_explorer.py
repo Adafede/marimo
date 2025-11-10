@@ -55,7 +55,7 @@ with app.setup:
         # API and External Services
         "cdk_base": "https://www.simolecule.com/cdkdepict/depict/cot/svg",
         "sparql_endpoint": "https://qlever.cs.uni-freiburg.de/api/wikidata",
-        # "sparql_endpoint": "https://query.wikidata.org/sparql",  # Alternative endpoint
+        # "sparql_endpoint": "https://query.wikidata.org/sparql",
         "user_agent": "LOTUS Explorer/0.0.1 (https://github.com/Adafede/marimo/blob/main/apps/lotus_wikidata_explorer.py)",
         # Network Settings
         "max_retries": 3,
@@ -262,24 +262,23 @@ def execute_sparql(
     """
     Execute SPARQL query with retry logic and exponential backoff.
     Cache key is the query string itself.
+
+    Uses POST request for better CORS compatibility and to avoid URL length limits.
     """
     headers = {
         "Accept": "application/sparql-results+json",
         "Content-Type": "application/sparql-query",
         "User-Agent": CONFIG["user_agent"],
     }
-    params = {
-        "format": "json",
-        "query": query,
-    }
 
     for attempt in range(max_retries):
         try:
-            response = requests.get(
+            # Use POST instead of GET for better CORS support and no URL length limits
+            response = requests.post(
                 url=CONFIG["sparql_endpoint"],
                 headers=headers,
-                params=params,
-                timeout=60,
+                data=query,  # Send query in body, not as URL parameter
+                timeout=60,  # Increased timeout for online deployment
             )
             response.raise_for_status()
             return response.json()
