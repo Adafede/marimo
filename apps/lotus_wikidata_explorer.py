@@ -51,12 +51,15 @@ with app.setup:
     # CONFIGURATION
     # ====================================================================
 
+    # Get current year dynamically for filters
+    CURRENT_YEAR = datetime.now().year
+
     CONFIG = {
         # API and External Services
         "cdk_base": "https://www.simolecule.com/cdkdepict/depict/cot/svg",
         "sparql_endpoint": "https://qlever.cs.uni-freiburg.de/api/wikidata",
         # "sparql_endpoint": "https://query.wikidata.org/sparql",  # Alternative endpoint
-        "user_agent": "LOTUS Explorer/0.0.1",
+        "user_agent": "LOTUS Explorer/0.0.1 (https://github.com/Adafede/marimo/blob/main/apps/lotus_wikidata_explorer.py)",
         # Network Settings
         "max_retries": 3,
         "retry_backoff": 2,
@@ -69,9 +72,9 @@ with app.setup:
         "rdf_generation_threshold": 5000,  # Defer RDF generation for datasets > this size
         # Filter Default Values
         "year_range_start": 1700,  # Minimum year for publication date filter
-        "year_range_end": 2025,  # Maximum year for publication date filter
+        "year_range_end": CURRENT_YEAR,  # Maximum year for publication date filter (dynamic)
         "year_default_start": 1900,  # Default start year
-        "year_default_end": 2025,  # Default end year
+        "year_default_end": CURRENT_YEAR,  # Default end year (dynamic)
         "mass_default_min": 0,  # Default minimum mass in Daltons
         "mass_default_max": 2000,  # Default maximum mass in Daltons
         # Molecular Formula Filter Ranges
@@ -285,6 +288,18 @@ def execute_sparql(
             )
             response.raise_for_status()
             return response.json()
+        except requests.exceptions.Timeout:
+            if attempt == max_retries - 1:
+                error_msg = f"Query timed out after {max_retries} attempts. The query may be too complex or the server is not responding."
+                raise Exception(error_msg)
+            wait_time = CONFIG["retry_backoff"] * (2**attempt)
+            time.sleep(wait_time)
+        except requests.exceptions.HTTPError as e:
+            if attempt == max_retries - 1:
+                error_msg = f"HTTP error after {max_retries} attempts: {str(e)}"
+                raise Exception(error_msg)
+            wait_time = CONFIG["retry_backoff"] * (2**attempt)
+            time.sleep(wait_time)
         except Exception as e:
             if attempt == max_retries - 1:
                 error_msg = f"Query failed after {max_retries} attempts: {str(e)}"
@@ -1483,9 +1498,6 @@ def _(
         options=halogen_options, value=state_i_state, label="I", full_width=True
     )
 
-    ## DATE FILTERS
-    current_year = datetime.now().year
-
     taxon_input = mo.ui.text(
         value=state_taxon,
         label="🔬 Taxon name or QID",
@@ -1493,6 +1505,7 @@ def _(
         full_width=True,
     )
 
+    ## DATE FILTERS
     year_filter = mo.ui.checkbox(
         label="⏱ Filter by publication year", value=state_year_filter
     )
@@ -1500,7 +1513,7 @@ def _(
     year_start = mo.ui.number(
         value=state_year_start,
         start=CONFIG["year_range_start"],
-        stop=current_year,
+        stop=CURRENT_YEAR,
         label="Start year",
         full_width=True,
     )
@@ -1508,7 +1521,7 @@ def _(
     year_end = mo.ui.number(
         value=state_year_end,
         start=CONFIG["year_range_start"],
-        stop=current_year,
+        stop=CURRENT_YEAR,
         label="End year",
         full_width=True,
     )
