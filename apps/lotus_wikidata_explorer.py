@@ -10,8 +10,6 @@
 # ]
 # [tool.marimo.display]
 # theme = "system"
-# [tool.marimo.runtime]
-# output_max_bytes = 500_000_000
 # ///
 
 """
@@ -74,7 +72,7 @@ with app.setup:
         "page_size_default": 10,
         "page_size_export": 25,
         # Performance Thresholds
-        "display_image_threshold": 50000,  # Hide 2D depictions for datasets > this size
+        "table_row_limit": 10000,  # Max rows for tables
         "rdf_generation_threshold": 5000,  # Defer RDF generation for datasets > this size
         # Filter Default Values
         "year_range_start": 1700,  # Minimum year for publication date filter
@@ -1988,10 +1986,11 @@ def _(
     else:
         total_rows = len(results_df)
 
-        # Adaptive display strategy:
-        # - Large datasets: Hide 2D depictions for performance
-        # - Small datasets: Show 2D depictions
-        if total_rows > CONFIG["display_image_threshold"]:
+        # Adaptive display strategy with output size limits
+        # Use CONFIG table_row_limit to prevent massive outputs
+        if total_rows > CONFIG["table_row_limit"]:
+            # Large dataset - limit rows and hide images
+            limited_df = results_df.head(CONFIG["table_row_limit"])
             display_data = [
                 {
                     "Compound": row["name"],
@@ -2008,16 +2007,19 @@ def _(
                         extract_qid(row["reference"])
                     ),
                 }
-                for row in results_df.iter_rows(named=True)
+                for row in limited_df.iter_rows(named=True)
             ]
+            # Single consolidated warning for large datasets
             display_note = mo.callout(
                 mo.md(
-                    f"**Large dataset ({total_rows} rows):** 2D structure depictions hidden for performance. View structures via SMILES or download the data."
+                    f"⚡ **Large dataset ({total_rows:,} rows)**\n\n"
+                    f"- Showing first {CONFIG['table_row_limit']:,} rows in tables\n"
+                    f"- 2D structure depictions hidden for performance\n"
                 ),
                 kind="info",
             )
         else:
-            # Full display with 2D depictions
+            # Normal dataset - full display with 2D depictions
             display_data = [
                 create_display_row(row) for row in results_df.iter_rows(named=True)
             ]
@@ -2118,7 +2120,7 @@ def _(
         if is_large_dataset:
             # Add RDF generation button for lazy loading
             rdf_generate_button = mo.ui.run_button(
-                label="⚗️ Generate RDF/Turtle (may take time)"
+                label="🐢 Generate RDF/Turtle"
             )
             basic_buttons.append(rdf_generate_button)
         else:
@@ -2198,7 +2200,7 @@ def _(is_large_dataset, rdf_generate_button, rdf_generation_data):
     elif rdf_generate_button.value:
         # Generate RDF when button is clicked
         with mo.status.spinner(
-            title="🧪 Generating RDF/Turtle format... This may take a few minutes for large datasets."
+            title="Generating RDF/Turtle format... This may take a moment for large datasets."
         ):
             generated_rdf = export_to_rdf_turtle(
                 rdf_generation_data["export_df"],
