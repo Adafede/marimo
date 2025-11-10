@@ -60,11 +60,9 @@ with app.setup:
     CONFIG = {
         # API and External Services
         "cdk_base": "https://www.simolecule.com/cdkdepict/depict/cot/svg",
-        "cors_proxy": "https://corsproxy.marimo.app/",  # CORS proxy for WASM mode
         # "sparql_endpoint": "https://qlever.dev/wikidata",  # Fails CORS for now
         "sparql_endpoint": "https://qlever.cs.uni-freiburg.de/api/wikidata",  # Somehow works?
         # "sparql_endpoint": "https://query-legacy-full.wikidata.org/sparql", # Too slow
-        "use_cors_proxy": False,  # Enable proxy for WASM compatibility
         "user_agent": "LOTUS Explorer/0.0.1 (https://github.com/Adafede/marimo/blob/main/apps/lotus_wikidata_explorer.py)",
         # Network Settings
         "max_retries": 3,
@@ -342,11 +340,7 @@ def execute_sparql(
         "format": "json",
     }
 
-    # Use CORS proxy if enabled (for WASM mode)
-    if CONFIG.get("use_cors_proxy", False):
-        url = CONFIG["cors_proxy"] + CONFIG["sparql_endpoint"]
-    else:
-        url = CONFIG["sparql_endpoint"]
+    url = CONFIG["sparql_endpoint"]
 
     for attempt in range(max_retries):
         try:
