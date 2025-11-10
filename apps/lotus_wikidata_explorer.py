@@ -59,35 +59,32 @@ with app.setup:
     # ====================================================================
 
     CONFIG = {
-        # API and External Services
+        # External Services
         "cdk_base": "https://www.simolecule.com/cdkdepict/depict/cot/svg",
-        # "sparql_endpoint": "https://qlever.dev/wikidata",  # Fails CORS for now
-        "sparql_endpoint": "https://qlever.cs.uni-freiburg.de/api/wikidata",  # Somehow works?
-        # "sparql_endpoint": "https://query-legacy-full.wikidata.org/sparql",  # Too slow
+        "sparql_endpoint": "https://qlever.cs.uni-freiburg.de/api/wikidata",
         "user_agent": "LOTUS Explorer/0.0.1 (https://github.com/Adafede/marimo/blob/main/apps/lotus_wikidata_explorer.py)",
-        # Network Settings
+        # Network & Performance
         "max_retries": 3,
         "retry_backoff": 2,
-        # UI Display
+        "table_row_limit": 10000,  # Max rows to display in table (prevents browser slowdown)
+        "lazy_generation_threshold": 5000,  # Rows > this: defer download generation
+        "download_embed_threshold_bytes": 8_000_000,  # Compress downloads > 8MB
+        # UI Styling
         "color_hyperlink": "#006699",
-        "page_size_default": 10,
-        "page_size_export": 25,
-        # Performance Thresholds
-        "table_row_limit": 10000,  # Max rows for tables
-        "lazy_generation_threshold": 5000,  # Defer generation for datasets > this size
-        "download_embed_threshold_bytes": 8_000_000,  # Compress data > 8MB for download UI
-        # Filter Default Values
-        "year_range_start": 1700,  # Minimum year for publication date filter
-        "year_default_start": 1900,  # Default start year
-        "mass_default_min": 0,  # Default minimum mass in Daltons
-        "mass_default_max": 2000,  # Default maximum mass in Daltons
-        # Molecular Formula Filter Ranges
-        "element_c_max": 100,  # Carbon max range
-        "element_h_max": 200,  # Hydrogen max range
-        "element_n_max": 50,  # Nitrogen max range
-        "element_o_max": 50,  # Oxygen max range
-        "element_p_max": 20,  # Phosphorus max range
-        "element_s_max": 20,  # Sulfur max range
+        "page_size_default": 10,  # Rows per page in display table
+        "page_size_export": 25,  # Rows per page in export table
+        # Filter Defaults
+        "year_range_start": 1700,
+        "year_default_start": 1900,
+        "mass_default_min": 0,
+        "mass_default_max": 2000,
+        # Element Count Limits (for formula filter UI)
+        "element_c_max": 100,
+        "element_h_max": 200,
+        "element_n_max": 50,
+        "element_o_max": 50,
+        "element_p_max": 20,
+        "element_s_max": 20,
     }
 
     # Wikidata URLs (constants)
@@ -242,14 +239,14 @@ def build_compounds_query(qid: str) -> str:
       OPTIONAL {{ ?compound wdt:P2067 ?compound_mass. }}
       OPTIONAL {{ ?compound wdt:P274 ?compound_formula. }}
 
-     OPTIONAL {{
-        ?compound rdfs:label ?compoundLabel.
-        FILTER((LANG(?compoundLabel)) = "en")
-        }}
       OPTIONAL {{
         ?compound rdfs:label ?compoundLabel.
-        FILTER((LANG(?compoundLabel)) = "mul")
-        }}
+        FILTER(LANG(?compoundLabel) = "en")
+      }}
+      OPTIONAL {{
+        ?compound rdfs:label ?compoundLabel.
+        FILTER(LANG(?compoundLabel) = "mul")
+      }}
 
       OPTIONAL {{ ?ref_qid wdt:P1476 ?ref_title. }}
       OPTIONAL {{ ?ref_qid wdt:P356 ?ref_doi. }}
@@ -282,9 +279,9 @@ def build_all_compounds_query() -> str:
           ?ref pr:P248 ?ref_qid.
         }
       }
-	  OPTIONAL { ?compound wdt:P2017 ?compound_smiles_iso. }
-    OPTIONAL { ?compound wdt:P2067 ?compound_mass. }
-    OPTIONAL { ?compound wdt:P274 ?compound_formula. }
+      OPTIONAL { ?compound wdt:P2017 ?compound_smiles_iso. }
+      OPTIONAL { ?compound wdt:P2067 ?compound_mass. }
+      OPTIONAL { ?compound wdt:P274 ?compound_formula. }
       OPTIONAL {
         ?compound rdfs:label ?compoundLabel .
         FILTER(LANG(?compoundLabel) = "en")
@@ -295,7 +292,7 @@ def build_all_compounds_query() -> str:
       }
       OPTIONAL { ?ref_qid wdt:P1476 ?ref_title. }
       OPTIONAL { ?ref_qid wdt:P356 ?ref_doi. }
-      OPTIONAL { ?ref_qid  wdt:P577 ?ref_date. }
+      OPTIONAL { ?ref_qid wdt:P577 ?ref_date. }
     }
     """
 
@@ -1255,28 +1252,27 @@ def create_export_metadata(
 @app.function
 def create_citation_text(taxon_input: str) -> str:
     """Generate citation text for the exported data."""
-    current_date = datetime.now().strftime("%Y-%m-%d")
+    current_date = datetime.now().strftime("%B %d, %Y")
     return f"""
-## How to Cite This Data
+## 📖 How to Cite This Data
 
 ### Dataset Citation
-LOTUS Initiative via Wikidata. ({datetime.now().year}). Data for {taxon_input}. 
-Retrieved from LOTUS Wikidata Explorer on {current_date}.
-Available under CC0 1.0 Universal (CC0 1.0) Public Domain Dedication.
+LOTUS Initiative via Wikidata. ({datetime.now().year}). *Data for {taxon_input}*.  
+Retrieved from LOTUS Wikidata Explorer on {current_date}.  
+License: [CC0 1.0 Universal](https://creativecommons.org/publicdomain/zero/1.0/)
 
-### Original LOTUS Initiative
-Rutz A, Sorokina M, Galgonek J, et al. (2022). The LOTUS initiative for open 
-knowledge management in natural products research. eLife 11:e70780.
-https://doi.org/10.7554/eLife.70780
+### LOTUS Initiative Publication
+Rutz A, Sorokina M, Galgonek J, et al. (2022). The LOTUS initiative for open knowledge 
+management in natural products research. *eLife* **11**:e70780.  
+DOI: [10.7554/eLife.70780](https://doi.org/10.7554/eLife.70780)
 
-### Software
-LOTUS Wikidata Explorer v0.0.1. Available at: 
-https://github.com/Adafede/marimo/blob/main/apps/lotus_wikidata_explorer.py
-Licensed under AGPL-3.0.
+### This Tool
+LOTUS Wikidata Explorer v0.0.1  
+[Source Code](https://github.com/Adafede/marimo/blob/main/apps/lotus_wikidata_explorer.py) (AGPL-3.0)
 
 ### Data Sources
-- Wikidata (https://www.wikidata.org) - CC0 1.0
-- LOTUS (https://www.wikidata.org/wiki/Q104225190) - CC0 1.0
+- **LOTUS Initiative**: [Q104225190](https://www.wikidata.org/wiki/Q104225190) — CC0 1.0
+- **Wikidata**: [www.wikidata.org](https://www.wikidata.org/) — CC0 1.0
 """
 
 
@@ -1761,8 +1757,9 @@ def _(
     year_start,
 ):
     filters_ui = [
-        mo.md("## Search Parameters"),
+        mo.md("## 🔍 Search Parameters"),
         taxon_input,
+        mo.md("### Optional Filters"),
         mo.hstack([mass_filter], justify="start"),
         mo.hstack([mass_min, mass_max], gap=2, widths="equal")
         if mass_filter.value
@@ -1778,14 +1775,14 @@ def _(
         filters_ui.extend(
             [
                 exact_formula,
-                mo.md("**Element ranges** (leave empty to ignore)"),
+                mo.md("**Element count ranges** (leave blank for no constraint)"),
                 mo.hstack([c_min, c_max], gap=2, widths="equal"),
                 mo.hstack([h_min, h_max], gap=2, widths="equal"),
                 mo.hstack([n_min, n_max], gap=2, widths="equal"),
                 mo.hstack([o_min, o_max], gap=2, widths="equal"),
                 mo.hstack([p_min, p_max], gap=2, widths="equal"),
                 mo.hstack([s_min, s_max], gap=2, widths="equal"),
-                mo.md("**Halogens** (allowed / required / excluded)"),
+                mo.md("**Halogen constraints**"),
                 mo.hstack(
                     [f_state, cl_state, br_state, i_state], gap=2, widths="equal"
                 ),
@@ -1839,9 +1836,9 @@ def _(
 
         # Customize spinner message for wildcard
         if taxon_input_str == "*":
-            spinner_message = "🔎 Querying Wikidata for all taxa..."
+            spinner_message = "🔎 Searching all taxa ..."
         else:
-            spinner_message = f"🔎 Querying Wikidata for {taxon_input_str}..."
+            spinner_message = f"🔎 Searching for: {taxon_input_str}"
 
         with mo.status.spinner(title=spinner_message):
             qid, taxon_warning = resolve_taxon_to_qid(taxon_input_str)
@@ -1850,7 +1847,12 @@ def _(
                     True,
                     mo.callout(
                         mo.md(
-                            f"**Taxon not found:** Could not find '{taxon_input_str}' in Wikidata. Please check the spelling or try a different taxonomic name."
+                            f"**Taxon not found**\n\n"
+                            f"Could not find '{taxon_input_str}' in Wikidata.\n\n"
+                            f"**Suggestions:**\n"
+                            f"- Check spelling (scientific names are case-sensitive)\n"
+                            f"- Try a different taxonomic level (e.g., genus instead of species)\n"
+                            f"- Use a Wikidata QID directly (e.g., Q157115)"
                         ),
                         kind="warn",
                     ),
@@ -1968,12 +1970,11 @@ def _(qid, results_df, run_button, state_auto_run, taxon_input, taxon_warning):
         # Handle wildcard case for summary header
         if qid == "*":
             summary_header = mo.md(
-                f"## Results\n" f"### Summary\n\nFound data for **all taxa**"
+                "## Results\n\n**Search scope:** All taxa in LOTUS"
             )
         else:
             summary_header = mo.md(
-                f"## Results\n"
-                f"### Summary\n\nFound data for **{taxon_input.value}** {create_wikidata_link(qid)}"
+                f"## Results\n\n**Taxon:** {taxon_input.value} {create_wikidata_link(qid)}"
             )
 
         summary_parts = [summary_header]
@@ -1985,22 +1986,22 @@ def _(qid, results_df, run_button, state_auto_run, taxon_input, taxon_warning):
             mo.hstack(
                 [
                     mo.stat(
-                        value=str(n_compounds),
+                        value=f"{n_compounds:,}",
                         label=f"🧪 {pluralize('Compound', n_compounds)}",
                         bordered=True,
                     ),
                     mo.stat(
-                        value=str(n_taxa),
+                        value=f"{n_taxa:,}",
                         label=f"🌱 {pluralize('Taxon', n_taxa)}",
                         bordered=True,
                     ),
                     mo.stat(
-                        value=str(n_refs),
+                        value=f"{n_refs:,}",
                         label=f"📚 {pluralize('Reference', n_refs)}",
                         bordered=True,
                     ),
                     mo.stat(
-                        value=str(n_entries),
+                        value=f"{n_entries:,}",
                         label=f"📝 {pluralize('Entry', n_entries)}",
                         bordered=True,
                     ),
@@ -2056,7 +2057,6 @@ def _(
         ui_is_large_dataset = False
         taxon_name = taxon_input.value
         active_filters = {}
-        export_df_for_lazy = None
         csv_generate_button = None
         json_generate_button = None
         rdf_generate_button = None
@@ -2071,7 +2071,6 @@ def _(
         ui_is_large_dataset = False
         taxon_name = taxon_input.value
         active_filters = {}
-        export_df_for_lazy = None
         csv_generate_button = None
         json_generate_button = None
         rdf_generate_button = None
@@ -2160,9 +2159,11 @@ def _(
             ]
             display_note = mo.callout(
                 mo.md(
-                    f"⚡ **Large dataset ({total_rows:,} rows)**\n\n"
-                    f"- Showing first {CONFIG['table_row_limit']:,} rows in tables\n"
-                    f"- 2D structure depictions hidden for performance\n"
+                    f"⚡ **Large Dataset Optimization**\n\n"
+                    f"Your search returned **{total_rows:,} rows**. For optimal performance:\n"
+                    f"- Displaying first **{CONFIG['table_row_limit']:,} rows** in table view\n"
+                    f"- 2D structure images hidden (available in full download)\n"
+                    f"- Use the Export View tab to see all data without images"
                 ),
                 kind="info",
             )
@@ -2206,7 +2207,6 @@ def _(
                 "qid": qid,
                 "active_filters": active_filters,
             }
-            export_df_for_lazy = export_df
         else:
             csv_generate_button = None
             json_generate_button = None
@@ -2214,7 +2214,6 @@ def _(
             csv_generation_data = None
             json_generation_data = None
             rdf_generation_data = None
-            export_df_for_lazy = None
 
             # Generate and compress CSV
             _csv_raw = export_df.write_csv()
@@ -2278,23 +2277,24 @@ def _(
             )
         )
         download_ui = mo.vstack(
-            [mo.md("### Download"), mo.hstack(buttons, gap=2, wrap=True)]
+            [mo.md("### 📥 Download Data"), mo.hstack(buttons, gap=2, wrap=True)]
         )
         tables_ui = mo.vstack(
             [
-                mo.md("### Tables"),
+                mo.md("### 📊 Browse Data"),
                 display_note,
                 mo.ui.tabs(
                     {
-                        "🖼️  Display": display_table,
-                        "📥 Export": export_table,
+                        "🖼️ Display": display_table,
+                        "📥 Export View": export_table,
                         "📖 Citation": mo.md(citation_text),
-                        "🏷️  Metadata": mo.md(f"```json\n{metadata_json}\n```"),
+                        "🏷️ Metadata": mo.md(f"```json\n{metadata_json}\n```"),
                     }
                 ),
             ]
         )
     return (
+        active_filters,
         csv_generate_button,
         csv_generation_data,
         download_ui,
@@ -2307,19 +2307,6 @@ def _(
         ui_is_large_dataset,
     )
 
-
-@app.cell
-def _():
-    mo.md(
-        """
-    ---
-    **Data:** <a href="https://www.wikidata.org/wiki/Q104225190" style="color:#990000;">LOTUS Initiative</a> & <a href="https://www.wikidata.org/" style="color:#990000;">Wikidata</a>  |  
-    **Code:** <a href="https://github.com/cdk/depict" style="color:#339966;">CDK Depict</a> & 
-    <a href="https://github.com/Adafede/marimo/blob/main/apps/lotus_wikidata_explorer.py" style="color:#339966;">lotus_wikidata_explorer.py</a>  |  
-    **License:** <a href="https://creativecommons.org/publicdomain/zero/1.0/" style="color:#006699;">CC0 1.0</a> for data & <a href="https://www.gnu.org/licenses/agpl-3.0.html" style="color:#006699;">AGPL-3.0</a> for code
-    """
-    )
-    return
 
 
 @app.cell
@@ -2357,15 +2344,15 @@ def _(
             [
                 mo.callout(
                     mo.md(
-                        f"✅ CSV generated ({len(csv_generation_data['export_df']):,} entries)"
+                        f"✅ **CSV Ready** — {len(csv_generation_data['export_df']):,} entries"
+                        + (" (compressed)" if _csv_mimetype == "application/gzip" else "")
                     ),
                     kind="success",
                 ),
                 mo.download(
                     data=_csv_data,
                     filename=_csv_filename,
-                    label="📥 Download CSV"
-                    + (" (gzipped)" if _csv_mimetype == "application/gzip" else ""),
+                    label="📥 Download CSV",
                     mimetype=_csv_mimetype if _csv_mimetype else "text/csv",
                 ),
             ]
@@ -2391,15 +2378,15 @@ def _(
             [
                 mo.callout(
                     mo.md(
-                        f"✅ JSON generated ({len(json_generation_data['export_df']):,} entries)"
+                        f"✅ **JSON Ready** — {len(json_generation_data['export_df']):,} entries"
+                        + (" (compressed)" if _json_mimetype == "application/gzip" else "")
                     ),
                     kind="success",
                 ),
                 mo.download(
                     data=_json_data,
                     filename=_json_filename,
-                    label="📥 Download JSON"
-                    + (" (gzipped)" if _json_mimetype == "application/gzip" else ""),
+                    label="📥 Download JSON",
                     mimetype=_json_mimetype if _json_mimetype else "application/json",
                 ),
             ]
@@ -2429,15 +2416,15 @@ def _(
             [
                 mo.callout(
                     mo.md(
-                        f"✅ RDF/Turtle generated ({len(rdf_generation_data['export_df']):,} entries)"
+                        f"✅ **RDF/Turtle Ready** — {len(rdf_generation_data['export_df']):,} entries"
+                        + (" (compressed)" if _rdf_mimetype == "application/gzip" else "")
                     ),
                     kind="success",
                 ),
                 mo.download(
                     data=_rdf_data,
                     filename=_rdf_filename,
-                    label="📥 Download RDF/Turtle"
-                    + (" (gzipped)" if _rdf_mimetype == "application/gzip" else ""),
+                    label="📥 Download RDF/Turtle",
                     mimetype=_rdf_mimetype if _rdf_mimetype else "text/turtle",
                 ),
             ]
