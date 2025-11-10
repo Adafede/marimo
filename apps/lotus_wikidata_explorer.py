@@ -2271,7 +2271,7 @@ def _(url_params):
         get_url_param("year_start") is not None or get_url_param("year_end") is not None
     )
     url_year_start = get_url_param("year_start", CONFIG["year_default_start"], int)
-    url_year_end = get_url_param("year_end", CONFIG["year_default_end"], int)
+    url_year_end = get_url_param("year_end", datetime.now().year, int)
 
     # Check if formula filter is active
     url_formula_filter = any(
@@ -2381,7 +2381,7 @@ def _(
         state_year_start = (
             url_year_start if url_year_filter else CONFIG["year_default_start"]
         )
-        state_year_end = url_year_end if url_year_filter else CONFIG["year_default_end"]
+        state_year_end = url_year_end if url_year_filter else datetime.now().year
 
         # Formula filter state
         state_formula_filter = url_formula_filter
@@ -2414,7 +2414,7 @@ def _(
         state_mass_max = CONFIG["mass_default_max"]
         state_year_filter = False
         state_year_start = CONFIG["year_default_start"]
-        state_year_end = CONFIG["year_default_end"]
+        state_year_end = datetime.now().year
         state_formula_filter = False
         state_exact_formula = ""
         state_c_min = None
