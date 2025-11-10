@@ -51,9 +51,6 @@ with app.setup:
     # CONFIGURATION
     # ====================================================================
 
-    # Get current year dynamically for filters
-    CURRENT_YEAR = datetime.now().year
-
     CONFIG = {
         # API and External Services
         "cdk_base": "https://www.simolecule.com/cdkdepict/depict/cot/svg",
@@ -72,9 +69,7 @@ with app.setup:
         "rdf_generation_threshold": 5000,  # Defer RDF generation for datasets > this size
         # Filter Default Values
         "year_range_start": 1700,  # Minimum year for publication date filter
-        "year_range_end": CURRENT_YEAR,  # Maximum year for publication date filter (dynamic)
         "year_default_start": 1900,  # Default start year
-        "year_default_end": CURRENT_YEAR,  # Default end year (dynamic)
         "mass_default_min": 0,  # Default minimum mass in Daltons
         "mass_default_max": 2000,  # Default maximum mass in Daltons
         # Molecular Formula Filter Ranges
@@ -1506,6 +1501,7 @@ def _(
     )
 
     ## DATE FILTERS
+    current_year = datetime.now().year
     year_filter = mo.ui.checkbox(
         label="⏱ Filter by publication year", value=state_year_filter
     )
@@ -1513,7 +1509,7 @@ def _(
     year_start = mo.ui.number(
         value=state_year_start,
         start=CONFIG["year_range_start"],
-        stop=CURRENT_YEAR,
+        stop=current_year,
         label="Start year",
         full_width=True,
     )
@@ -1521,7 +1517,7 @@ def _(
     year_end = mo.ui.number(
         value=state_year_end,
         start=CONFIG["year_range_start"],
-        stop=CURRENT_YEAR,
+        stop=current_year,
         label="End year",
         full_width=True,
     )
