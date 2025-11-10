@@ -54,8 +54,8 @@ with app.setup:
     CONFIG = {
         # API and External Services
         "cdk_base": "https://www.simolecule.com/cdkdepict/depict/cot/svg",
-        "sparql_endpoint": "https://qlever.cs.uni-freiburg.de/api/wikidata",
-        # "sparql_endpoint": "https://query.wikidata.org/sparql",
+        # "sparql_endpoint": "https://qlever.cs.uni-freiburg.de/api/wikidata",
+        "sparql_endpoint": "https://query-legacy-full.wikidata.org/sparql",
         "user_agent": "LOTUS Explorer/0.0.1 (https://github.com/Adafede/marimo/blob/main/apps/lotus_wikidata_explorer.py)",
         # Network Settings
         "max_retries": 3,
@@ -262,23 +262,24 @@ def execute_sparql(
     """
     Execute SPARQL query with retry logic and exponential backoff.
     Cache key is the query string itself.
-
-    Uses POST request for better CORS compatibility and to avoid URL length limits.
     """
     headers = {
         "Accept": "application/sparql-results+json",
-        "Content-Type": "application/sparql-query",
         "User-Agent": CONFIG["user_agent"],
+    }
+
+    params = {
+        "query": query,
+        "format": "json",
     }
 
     for attempt in range(max_retries):
         try:
-            # Use POST instead of GET for better CORS support and no URL length limits
-            response = requests.post(
+            response = requests.get(
                 url=CONFIG["sparql_endpoint"],
                 headers=headers,
-                data=query,  # Send query in body, not as URL parameter
-                timeout=60,  # Increased timeout for online deployment
+                params=params,
+                timeout=60,
             )
             response.raise_for_status()
             return response.json()
@@ -297,12 +298,11 @@ def execute_sparql(
         except Exception as e:
             if attempt == max_retries - 1:
                 error_msg = f"Query failed after {max_retries} attempts: {str(e)}"
-                # Include query snippet in error for debugging
                 query_snippet = query[:200] + "..." if len(query) > 200 else query
                 raise Exception(f"{error_msg}\nQuery: {query_snippet}")
             wait_time = CONFIG["retry_backoff"] * (2**attempt)
             time.sleep(wait_time)
-    # This line should never be reached, but satisfies type checker
+
     raise Exception("Unexpected error in execute_sparql")
 
 
