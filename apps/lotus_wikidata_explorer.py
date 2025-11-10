@@ -1479,10 +1479,7 @@ def _():
 def _():
     mo.callout(
         mo.md("""
-        ## ⚠️ Under Development
-
-        This application is under development and may not work as expected in all deployment modes.
-
+        This app is work in progress and may not work as expected in all deployments.
         **Recommended way to run:**
         ```bash
         uvx marimo run https://raw.githubusercontent.com/Adafede/marimo/refs/heads/main/apps/lotus_wikidata_explorer.py
@@ -1495,14 +1492,127 @@ def _():
 
 @app.cell
 def _():
-    mo.md("""
-    Explore chemical compounds from [LOTUS](https://doi.org/10.7554/eLife.70780) and 
-    [Wikidata](https://www.wikidata.org/) for any taxon.
+    mo.accordion(
+        {
+            "🔗 URL Query API": mo.md("""
+            You can query this notebook via URL parameters! When running locally or accessing the published version, add query parameters to automatically execute searches.
 
-    Enter a taxon name to discover chemical compounds found in organisms of that taxonomic group.
+            ### Available Parameters
 
-    💡 **New to this tool?** Open the "Help & Documentation" section below for a quick start guide.
-    """)
+            - `taxon` - Taxon name, QID, or **"*"** for all taxa (required)
+            - `mass_filter=true` - Enable mass filter
+            - `mass_min`, `mass_max` - Mass range in Daltons
+            - `year_filter=true` - Enable year filter
+            - `year_start`, `year_end` - Publication year range
+            - `formula_filter=true` - Enable formula filter
+            - `exact_formula` - Exact molecular formula (e.g., C15H10O5)
+            - `c_min`, `c_max` - Carbon count range
+            - `h_min`, `h_max` - Hydrogen count range
+            - `n_min`, `n_max` - Nitrogen count range
+            - `o_min`, `o_max` - Oxygen count range
+            - `p_min`, `p_max` - Phosphorus count range
+            - `s_min`, `s_max` - Sulfur count range
+            - `f_state`, `cl_state`, `br_state`, `i_state` - Halogen states (allowed/required/excluded)
+
+            ### Examples
+
+            #### Search by taxon name with mass filter
+
+            ```text
+            ?taxon=Swertia&mass_filter=true&mass_min=200&mass_max=600
+            ```
+
+            #### Search by QID with year and carbon range
+
+            ```text
+            ?taxon=Q157115&year_filter=true&year_start=2000&formula_filter=true&c_min=15&c_max=25
+            ```
+
+            #### Search excluding fluorine and requiring chlorine
+
+            ```text
+            ?taxon=Artemisia&formula_filter=true&f_state=excluded&cl_state=required
+            ```
+
+            #### Search all taxa with mass filter
+
+            ```text
+            ?taxon=*&mass_filter=true&mass_min=300&mass_max=500
+            ```
+
+            **Tip:** Copy the query parameters above and append them to your notebook URL.
+            """),
+            "❓ Help & Documentation": mo.md("""
+            ### Quick Start Guide
+
+            1. **Enter a taxon name** (e.g., "Artemisia annua") or Wikidata QID (e.g., "Q157115")
+            2. **Optional:** Apply filters for mass, publication year, or molecular formula
+            3. **Click "🔍 Search Wikidata"** to retrieve data
+            4. **Download** your results in CSV, JSON, RDF/Turtle, or with full metadata
+
+            ### Features
+
+            #### Taxon Search
+            - Search by scientific name (case-insensitive)
+            - Search directly by Wikidata QID for precision
+            - Use **"*"** (asterisk) to query all taxa at once
+            - Handles ambiguous names with helpful suggestions
+
+            #### Filtering Options
+
+            **Mass Filter** ⚖️  
+            Filter compounds by molecular mass (in Daltons)
+
+            **Molecular Formula Filter** ⚛️  
+            - Search by exact formula (e.g., C15H10O5)
+            - Set element ranges (C, H, N, O, P, S)
+            - Control halogen presence (F, Cl, Br, I):
+              - *Allowed*: Can be present or absent
+              - *Required*: Must be present
+              - *Excluded*: Must not be present
+
+            **Publication Year Filter** 🗓️  
+            Filter by the year references were published
+
+            #### Data Export
+
+            - **CSV**: Spreadsheet-compatible format
+            - **JSON**: Machine-readable structured data
+            - **RDF/Turtle**: Semantic web format
+              - Small datasets (≤{CONFIG["lazy_generation_threshold"]:,} rows): Generated automatically
+              - Large datasets (>{CONFIG["lazy_generation_threshold"]:,} rows): Click "Generate RDF/Turtle" button to create on-demand
+            - **Metadata**: Schema.org-compliant metadata with provenance
+            - **Citation**: Proper citations for your publications
+
+            **Note:** For large datasets (>{CONFIG["lazy_generation_threshold"]:,} rows), export generation is deferred for performance. Click the generation buttons when you're ready to create exports. Files are automatically compressed when >8MB.
+            """),
+        }
+    )
+    return
+
+
+@app.cell
+def _():
+    # URL parameter detection and display
+    _url_params_check = mo.query_params()
+
+    # Display URL query info if parameters are present
+    if _url_params_check and "taxon" in _url_params_check:
+        param_items = []
+        for key in sorted(_url_params_check.keys()):
+            value = _url_params_check.get(key)
+            param_items.append(f"- **{key}**: `{value}`")
+
+        mo.callout(
+            mo.md(f"""
+            ### 🔗 URL Query Detected
+
+            {chr(10).join(param_items)}
+
+            The search will auto-execute with these parameters.
+            """),
+            kind="info",
+        )
     return
 
 
@@ -1764,11 +1874,11 @@ def _(
         mo.hstack([mass_min, mass_max], gap=2, widths="equal")
         if mass_filter.value
         else mo.Html(""),
-        mo.hstack([formula_filter], justify="start"),
         mo.hstack([year_filter], justify="start"),
         mo.hstack([year_start, year_end], gap=2, widths="equal")
         if year_filter.value
         else mo.Html(""),
+        mo.hstack([formula_filter], justify="start"),
     ]
 
     if formula_filter.value:
@@ -1969,9 +2079,7 @@ def _(qid, results_df, run_button, state_auto_run, taxon_input, taxon_warning):
 
         # Handle wildcard case for summary header
         if qid == "*":
-            summary_header = mo.md(
-                "## Results\n\n**Search scope:** All taxa in LOTUS"
-            )
+            summary_header = mo.md("## Results\n\n**Search scope:** All taxa in LOTUS")
         else:
             summary_header = mo.md(
                 f"## Results\n\n**Taxon:** {taxon_input.value} {create_wikidata_link(qid)}"
@@ -2277,11 +2385,11 @@ def _(
             )
         )
         download_ui = mo.vstack(
-            [mo.md("### 📥 Download Data"), mo.hstack(buttons, gap=2, wrap=True)]
+            [mo.md("### Download Data"), mo.hstack(buttons, gap=2, wrap=True)]
         )
         tables_ui = mo.vstack(
             [
-                mo.md("### 📊 Browse Data"),
+                mo.md("### Browse Data"),
                 display_note,
                 mo.ui.tabs(
                     {
@@ -2294,7 +2402,6 @@ def _(
             ]
         )
     return (
-        active_filters,
         csv_generate_button,
         csv_generation_data,
         download_ui,
@@ -2306,7 +2413,6 @@ def _(
         taxon_name,
         ui_is_large_dataset,
     )
-
 
 
 @app.cell
@@ -2345,7 +2451,11 @@ def _(
                 mo.callout(
                     mo.md(
                         f"✅ **CSV Ready** — {len(csv_generation_data['export_df']):,} entries"
-                        + (" (compressed)" if _csv_mimetype == "application/gzip" else "")
+                        + (
+                            " (compressed)"
+                            if _csv_mimetype == "application/gzip"
+                            else ""
+                        )
                     ),
                     kind="success",
                 ),
@@ -2379,7 +2489,11 @@ def _(
                 mo.callout(
                     mo.md(
                         f"✅ **JSON Ready** — {len(json_generation_data['export_df']):,} entries"
-                        + (" (compressed)" if _json_mimetype == "application/gzip" else "")
+                        + (
+                            " (compressed)"
+                            if _json_mimetype == "application/gzip"
+                            else ""
+                        )
                     ),
                     kind="success",
                 ),
@@ -2417,7 +2531,11 @@ def _(
                 mo.callout(
                     mo.md(
                         f"✅ **RDF/Turtle Ready** — {len(rdf_generation_data['export_df']):,} entries"
-                        + (" (compressed)" if _rdf_mimetype == "application/gzip" else "")
+                        + (
+                            " (compressed)"
+                            if _rdf_mimetype == "application/gzip"
+                            else ""
+                        )
                     ),
                     kind="success",
                 ),
@@ -2564,29 +2682,17 @@ def _(
         state_formula_filter = url_formula_filter
         state_exact_formula = url_exact_formula if url_formula_filter else ""
         state_c_min = url_c_min if url_formula_filter else None
-        state_c_max = (
-            url_c_max if url_formula_filter else None
-        )  # Changed from CONFIG default
+        state_c_max = url_c_max if url_formula_filter else None
         state_h_min = url_h_min if url_formula_filter else None
-        state_h_max = (
-            url_h_max if url_formula_filter else None
-        )  # Changed from CONFIG default
+        state_h_max = url_h_max if url_formula_filter else None
         state_n_min = url_n_min if url_formula_filter else None
-        state_n_max = (
-            url_n_max if url_formula_filter else None
-        )  # Changed from CONFIG default
+        state_n_max = url_n_max if url_formula_filter else None
         state_o_min = url_o_min if url_formula_filter else None
-        state_o_max = (
-            url_o_max if url_formula_filter else None
-        )  # Changed from CONFIG default
+        state_o_max = url_o_max if url_formula_filter else None
         state_p_min = url_p_min if url_formula_filter else None
-        state_p_max = (
-            url_p_max if url_formula_filter else None
-        )  # Changed from CONFIG default
+        state_p_max = url_p_max if url_formula_filter else None
         state_s_min = url_s_min if url_formula_filter else None
-        state_s_max = (
-            url_s_max if url_formula_filter else None
-        )  # Changed from CONFIG default
+        state_s_max = url_s_max if url_formula_filter else None
         state_f_state = url_f_state if url_formula_filter else "allowed"
         state_cl_state = url_cl_state if url_formula_filter else "allowed"
         state_br_state = url_br_state if url_formula_filter else "allowed"
@@ -2607,17 +2713,17 @@ def _(
         state_formula_filter = False
         state_exact_formula = ""
         state_c_min = None
-        state_c_max = None  # Changed from CONFIG default
+        state_c_max = None
         state_h_min = None
-        state_h_max = None  # Changed from CONFIG default
+        state_h_max = None
         state_n_min = None
-        state_n_max = None  # Changed from CONFIG default
+        state_n_max = None
         state_o_min = None
-        state_o_max = None  # Changed from CONFIG default
+        state_o_max = None
         state_p_min = None
-        state_p_max = None  # Changed from CONFIG default
+        state_p_max = None
         state_s_min = None
-        state_s_max = None  # Changed from CONFIG default
+        state_s_max = None
         state_f_state = "allowed"
         state_cl_state = "allowed"
         state_br_state = "allowed"
@@ -2651,6 +2757,19 @@ def _(
         state_year_filter,
         state_year_start,
     )
+
+
+@app.cell
+def _():
+    mo.md(
+        """
+    ---
+    **Data:** <a href="https://www.wikidata.org/wiki/Q104225190" style="color:#990000;">LOTUS Initiative</a> & <a href="https://www.wikidata.org/" style="color:#990000;">Wikidata</a>  |  
+    **Code:** <a href="https://github.com/cdk/depict" style="color:#339966;">CDK Depict</a> & <a href="https://github.com/Adafede/marimo/blob/main/apps/lotus_wikidata_explorer.py" style="color:#339966;">lotus_wikidata_explorer.py</a>  |  
+    **License:** <a href="https://creativecommons.org/publicdomain/zero/1.0/" style="color:#006699;">CC0 1.0</a> for data & <a href="https://www.gnu.org/licenses/agpl-3.0.html" style="color:#006699;">AGPL-3.0</a> for code
+    """
+    )
+    return
 
 
 if __name__ == "__main__":
