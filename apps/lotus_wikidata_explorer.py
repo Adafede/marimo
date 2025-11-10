@@ -783,7 +783,10 @@ def build_active_filters_dict(
 
 @app.function
 def generate_filename(
-    taxon_name: str, file_type: str, prefix: str = "lotus_data"
+    taxon_name: str,
+    file_type: str,
+    prefix: str = "lotus_data",
+    filters: Dict[str, Any] = None,
 ) -> str:
     """
     Generate standardized filename for exports.
@@ -792,6 +795,7 @@ def generate_filename(
         taxon_name: Name of the taxon (or "*" for all taxa)
         file_type: File extension (e.g., 'csv', 'json', 'ttl')
         prefix: Filename prefix (default: 'lotus_data')
+        filters: Optional dict of active filters (adds "_filtered" suffix if present)
 
     Returns:
         Standardized filename with date
@@ -802,8 +806,11 @@ def generate_filename(
     else:
         safe_name = taxon_name.replace(" ", "_")
 
+    # Add "_filtered" suffix if filters are active
+    filter_suffix = "_filtered" if filters and len(filters) > 0 else ""
+
     date_str = datetime.now().strftime("%Y%m%d")
-    return f"{date_str}_{prefix}_{safe_name}.{file_type}"
+    return f"{date_str}_{prefix}_{safe_name}{filter_suffix}.{file_type}"
 
 
 @app.function
@@ -1572,7 +1579,7 @@ def _(
         full_width=True,
     )
     c_max = mo.ui.number(
-        value=state_c_max,
+        value=state_c_max if state_c_max is not None else CONFIG["element_c_max"],
         start=0,
         stop=CONFIG["element_c_max"],
         label="C max",
@@ -1586,7 +1593,7 @@ def _(
         full_width=True,
     )
     h_max = mo.ui.number(
-        value=state_h_max,
+        value=state_h_max if state_h_max is not None else CONFIG["element_h_max"],
         start=0,
         stop=CONFIG["element_h_max"],
         label="H max",
@@ -1600,7 +1607,7 @@ def _(
         full_width=True,
     )
     n_max = mo.ui.number(
-        value=state_n_max,
+        value=state_n_max if state_n_max is not None else CONFIG["element_n_max"],
         start=0,
         stop=CONFIG["element_n_max"],
         label="N max",
@@ -1614,7 +1621,7 @@ def _(
         full_width=True,
     )
     o_max = mo.ui.number(
-        value=state_o_max,
+        value=state_o_max if state_o_max is not None else CONFIG["element_o_max"],
         start=0,
         stop=CONFIG["element_o_max"],
         label="O max",
@@ -1628,7 +1635,7 @@ def _(
         full_width=True,
     )
     p_max = mo.ui.number(
-        value=state_p_max,
+        value=state_p_max if state_p_max is not None else CONFIG["element_p_max"],
         start=0,
         stop=CONFIG["element_p_max"],
         label="P max",
@@ -1642,7 +1649,7 @@ def _(
         full_width=True,
     )
     s_max = mo.ui.number(
-        value=state_s_max,
+        value=state_s_max if state_s_max is not None else CONFIG["element_s_max"],
         start=0,
         stop=CONFIG["element_s_max"],
         label="S max",
@@ -1858,16 +1865,51 @@ def _(
                 # Build formula filters using dataclass
                 formula_filt = None
                 if formula_filter.value:
+                    # Helper function to convert CONFIG defaults back to None
+                    # (since UI shows them as placeholders but we don't want them to activate filters)
+                    def normalize_element_value(val, default):
+                        return None if val == default else val
+
                     formula_filt = FormulaFilters(
                         exact_formula=exact_formula.value
                         if exact_formula.value.strip()
                         else None,
-                        c=ElementRange(c_min.value, c_max.value),
-                        h=ElementRange(h_min.value, h_max.value),
-                        n=ElementRange(n_min.value, n_max.value),
-                        o=ElementRange(o_min.value, o_max.value),
-                        p=ElementRange(p_min.value, p_max.value),
-                        s=ElementRange(s_min.value, s_max.value),
+                        c=ElementRange(
+                            c_min.value,
+                            normalize_element_value(
+                                c_max.value, CONFIG["element_c_max"]
+                            ),
+                        ),
+                        h=ElementRange(
+                            h_min.value,
+                            normalize_element_value(
+                                h_max.value, CONFIG["element_h_max"]
+                            ),
+                        ),
+                        n=ElementRange(
+                            n_min.value,
+                            normalize_element_value(
+                                n_max.value, CONFIG["element_n_max"]
+                            ),
+                        ),
+                        o=ElementRange(
+                            o_min.value,
+                            normalize_element_value(
+                                o_max.value, CONFIG["element_o_max"]
+                            ),
+                        ),
+                        p=ElementRange(
+                            p_min.value,
+                            normalize_element_value(
+                                p_max.value, CONFIG["element_p_max"]
+                            ),
+                        ),
+                        s=ElementRange(
+                            s_min.value,
+                            normalize_element_value(
+                                s_max.value, CONFIG["element_s_max"]
+                            ),
+                        ),
                         f_state=f_state.value,
                         cl_state=cl_state.value,
                         br_state=br_state.value,
@@ -2013,6 +2055,7 @@ def _(
         tables_ui = mo.Html("")
         ui_is_large_dataset = False
         taxon_name = taxon_input.value
+        active_filters = {}
         export_df_for_lazy = None
         csv_generate_button = None
         json_generate_button = None
@@ -2027,6 +2070,7 @@ def _(
         tables_ui = mo.Html("")
         ui_is_large_dataset = False
         taxon_name = taxon_input.value
+        active_filters = {}
         export_df_for_lazy = None
         csv_generate_button = None
         json_generate_button = None
@@ -2041,16 +2085,38 @@ def _(
         # Build filters for metadata
         _formula_filt = None
         if formula_filter.value:
+            # Helper function to convert CONFIG defaults back to None
+            def _normalize_element_value(val, default):
+                return None if val == default else val
+
             _formula_filt = FormulaFilters(
                 exact_formula=exact_formula.value
                 if exact_formula.value.strip()
                 else None,
-                c=ElementRange(c_min.value, c_max.value),
-                h=ElementRange(h_min.value, h_max.value),
-                n=ElementRange(n_min.value, n_max.value),
-                o=ElementRange(o_min.value, o_max.value),
-                p=ElementRange(p_min.value, p_max.value),
-                s=ElementRange(s_min.value, s_max.value),
+                c=ElementRange(
+                    c_min.value,
+                    _normalize_element_value(c_max.value, CONFIG["element_c_max"]),
+                ),
+                h=ElementRange(
+                    h_min.value,
+                    _normalize_element_value(h_max.value, CONFIG["element_h_max"]),
+                ),
+                n=ElementRange(
+                    n_min.value,
+                    _normalize_element_value(n_max.value, CONFIG["element_n_max"]),
+                ),
+                o=ElementRange(
+                    o_min.value,
+                    _normalize_element_value(o_max.value, CONFIG["element_o_max"]),
+                ),
+                p=ElementRange(
+                    p_min.value,
+                    _normalize_element_value(p_max.value, CONFIG["element_p_max"]),
+                ),
+                s=ElementRange(
+                    s_min.value,
+                    _normalize_element_value(s_max.value, CONFIG["element_s_max"]),
+                ),
                 f_state=f_state.value,
                 cl_state=cl_state.value,
                 br_state=br_state.value,
@@ -2126,12 +2192,19 @@ def _(
             buttons.extend(
                 [csv_generate_button, json_generate_button, rdf_generate_button]
             )
-            csv_generation_data = export_df
-            json_generation_data = export_df
+            csv_generation_data = {
+                "export_df": export_df,
+                "active_filters": active_filters,
+            }
+            json_generation_data = {
+                "export_df": export_df,
+                "active_filters": active_filters,
+            }
             rdf_generation_data = {
                 "export_df": export_df,
                 "taxon_input": taxon_input.value,
                 "qid": qid,
+                "active_filters": active_filters,
             }
             export_df_for_lazy = export_df
         else:
@@ -2146,7 +2219,8 @@ def _(
             # Generate and compress CSV
             _csv_raw = export_df.write_csv()
             _csv_data, _csv_fname, _csv_mime = compress_if_large(
-                _csv_raw, generate_filename(taxon_input.value, "csv")
+                _csv_raw,
+                generate_filename(taxon_input.value, "csv", filters=active_filters),
             )
             buttons.append(
                 mo.download(
@@ -2161,7 +2235,8 @@ def _(
             # Generate and compress JSON
             _json_raw = export_df.write_json()
             _json_data, _json_fname, _json_mime = compress_if_large(
-                _json_raw, generate_filename(taxon_input.value, "json")
+                _json_raw,
+                generate_filename(taxon_input.value, "json", filters=active_filters),
             )
             buttons.append(
                 mo.download(
@@ -2176,7 +2251,8 @@ def _(
             # Generate and compress RDF
             _rdf_raw = export_to_rdf_turtle(export_df, taxon_input.value, qid)
             _rdf_data, _rdf_fname, _rdf_mime = compress_if_large(
-                _rdf_raw, generate_filename(taxon_input.value, "ttl")
+                _rdf_raw,
+                generate_filename(taxon_input.value, "ttl", filters=active_filters),
             )
             buttons.append(
                 mo.download(
@@ -2192,7 +2268,10 @@ def _(
             mo.download(
                 data=metadata_json,
                 filename=generate_filename(
-                    taxon_input.value, "json", prefix="lotus_metadata"
+                    taxon_input.value,
+                    "json",
+                    prefix="lotus_metadata",
+                    filters=active_filters,
                 ),
                 label="📋 Metadata",
                 mimetype="application/json",
@@ -2267,14 +2346,19 @@ def _(
         and csv_generate_button.value
     ):
         with mo.status.spinner(title="📄 Generating CSV format..."):
-            _csv_data_raw = csv_generation_data.write_csv()
+            _csv_data_raw = csv_generation_data["export_df"].write_csv()
             _csv_data, _csv_filename, _csv_mimetype = compress_if_large(
-                _csv_data_raw, generate_filename(taxon_name, "csv")
+                _csv_data_raw,
+                generate_filename(
+                    taxon_name, "csv", filters=csv_generation_data["active_filters"]
+                ),
             )
         csv_download_ui = mo.vstack(
             [
                 mo.callout(
-                    mo.md(f"✅ CSV generated ({len(csv_generation_data):,} entries)"),
+                    mo.md(
+                        f"✅ CSV generated ({len(csv_generation_data['export_df']):,} entries)"
+                    ),
                     kind="success",
                 ),
                 mo.download(
@@ -2296,14 +2380,19 @@ def _(
         and json_generate_button.value
     ):
         with mo.status.spinner(title="📖 Generating JSON format..."):
-            _json_data_raw = json_generation_data.write_json()
+            _json_data_raw = json_generation_data["export_df"].write_json()
             _json_data, _json_filename, _json_mimetype = compress_if_large(
-                _json_data_raw, generate_filename(taxon_name, "json")
+                _json_data_raw,
+                generate_filename(
+                    taxon_name, "json", filters=json_generation_data["active_filters"]
+                ),
             )
         json_download_ui = mo.vstack(
             [
                 mo.callout(
-                    mo.md(f"✅ JSON generated ({len(json_generation_data):,} entries)"),
+                    mo.md(
+                        f"✅ JSON generated ({len(json_generation_data['export_df']):,} entries)"
+                    ),
                     kind="success",
                 ),
                 mo.download(
@@ -2331,7 +2420,10 @@ def _(
                 rdf_generation_data["qid"],
             )
             _rdf_data, _rdf_filename, _rdf_mimetype = compress_if_large(
-                _rdf_data_raw, generate_filename(taxon_name, "ttl")
+                _rdf_data_raw,
+                generate_filename(
+                    taxon_name, "ttl", filters=rdf_generation_data["active_filters"]
+                ),
             )
         rdf_download_ui = mo.vstack(
             [
