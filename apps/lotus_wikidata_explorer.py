@@ -44,6 +44,9 @@ with app.setup:
     from dataclasses import dataclass, field
     from datetime import datetime
     from functools import lru_cache
+    from rdflib import Graph, Namespace, Literal, URIRef
+    from rdflib.namespace import RDF, RDFS, XSD, DCTERMS
+    from urllib.parse import quote as url_quote
     from typing import Optional, Dict, Any, Tuple
     from urllib.parse import quote
 
@@ -1142,10 +1145,6 @@ def export_to_rdf_turtle(df: pl.DataFrame, taxon_input: str, qid: str) -> str:
     - schema.org
     - DCTERMS (Dublin Core Terms)
     """
-    from rdflib import Graph, Namespace, Literal, URIRef
-    from rdflib.namespace import RDF, RDFS, XSD, DCTERMS
-    from urllib.parse import quote as url_quote
-
     # Initialize graph
     g = Graph()
 
