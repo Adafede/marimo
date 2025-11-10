@@ -58,9 +58,15 @@ with app.setup:
     # CONFIGURATION
     # ====================================================================
 
-    mo._runtime.context.get_context().marimo_config["runtime"]["output_max_bytes"] = (
-        100_000_000_000
-    )
+    # Set output max bytes safely (deployment environments may have limits)
+    try:
+        mo._runtime.context.get_context().marimo_config["runtime"]["output_max_bytes"] = (
+            1_000_000_000  # 1GB
+        )
+    except Exception:
+        # Silently fail if runtime config cannot be set (e.g., in some deployment scenarios)
+        pass
+
     CONFIG = {
         # External Services
         "cdk_base": "https://www.simolecule.com/cdkdepict/depict/cot/svg",
@@ -342,7 +348,7 @@ def execute_sparql(
                 url=url,
                 headers=headers,
                 params=params,
-                timeout=60,
+                timeout=300,
             )
             response.raise_for_status()
             return response.json()
@@ -360,9 +366,13 @@ def execute_sparql(
                 status_code = (
                     e.response.status_code if hasattr(e, "response") else "Unknown"
                 )
+                error_detail = ""
+                if hasattr(e, "response") and e.response.text:
+                    error_detail = f"\nServer response: {e.response.text[:500]}"
                 raise Exception(
-                    f"🌐 HTTP error {status_code} after {max_retries} attempts.\n"
-                    f"💡 Try: Check your internet connection or try again later."
+                    f"🌐 HTTP error {status_code} after {max_retries} attempts.{error_detail}\n"
+                    f"💡 Try: Check your internet connection or try again later.\n"
+                    f"💡 If this is a deployed environment, the server may have stricter limits."
                 )
             time.sleep(CONFIG["retry_backoff"] * (2**attempt))
 
@@ -370,7 +380,9 @@ def execute_sparql(
             if attempt == max_retries - 1:
                 query_snippet = query[:200] + "..." if len(query) > 200 else query
                 raise Exception(
-                    f"❌ Query failed: {str(e)}\n" f"Query snippet: {query_snippet}"
+                    f"❌ Query failed: {str(e)}\n" 
+                    f"Query snippet: {query_snippet}\n"
+                    f"💡 If running in a deployed environment, check timeout and memory limits."
                 )
             time.sleep(CONFIG["retry_backoff"] * (2**attempt))
 
