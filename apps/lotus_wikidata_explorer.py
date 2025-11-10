@@ -38,9 +38,10 @@ app = marimo.App(width="full", app_title="LOTUS Wikidata Explorer")
 with app.setup:
     import marimo as mo
     import polars as pl
+    import json
     import re
-    import time
     import requests
+    import time
     from dataclasses import dataclass, field
     from datetime import datetime
     from functools import lru_cache
@@ -1991,8 +1992,6 @@ def _(
         metadata = create_export_metadata(
             export_df, taxon_input.value, qid, active_filters
         )
-        import json
-
         metadata_json = json.dumps(metadata, indent=2)
 
         citation_text = create_citation_text(taxon_input.value)
