@@ -76,6 +76,9 @@ with app.setup:
         # Performance Thresholds
         "display_image_threshold": 50000,  # Hide 2D depictions for datasets > this size
         "rdf_generation_threshold": 5000,  # Defer RDF generation for datasets > this size
+        # Batched Query Settings (prevent URL size limits and timeouts)
+        "batch_size_compounds": 1000,  # Max compounds per batch query (prevents URL too long)
+        "batch_size_references": 1000,  # Max references per batch query
         # Filter Default Values
         "year_range_start": 1700,  # Minimum year for publication date filter
         "year_default_start": 1900,  # Default start year
@@ -205,10 +208,8 @@ def build_taxon_search_query(taxon_name: str) -> str:
     return f"""
     PREFIX wdt: <http://www.wikidata.org/prop/direct/>
     SELECT ?taxon ?taxon_name WHERE {{
-      VALUES ?taxon_name {{
-        "{taxon_name}"
-      }}
-      ?taxon wdt:P225 ?taxon_name.
+      VALUES ?taxon_name {{ "{taxon_name}" }}
+      ?taxon wdt:P225 ?taxon_name .
     }}
     """
 
@@ -223,28 +224,28 @@ def build_compounds_query(qid: str) -> str:
     PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
     PREFIX wd: <http://www.wikidata.org/entity/>
     PREFIX wdt: <http://www.wikidata.org/prop/direct/>
-    SELECT DISTINCT ?compound ?compoundLabel ?compound_inchikey ?compound_smiles_iso ?compound_smiles_conn ?compound_mass ?compound_formula ?taxon_name ?taxon ?ref_title ?ref_doi ?ref_qid ?ref_date WHERE {{
+
+    SELECT ?compound ?compound_inchikey ?compound_smiles_conn ?taxon_name ?taxon ?ref_qid 
+           ?compound_smiles_iso ?compound_mass ?compound_formula ?compoundLabel 
+           ?ref_title ?ref_doi ?ref_date WHERE {{
       {{
-        SELECT DISTINCT ?compound ?compound_inchikey ?compound_smiles_iso ?compound_smiles_conn ?compound_mass ?compound_formula ?taxon_name ?taxon ?ref_title ?ref_doi ?ref_qid ?ref_date WHERE {{
+        SELECT ?taxon ?taxon_name WHERE {{
           ?taxon (wdt:P171*) wd:{qid};
-            wdt:P225 ?taxon_name.
-          ?compound wdt:P235 ?compound_inchikey;
-            wdt:P233 ?compound_smiles_conn;
-            p:P703 ?statement.
-          ?statement ps:P703 ?taxon;
-            prov:wasDerivedFrom ?ref.
-          ?ref pr:P248 ?ref_qid.
-          OPTIONAL {{ ?compound wdt:P2017 ?compound_smiles_iso. }}
-          OPTIONAL {{ ?compound wdt:P2067 ?compound_mass. }}
-          OPTIONAL {{ ?compound wdt:P274 ?compound_formula. }}
-          OPTIONAL {{
-            ?ref_qid wdt:P1476 ?ref_title;
-              wdt:P356 ?ref_doi;
-              wdt:P577 ?ref_date.
-          }}
+                 wdt:P225 ?taxon_name.
         }}
       }}
-      OPTIONAL {{
+      ?statement ps:P703 ?taxon;
+                 prov:wasDerivedFrom ?ref.
+      ?ref pr:P248 ?ref_qid.
+      ?compound wdt:P235 ?compound_inchikey;
+                wdt:P233 ?compound_smiles_conn;
+                p:P703 ?statement.
+
+      OPTIONAL {{ ?compound wdt:P2017 ?compound_smiles_iso. }}
+      OPTIONAL {{ ?compound wdt:P2067 ?compound_mass. }}
+      OPTIONAL {{ ?compound wdt:P274 ?compound_formula. }}
+
+     OPTIONAL {{
         ?compound rdfs:label ?compoundLabel.
         FILTER((LANG(?compoundLabel)) = "en")
         }}
@@ -252,13 +253,18 @@ def build_compounds_query(qid: str) -> str:
         ?compound rdfs:label ?compoundLabel.
         FILTER((LANG(?compoundLabel)) = "mul")
         }}
+
+      OPTIONAL {{
+        ?ref_qid wdt:P1476 ?ref_title;
+                 wdt:P356 ?ref_doi;
+                 wdt:P577 ?ref_date.
       }}
+    }}
     """
 
 
 @app.function
 def build_all_compounds_query() -> str:
-    """Build simplified SPARQL query to get all compounds from all taxa (no taxon filtering)."""
     return """
     PREFIX p: <http://www.wikidata.org/prop/>
     PREFIX pr: <http://www.wikidata.org/prop/reference/>
@@ -266,35 +272,40 @@ def build_all_compounds_query() -> str:
     PREFIX ps: <http://www.wikidata.org/prop/statement/>
     PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
     PREFIX wdt: <http://www.wikidata.org/prop/direct/>
-    SELECT DISTINCT ?compound ?compoundLabel ?compound_inchikey ?compound_smiles_iso ?compound_smiles_conn ?compound_mass ?compound_formula ?taxon_name ?taxon ?ref_title ?ref_doi ?ref_qid ?ref_date WHERE {
+
+    SELECT ?compound ?compoundLabel ?compound_inchikey ?compound_smiles_iso 
+                    ?compound_smiles_conn ?compound_mass ?compound_formula 
+                    ?taxon_name ?taxon ?ref_title ?ref_doi ?ref_qid ?ref_date WHERE {
       {
-        SELECT DISTINCT ?compound ?compound_inchikey ?compound_smiles_iso ?compound_smiles_conn ?compound_mass ?compound_formula ?taxon_name ?taxon ?ref_title ?ref_doi ?ref_qid ?ref_date WHERE {
-          ?taxon wdt:P225 ?taxon_name.
+        SELECT ?compound ?compound_inchikey ?compound_smiles_conn ?taxon_name ?taxon ?ref_qid WHERE {
           ?compound wdt:P235 ?compound_inchikey;
             wdt:P233 ?compound_smiles_conn;
             p:P703 ?statement.
           ?statement ps:P703 ?taxon;
             prov:wasDerivedFrom ?ref.
+          ?taxon wdt:P225 ?taxon_name.
           ?ref pr:P248 ?ref_qid.
-          OPTIONAL { ?compound wdt:P2017 ?compound_smiles_iso. }
-          OPTIONAL { ?compound wdt:P2067 ?compound_mass. }
-          OPTIONAL { ?compound wdt:P274 ?compound_formula. }
-          OPTIONAL {
-            ?ref_qid wdt:P1476 ?ref_title;
-              wdt:P356 ?ref_doi;
-              wdt:P577 ?ref_date.
-          }
         }
       }
+	  OPTIONAL {
+      ?compound wdt:P2017 ?compound_smiles_iso.
+      ?compound wdt:P2067 ?compound_mass.
+      ?compound wdt:P274 ?compound_formula. 
+	  }
       OPTIONAL {
-        ?compound rdfs:label ?compoundLabel.
-        FILTER((LANG(?compoundLabel)) = "en")
-        }
-      OPTIONAL {
-        ?compound rdfs:label ?compoundLabel.
-        FILTER((LANG(?compoundLabel)) = "mul")
-        }
+        ?compound rdfs:label ?compoundLabel .
+        FILTER(LANG(?compoundLabel) = "en")
       }
+      OPTIONAL {
+        ?compound rdfs:label ?compoundLabel .
+        FILTER(LANG(?compoundLabel) = "mul")
+      }
+      OPTIONAL {
+        ?ref_qid wdt:P1476 ?ref_title;
+        wdt:P356 ?ref_doi;
+        wdt:P577 ?ref_date.
+      }	
+    }
     """
 
 
@@ -423,50 +434,49 @@ def build_sparql_values_clause(
 
 
 @app.function
-def build_taxon_details_query(qids: list) -> str:
-    """Build SPARQL query to fetch taxon details (label, description and parent taxon)."""
+def build_taxon_details_query(qids: List[str]) -> str:
     values_clause = build_sparql_values_clause("taxon", qids)
     return f"""
-    PREFIX p: <http://www.wikidata.org/prop/>
-    PREFIX pr: <http://www.wikidata.org/prop/reference/>
-    PREFIX prov: <http://www.w3.org/ns/prov#>
-    PREFIX ps: <http://www.wikidata.org/prop/statement/>
     PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
     PREFIX schema: <http://schema.org/>
     PREFIX wd: <http://www.wikidata.org/entity/>
     PREFIX wdt: <http://www.wikidata.org/prop/direct/>
-    SELECT ?taxon ?taxonLabel ?taxonDescription ?taxon_parent ?taxon_parentLabel WHERE {{
-    {{
-      SELECT ?taxon ?taxon_parent WHERE {{
-        {values_clause}
-        OPTIONAL {{
-          ?taxon wdt:P171 ?taxon_parent.
-        }}
-      }}
-    }}
-    OPTIONAL {{
-      ?taxon rdfs:label ?taxonLabel.
-      FILTER(LANG(?taxonLabel) = "en")
+
+    SELECT ?taxon ?taxonLabel ?taxonDescription ?taxon_parent ?taxon_parentLabel 
+    WHERE {{
+      {values_clause}
+
+      # Parent taxon
+      OPTIONAL {{ ?taxon wdt:P171 ?taxon_parent }}
+
+      # Taxon labels (English preferred)
+      OPTIONAL {{
+        ?taxon rdfs:label ?taxonLabel .
+        FILTER(LANG(?taxonLabel) = "en")
       }}
       OPTIONAL {{
-      ?taxon rdfs:label ?taxonLabel.
-      FILTER(LANG(?taxonLabel) = "mul")
+        ?taxon rdfs:label ?taxonLabel .
+        FILTER(LANG(?taxonLabel) = "mul")
+      }}
+
+      # Taxon descriptions
+      OPTIONAL {{
+        ?taxon schema:description ?taxonDescription .
+        FILTER(LANG(?taxonDescription) = "en")
       }}
       OPTIONAL {{
-      ?taxon schema:description ?taxonDescription.
-      FILTER(LANG(?taxonDescription) = "en")
+        ?taxon schema:description ?taxonDescription .
+        FILTER(LANG(?taxonDescription) = "mul")
+      }}
+
+      # Parent labels
+      OPTIONAL {{
+        ?taxon_parent rdfs:label ?taxon_parentLabel .
+        FILTER(LANG(?taxon_parentLabel) = "en")
       }}
       OPTIONAL {{
-      ?taxon schema:description ?taxonDescription.
-      FILTER(LANG(?taxonDescription) = "mul")
-      }}
-      OPTIONAL {{
-      ?taxon_parent rdfs:label ?taxon_parentLabel.
-      FILTER(LANG(?taxon_parentLabel) = "en")
-      }}
-      OPTIONAL {{
-      ?taxon_parent rdfs:label ?taxon_parentLabel.
-      FILTER(LANG(?taxon_parentLabel) = "mul")
+        ?taxon_parent rdfs:label ?taxon_parentLabel .
+        FILTER(LANG(?taxon_parentLabel) = "mul")
       }}
     }}
     """
