@@ -60,8 +60,8 @@ with app.setup:
     CONFIG = {
         # API and External Services
         "cdk_base": "https://www.simolecule.com/cdkdepict/depict/cot/svg",
-        # "sparql_endpoint": "https://qlever.dev/wikidata",  # Fails CORS for now
-        "sparql_endpoint": "https://qlever.cs.uni-freiburg.de/api/wikidata",  # Somehow works?
+        "sparql_endpoint": "https://qlever.dev/wikidata",  # Fails CORS for now
+        # "sparql_endpoint": "https://qlever.cs.uni-freiburg.de/api/wikidata",  # Somehow works?
         # "sparql_endpoint": "https://query-legacy-full.wikidata.org/sparql", # Too slow
         "user_agent": "LOTUS Explorer/0.0.1 (https://github.com/Adafede/marimo/blob/main/apps/lotus_wikidata_explorer.py)",
         # Network Settings
@@ -1496,7 +1496,7 @@ def _(
     state_year_start,
 ):
     ## MASS FILTERS
-    mass_filter = mo.ui.checkbox(label="⚖ Filter by mass", value=state_mass_filter)
+    mass_filter = mo.ui.checkbox(label="⚖️ Filter by mass", value=state_mass_filter)
 
     mass_min = mo.ui.number(
         value=state_mass_min,
@@ -1518,7 +1518,7 @@ def _(
 
     ## FORMULA FILTERS
     formula_filter = mo.ui.checkbox(
-        label="⚛ Filter by molecular formula", value=state_formula_filter
+        label="⚛️ Filter by molecular formula", value=state_formula_filter
     )
 
     exact_formula = mo.ui.text(
@@ -1638,7 +1638,7 @@ def _(
     ## DATE FILTERS
     current_year = datetime.now().year
     year_filter = mo.ui.checkbox(
-        label="𝄜 Filter by publication year", value=state_year_filter
+        label="🗓️ Filter by publication year", value=state_year_filter
     )
 
     year_start = mo.ui.number(
