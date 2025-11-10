@@ -59,7 +59,7 @@ with app.setup:
     # ====================================================================
 
     mo._runtime.context.get_context().marimo_config["runtime"]["output_max_bytes"] = (
-        100_000_000
+        1_000_000_000
     )
     CONFIG = {
         # External Services
