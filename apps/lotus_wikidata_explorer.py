@@ -60,9 +60,9 @@ with app.setup:
 
     # Set output max bytes safely (deployment environments may have limits)
     try:
-        mo._runtime.context.get_context().marimo_config["runtime"]["output_max_bytes"] = (
-            1_000_000_000  # 1GB
-        )
+        mo._runtime.context.get_context().marimo_config["runtime"][
+            "output_max_bytes"
+        ] = 1_000_000_000  # 1GB
     except Exception:
         # Silently fail if runtime config cannot be set (e.g., in some deployment scenarios)
         pass
@@ -380,7 +380,7 @@ def execute_sparql(
             if attempt == max_retries - 1:
                 query_snippet = query[:200] + "..." if len(query) > 200 else query
                 raise Exception(
-                    f"❌ Query failed: {str(e)}\n" 
+                    f"❌ Query failed: {str(e)}\n"
                     f"Query snippet: {query_snippet}\n"
                     f"💡 If running in a deployed environment, check timeout and memory limits."
                 )
