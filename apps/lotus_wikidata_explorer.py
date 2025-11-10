@@ -60,9 +60,9 @@ with app.setup:
     CONFIG = {
         # API and External Services
         "cdk_base": "https://www.simolecule.com/cdkdepict/depict/cot/svg",
-        "sparql_endpoint": "https://qlever.dev/wikidata",  # Fails CORS for now
-        # "sparql_endpoint": "https://qlever.cs.uni-freiburg.de/api/wikidata",  # Somehow works?
-        # "sparql_endpoint": "https://query-legacy-full.wikidata.org/sparql", # Too slow
+        # "sparql_endpoint": "https://qlever.dev/wikidata",  # Fails CORS for now
+        "sparql_endpoint": "https://qlever.cs.uni-freiburg.de/api/wikidata",  # Somehow works?
+        # "sparql_endpoint": "https://query-legacy-full.wikidata.org/sparql",  # Too slow
         "user_agent": "LOTUS Explorer/0.0.1 (https://github.com/Adafede/marimo/blob/main/apps/lotus_wikidata_explorer.py)",
         # Network Settings
         "max_retries": 3,
@@ -74,9 +74,6 @@ with app.setup:
         # Performance Thresholds
         "display_image_threshold": 50000,  # Hide 2D depictions for datasets > this size
         "rdf_generation_threshold": 5000,  # Defer RDF generation for datasets > this size
-        # Batched Query Settings (prevent URL size limits and timeouts)
-        "batch_size_compounds": 1000,  # Max compounds per batch query (prevents URL too long)
-        "batch_size_references": 1000,  # Max references per batch query
         # Filter Default Values
         "year_range_start": 1700,  # Minimum year for publication date filter
         "year_default_start": 1900,  # Default start year
