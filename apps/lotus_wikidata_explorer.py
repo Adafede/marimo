@@ -71,6 +71,7 @@ with app.setup:
         # External Services
         "cdk_base": "https://www.simolecule.com/cdkdepict/depict/cot/svg",
         "sparql_endpoint": "https://qlever.cs.uni-freiburg.de/api/wikidata",
+        # "sparql_endpoint": "https://query-legacy-full.wikidata.org/sparql",
         "user_agent": "LOTUS Explorer/0.0.1 (https://github.com/Adafede/marimo/blob/main/apps/lotus_wikidata_explorer.py)",
         # Network & Performance
         "max_retries": 3,
@@ -114,7 +115,7 @@ with app.setup:
     }
 
     # ====================================================================
-    # HTTP SESSION (Efficiency - Connection Pooling)
+    # HTTP SESSION
     # ====================================================================
 
     def create_http_session() -> requests.Session:
@@ -149,7 +150,7 @@ with app.setup:
     HTTP_SESSION = create_http_session()
 
     # ====================================================================
-    # DATA CLASSES (SOLID - Single Responsibility)
+    # DATA CLASSES
     # ====================================================================
 
     @dataclass(frozen=True)
@@ -482,6 +483,39 @@ def build_taxon_details_query(qids: List[str]) -> str:
 
 
 @app.function
+def build_taxon_connectivity_query(qids: List[str]) -> str:
+    """
+    Build query to count compound connections for each taxon.
+
+    This helps disambiguate between multiple taxa with the same name
+    by selecting the one with more data in the knowledge graph.
+    """
+    values_clause = build_sparql_values_clause("taxon", qids)
+    return f"""
+    PREFIX p: <http://www.wikidata.org/prop/>
+    PREFIX ps: <http://www.wikidata.org/prop/statement/>
+    PREFIX wd: <http://www.wikidata.org/entity/>
+    PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+
+    SELECT ?taxon (COUNT(DISTINCT ?compound) AS ?compound_count) WHERE {{
+      {values_clause}
+
+      # Count compounds directly linked to this taxon or its descendants
+      {{
+        SELECT ?taxon ?compound WHERE {{
+          {values_clause}
+          ?descendant (wdt:P171*) ?taxon .
+          ?compound wdt:P235 ?inchikey ;
+                    p:P703/ps:P703 ?descendant .
+        }}
+      }}
+    }}
+    GROUP BY ?taxon
+    ORDER BY DESC(?compound_count)
+    """
+
+
+@app.function
 def create_taxon_warning_html(
     matches: list, selected_qid: str, is_exact: bool
 ) -> mo.Html:
@@ -489,7 +523,7 @@ def create_taxon_warning_html(
     Create an HTML warning with clickable QID links and taxon details.
 
     Args:
-        matches: List of (qid, name, description, parent) tuples
+        matches: List of (qid, name, description, parent, compound_count) tuples
         selected_qid: The QID that was selected
         is_exact: Whether these are exact matches or similar matches
     """
@@ -502,7 +536,13 @@ def create_taxon_warning_html(
 
     # Build HTML list of matches
     items = []
-    for qid, name, description, parent in matches:
+    for match_data in matches:
+        qid = match_data[0]
+        name = match_data[1]
+        description = match_data[2] if len(match_data) > 2 else None
+        parent = match_data[3] if len(match_data) > 3 else None
+        compound_count = match_data[4] if len(match_data) > 4 else None
+
         # Create clickable link
         link = f'<a href="{WIKIDATA_WIKI_PREFIX}{qid}" target="_blank" rel="noopener noreferrer" style="color: {CONFIG["color_hyperlink"]}; text-decoration: none; border-bottom: 1px solid transparent; font-weight: bold;">{qid}</a>'
 
@@ -514,13 +554,15 @@ def create_taxon_warning_html(
             details.append(f"{description}")
         if parent:
             details.append(f"parent: {parent}")
+        if compound_count is not None:
+            details.append(f"<strong>{compound_count:,} compounds</strong>")
 
         details_str = " — ".join(details) if details else ""
 
         # Highlight the selected one
         if qid == selected_qid:
             items.append(
-                f"<li>{link} {details_str} <strong>USING THIS ONE BELOW</strong></li>"
+                f"<li>{link} {details_str} <strong>← USING THIS ONE (most compounds)</strong></li>"
             )
         else:
             items.append(f"<li>{link} {details_str}</li>")
@@ -533,7 +575,7 @@ def create_taxon_warning_html(
         <ul style="margin: 0.5em 0; padding-left: 1.5em;">
             {items_html}
         </ul>
-        <em>For precision, please use a specific QID directly in the search box.</em>
+        <em>For precision, please use a specific QID directly in the search box. When ambiguous, the taxon with the most compound links is automatically selected.</em>
     </div>
     """
 
@@ -597,6 +639,27 @@ def resolve_taxon_to_qid(taxon_input: str) -> Tuple[Optional[str], Optional[mo.H
         if len(exact_matches) > 1:
             # Get details for exact matches
             qids = [qid for qid, _ in exact_matches]
+
+            # Query connectivity to find the most connected taxon
+            connectivity_query = build_taxon_connectivity_query(qids)
+            connectivity_results = execute_sparql(connectivity_query)
+            connectivity_bindings = connectivity_results.get("results", {}).get(
+                "bindings", []
+            )
+
+            # Build connectivity map
+            connectivity_map = {}
+            for b in connectivity_bindings:
+                qid = extract_qid(get_binding_value(b, "taxon"))
+                count = int(get_binding_value(b, "compound_count", "0"))
+                connectivity_map[qid] = count
+
+            # Sort exact matches by connectivity (descending)
+            sorted_matches = sorted(
+                exact_matches, key=lambda x: connectivity_map.get(x[0], 0), reverse=True
+            )
+
+            # Get details for display
             details_query = build_taxon_details_query(qids)
             details_results = execute_sparql(details_query)
             details_bindings = details_results.get("results", {}).get("bindings", [])
@@ -611,26 +674,50 @@ def resolve_taxon_to_qid(taxon_input: str) -> Tuple[Optional[str], Optional[mo.H
                     get_binding_value(b, "taxon_parentLabel"),
                 )
 
-            # Create matches with details
+            # Create matches with details including connectivity
             matches_with_details = [
                 (
                     qid,
                     name,
                     details_map.get(qid, ("", "", ""))[1],
                     details_map.get(qid, ("", "", ""))[2],
+                    connectivity_map.get(qid, 0),
                 )
-                for qid, name in exact_matches
+                for qid, name in sorted_matches
             ]
 
+            # Use the most connected taxon (first in sorted list)
+            selected_qid = sorted_matches[0][0]
             warning_html = create_taxon_warning_html(
-                matches_with_details, exact_matches[0][0], is_exact=True
+                matches_with_details, selected_qid, is_exact=True
             )
-            return exact_matches[0][0], warning_html
+            return selected_qid, warning_html
 
         # No exact match - use first result with warning
         if len(matches) > 1:
             # Get details for similar matches (limit to 5)
             qids = [qid for qid, _ in matches[:5]]
+
+            # Query connectivity to find the most connected taxon
+            connectivity_query = build_taxon_connectivity_query(qids)
+            connectivity_results = execute_sparql(connectivity_query)
+            connectivity_bindings = connectivity_results.get("results", {}).get(
+                "bindings", []
+            )
+
+            # Build connectivity map
+            connectivity_map = {}
+            for b in connectivity_bindings:
+                qid = extract_qid(get_binding_value(b, "taxon"))
+                count = int(get_binding_value(b, "compound_count", "0"))
+                connectivity_map[qid] = count
+
+            # Sort matches by connectivity (descending)
+            sorted_matches = sorted(
+                matches[:5], key=lambda x: connectivity_map.get(x[0], 0), reverse=True
+            )
+
+            # Get details for display
             details_query = build_taxon_details_query(qids)
             details_results = execute_sparql(details_query)
             details_bindings = details_results.get("results", {}).get("bindings", [])
@@ -645,21 +732,24 @@ def resolve_taxon_to_qid(taxon_input: str) -> Tuple[Optional[str], Optional[mo.H
                     get_binding_value(b, "taxon_parentLabel"),
                 )
 
-            # Create matches with details
+            # Create matches with details including connectivity
             matches_with_details = [
                 (
                     qid,
                     name,
                     details_map.get(qid, ("", "", ""))[1],
                     details_map.get(qid, ("", "", ""))[2],
+                    connectivity_map.get(qid, 0),
                 )
-                for qid, name in matches[:5]
+                for qid, name in sorted_matches
             ]
 
+            # Use the most connected taxon (first in sorted list)
+            selected_qid = sorted_matches[0][0]
             warning_html = create_taxon_warning_html(
-                matches_with_details, matches[0][0], is_exact=False
+                matches_with_details, selected_qid, is_exact=False
             )
-            return matches[0][0], warning_html
+            return selected_qid, warning_html
 
         return matches[0][0], None
 
@@ -1578,7 +1668,8 @@ def _():
             - Search by scientific name (case-insensitive)
             - Search directly by Wikidata QID for precision
             - Use **"*"** (asterisk) to query all taxa at once
-            - Handles ambiguous names with helpful suggestions
+            - **Ambiguous name resolution**: When multiple taxa share the same scientific name, the system automatically selects the one with the most compound associations
+            - Displays helpful suggestions for similar taxa
 
             #### Filtering Options
 
