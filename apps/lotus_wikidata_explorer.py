@@ -15,9 +15,9 @@
 """
 LOTUS Wikidata Explorer
 
-A professional natural products research tool for exploring chemical compounds from the
-LOTUS (Natural Products Occurrence) database via Wikidata. Features advanced chemical
-structure searching powered by SACHEM (Substructure And Chemistry Enhanced Matching).
+A research tool for exploring chemical compounds from the LOTUS Initiative via
+Wikidata. Features advanced chemical structure searching powered by SACHEM
+(Substructure And Chemistry Enhanced Matching).
 
 Features:
 - Taxonomic search across all LOTUS taxa
@@ -83,6 +83,7 @@ with app.setup:
         # External Services
         "cdk_base": "https://www.simolecule.com/cdkdepict/depict/cot/svg",
         "sparql_endpoint": "https://qlever.cs.uni-freiburg.de/api/wikidata",
+        # "sparql_endpoint": "https://query-legacy-full.wikidata.org/sparql",
         "idsm_endpoint": "https://idsm.elixir-czech.cz/sparql/endpoint/",
         "user_agent": "LOTUS Explorer/1.0.0 (https://github.com/Adafede/marimo/blob/main/apps/lotus_wikidata_explorer.py)",
         # Network & Performance
