@@ -398,27 +398,29 @@ def build_smiles_taxon_query(
         threshold: Similarity threshold (0.0-1.0) for similarity search
     """
     if search_type == "similarity":
-        # For similarity search within taxon
+        # Optimized similarity search: SACHEM first, then taxon filter
         return f"""{SPARQL_PREFIXES}{SACHEM_PREFIXES}
         SELECT {COMPOUND_SELECT_VARS} WHERE {{
           {{
-            SERVICE idsm:wikidata {{
-              VALUES ?QUERY_SMILES {{ "{smiles}" }}
-              VALUES ?CUTOFF {{ "{threshold}"^^xsd:double }}
-              ?compound sachem:similarCompoundSearch[
-              sachem:query ?QUERY_SMILES;
-              sachem:cutoff ?CUTOFF
-              ].
+            SELECT ?compound ?compound_inchikey ?compound_smiles_conn WHERE {{
+              SERVICE idsm:wikidata {{
+                VALUES ?QUERY_SMILES {{ "{smiles}" }}
+                VALUES ?CUTOFF {{ "{threshold}"^^xsd:double }}
+                ?compound sachem:similarCompoundSearch[
+                sachem:query ?QUERY_SMILES;
+                sachem:cutoff ?CUTOFF
+                ].
+              }}
+              ?compound wdt:P235 ?compound_inchikey;
+                        wdt:P233 ?compound_smiles_conn.
             }}
           }}
-          ?taxon (wdt:P171*) wd:{qid};
-                  wdt:P225 ?taxon_name.
           ?statement ps:P703 ?taxon;
                      prov:wasDerivedFrom ?ref.
           ?ref pr:P248 ?ref_qid.
-          ?compound wdt:P235 ?compound_inchikey;
-                    wdt:P233 ?compound_smiles_conn;
-                    p:P703 ?statement.
+          ?compound p:P703 ?statement.
+          ?taxon (wdt:P171*) wd:{qid};
+                  wdt:P225 ?taxon_name.
           OPTIONAL {{ ?ref_qid wdt:P1476 ?ref_title. }}
           OPTIONAL {{ ?ref_qid wdt:P356 ?ref_doi. }}
           OPTIONAL {{ ?ref_qid wdt:P577 ?ref_date. }}
@@ -426,25 +428,27 @@ def build_smiles_taxon_query(
         }}
         """
     else:
-        # For substructure search within taxon
+        # Optimized substructure search: SACHEM first, then taxon filter
         return f"""{SPARQL_PREFIXES}{SACHEM_PREFIXES}
         SELECT {COMPOUND_SELECT_VARS} WHERE {{
           {{
-            SERVICE idsm:wikidata {{
-              VALUES ?SUBSTRUCTURE {{ "{smiles}" }}
-              ?compound sachem:substructureSearch [
-                sachem:query ?SUBSTRUCTURE
-              ].
+            SELECT ?compound ?compound_inchikey ?compound_smiles_conn WHERE {{
+              SERVICE idsm:wikidata {{
+                VALUES ?SUBSTRUCTURE {{ "{smiles}" }}
+                ?compound sachem:substructureSearch [
+                  sachem:query ?SUBSTRUCTURE
+                ].
+              }}
+              ?compound wdt:P235 ?compound_inchikey;
+                        wdt:P233 ?compound_smiles_conn.
             }}
           }}
-          ?taxon (wdt:P171*) wd:{qid};
-                  wdt:P225 ?taxon_name.
           ?statement ps:P703 ?taxon;
                      prov:wasDerivedFrom ?ref.
           ?ref pr:P248 ?ref_qid.
-          ?compound wdt:P235 ?compound_inchikey;
-                    wdt:P233 ?compound_smiles_conn;
-                    p:P703 ?statement.
+          ?compound p:P703 ?statement.
+          ?taxon (wdt:P171*) wd:{qid};
+                  wdt:P225 ?taxon_name.
           OPTIONAL {{ ?ref_qid wdt:P1476 ?ref_title. }}
           OPTIONAL {{ ?ref_qid wdt:P356 ?ref_doi. }}
           OPTIONAL {{ ?ref_qid wdt:P577 ?ref_date. }}
@@ -2086,9 +2090,11 @@ def export_to_rdf_turtle(df: pl.DataFrame, taxon_input: str, qid: str) -> str:
     # Serialize to Turtle format
     return g.serialize(format="turtle")
 
+
 @app.function
 def normalize_element_value(val: int, default: int) -> Optional[int]:
-  return None if val == default else val
+    return None if val == default else val
+
 
 @app.cell
 def _():
@@ -2585,7 +2591,6 @@ def _(
     smiles_input,
     smiles_search_type,
     smiles_threshold,
-    state_auto_run,
     taxon_input,
     year_end,
     year_filter,
@@ -2670,7 +2675,6 @@ def _(
     smiles_threshold,
     state_auto_run,
     taxon_input,
-    taxon_warning,
     year_end,
     year_filter,
     year_start,
@@ -2742,8 +2746,6 @@ def _(
                 # Build formula filters using dataclass
                 formula_filt = None
                 if formula_filter.value:
-
-
                     formula_filt = FormulaFilters(
                         exact_formula=exact_formula.value
                         if exact_formula.value.strip()
@@ -3130,7 +3132,6 @@ def _(
         # Build filters for metadata
         _formula_filt = None
         if formula_filter.value:
-
             _formula_filt = FormulaFilters(
                 exact_formula=exact_formula.value
                 if exact_formula.value.strip()
@@ -3621,7 +3622,9 @@ def _(
 
         # Year filter state
         state_year_filter = url_year_filter
-        state_year_start = url_year_start if url_year_filter else CONFIG["year_default_start"]
+        state_year_start = (
+            url_year_start if url_year_filter else CONFIG["year_default_start"]
+        )
         state_year_end = url_year_end if url_year_filter else datetime.now().year
 
         # Formula filter state
