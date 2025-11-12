@@ -1378,8 +1378,8 @@ def query_wikidata(
             query = build_smiles_similarity_query(smiles, smiles_threshold)
         else:  # Default to substructure
             query = build_smiles_substructure_query(smiles)
-    elif qid == "*":
-        query = build_all_compounds_query()
+    elif qid == "*" or qid is None:
+      query = build_all_compounds_query()
     else:
         query = build_compounds_query(qid)
 
@@ -3496,7 +3496,7 @@ def main():
         # Parse CLI arguments
         parser = argparse.ArgumentParser(description="Export LOTUS data")
         parser.add_argument("export")
-        parser.add_argument("--taxon", required=True, help="Taxon name or QID")
+        parser.add_argument("--taxon", help="Taxon name or QID")
         parser.add_argument("--output", "-o", help="Output file")
         parser.add_argument(
             "--format", "-f", choices=["csv", "json", "ttl"], default="csv"
@@ -3595,6 +3595,9 @@ def main():
             # Execute in isolated namespace
             namespace = {}
             exec(combined_code, namespace)
+
+            if args.taxon is None:
+                args.taxon = "*"
 
             if args.verbose:
                 print(f"Querying LOTUS data for: {args.taxon}", file=sys.stderr)
