@@ -12,6 +12,6 @@ dependencies = [
     "sparqlx==0.3.0",
 ]
 [project.scripts]
-lotus = "apps.lotus_wikidata_explorer:main"
+lotus_wikidata_explorer = "apps.lotus_wikidata_explorer:main"
 [tool.setuptools]
 packages = ["apps"]
