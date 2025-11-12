@@ -74,7 +74,7 @@ with app.setup:
         "app_url": "https://github.com/Adafede/marimo/blob/main/apps/lotus_wikidata_explorer.py",
         # External Services
         "cdk_base": "https://www.simolecule.com/cdkdepict/depict/cot/svg",
-        "sparql_endpoint": "https://qlever.cs.uni-freiburg.de/api/wikidata",
+        "sparql_endpoint": "https://qlever.dev/api/wikidata",
         # "sparql_endpoint": "https://query-legacy-full.wikidata.org/sparql",
         "idsm_endpoint": "https://idsm.elixir-czech.cz/sparql/endpoint/",
         "user_agent": "LOTUS Explorer/1.0.0 (https://github.com/Adafede/marimo/blob/main/apps/lotus_wikidata_explorer.py)",
@@ -469,27 +469,54 @@ def execute_sparql(
     """Execute SPARQL query with connection pooling and retry logic."""
     headers = {
         "Accept": "application/sparql-results+json",
+        "Content-Type": "application/sparql-query",
         "User-Agent": CONFIG["user_agent"],
     }
 
-    params = {
-        "query": query,
-        "format": "json",
-    }
-
     url = CONFIG["sparql_endpoint"]
+    timeout = 300
+
+    def try_post():
+        """POST request with query in body (QLever, modern endpoints)."""
+        return HTTP_SESSION.post(url=url, data=query, headers=headers, timeout=timeout)
+
+    def try_get():
+        """GET request with query params (legacy endpoints)."""
+        params = {"query": query, "format": "json"}
+        return HTTP_SESSION.get(
+            url=url, headers=headers, params=params, timeout=timeout
+        )
 
     for attempt in range(max_retries):
         try:
-            # Use persistent session for connection pooling (major performance boost)
-            response = HTTP_SESSION.get(
-                url=url,
-                headers=headers,
-                params=params,
-                timeout=300,
-            )
+            # Try POST first
+            response = try_post()
+            # If server refuses POST, try GET immediately
+            if response.status_code in (405, 415):
+                response = try_get()
+
             response.raise_for_status()
-            return response.json()
+
+            # Try to parse JSON; if it fails, attempt GET (some endpoints return JSON only for GET)
+            try:
+                return response.json()
+            except ValueError:
+                # Fallback to GET if we haven't already tried it
+                if response.request.method != "GET":
+                    response = try_get()
+                    response.raise_for_status()
+                    try:
+                        return response.json()
+                    except ValueError as je:
+                        raise Exception(
+                            f"Failed to decode JSON response after GET: {je}\n"
+                            f"Server returned: {response.text[:1000]}"
+                        )
+                else:
+                    raise Exception(
+                        f"Failed to decode JSON response: server returned non-JSON content.\n"
+                        f"Response snippet: {response.text[:1000]}"
+                    )
 
         except requests.exceptions.Timeout:
             if attempt == max_retries - 1:
@@ -502,15 +529,20 @@ def execute_sparql(
         except requests.exceptions.HTTPError as e:
             if attempt == max_retries - 1:
                 status_code = (
-                    e.response.status_code if hasattr(e, "response") else "Unknown"
+                    e.response.status_code
+                    if hasattr(e, "response") and e.response is not None
+                    else "Unknown"
                 )
                 error_detail = ""
-                if hasattr(e, "response") and e.response.text:
+                if (
+                    hasattr(e, "response")
+                    and e.response is not None
+                    and e.response.text
+                ):
                     error_detail = f"\nServer response: {e.response.text[:500]}"
                 raise Exception(
                     f"🌐 HTTP error {status_code} after {max_retries} attempts.{error_detail}\n"
-                    f"💡 Try: Check your internet connection or try again later.\n"
-                    f"💡 If this is a deployed environment, the server may have stricter limits."
+                    f"💡 Try: Check your internet connection or try again later."
                 )
             time.sleep(CONFIG["retry_backoff"] * (2**attempt))
 
@@ -518,9 +550,8 @@ def execute_sparql(
             if attempt == max_retries - 1:
                 query_snippet = query[:200] + "..." if len(query) > 200 else query
                 raise Exception(
-                    f"❌ Query failed: {str(e)}\n"
-                    f"Query snippet: {query_snippet}\n"
-                    f"💡 If running in a deployed environment, check timeout and memory limits."
+                    f"❌ Query failed: {type(e).__name__}: {e}\n"
+                    f"Query snippet: {query_snippet}"
                 )
             time.sleep(CONFIG["retry_backoff"] * (2**attempt))
 
