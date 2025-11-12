@@ -7,7 +7,7 @@
 
 import marimo
 
-__generated_with = "0.17.0"
+__generated_with = "0.17.7"
 app = marimo.App()
 
 with app.setup:
@@ -16,13 +16,11 @@ with app.setup:
 
 @app.cell
 def _():
-    mo.md(
-        r"""
-        # Fibonacci Calculator
+    mo.md(r"""
+    # Fibonacci Calculator
 
-        Use the slider above to calculate the first {n.value} numbers in the Fibonacci sequence.
-        """
-    )
+    Use the slider above to calculate the first {n.value} numbers in the Fibonacci sequence.
+    """)
     return
 
 
