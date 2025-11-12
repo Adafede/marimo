@@ -303,6 +303,10 @@ def build_smiles_substructure_query(smiles: str) -> str:
     from IDSM (Integrated Database of Small Molecules) for chemical substructure
     searching in Wikidata.
 
+    PERFORMANCE OPTIMIZATION:
+    Uses subquery to materialize SACHEM results first, then retrieves metadata.
+    This ensures the fast SACHEM search completes before slower metadata retrieval.
+
     Args:
         smiles: SMILES string representing the substructure to search for
                 (e.g., "c1ccccc1" for benzene)
@@ -316,17 +320,24 @@ def build_smiles_substructure_query(smiles: str) -> str:
     """
     return f"""{SPARQL_PREFIXES}{SACHEM_PREFIXES}
     SELECT {COMPOUND_SELECT_VARS} WHERE {{
+      # Step 1: SACHEM substructure search (fast, returns focused set)
       {{
-        SERVICE idsm:wikidata {{
-          VALUES ?SUBSTRUCTURE {{ "{smiles}" }}
-          ?compound sachem:substructureSearch [
-            sachem:query ?SUBSTRUCTURE
-          ].
+        SELECT ?compound ?compound_inchikey ?compound_smiles_conn WHERE {{
+          SERVICE idsm:wikidata {{
+            VALUES ?SUBSTRUCTURE {{ "{smiles}" }}
+            ?compound sachem:substructureSearch [
+              sachem:query ?SUBSTRUCTURE
+            ].
+          }}
+          ?compound wdt:P235 ?compound_inchikey;
+                    wdt:P233 ?compound_smiles_conn.
         }}
       }}
-      ?compound wdt:P235 ?compound_inchikey;
-                wdt:P233 ?compound_smiles_conn.
+      
+      # Step 2: Get taxonomic and reference data (small dataset)
       {TAXONOMIC_REFERENCE_OPTIONAL}
+      
+      # Step 3: Get compound properties (small dataset)
       {COMPOUND_PROPERTIES_OPTIONAL}
     }}
     """
@@ -365,18 +376,20 @@ def build_smiles_similarity_query(smiles: str, threshold: float = 0.8) -> str:
     return f"""{SPARQL_PREFIXES}{SACHEM_PREFIXES}
     SELECT {COMPOUND_SELECT_VARS} WHERE {{
       {{
-        SERVICE idsm:wikidata {{
-          VALUES ?QUERY_SMILES {{ "{smiles}" }}
-          VALUES ?CUTOFF {{ "{threshold}"^^xsd:double }}
-          ?compound sachem:similarCompoundSearch[
-          sachem:query ?QUERY_SMILES;
-          sachem:cutoff ?CUTOFF
-          ].
+        SELECT ?compound ?compound_inchikey ?compound_smiles_conn WHERE {{
+          SERVICE idsm:wikidata {{
+            VALUES ?QUERY_SMILES {{ "{smiles}" }}
+            VALUES ?CUTOFF {{ "{threshold}"^^xsd:double }}
+            ?compound sachem:similarCompoundSearch[
+            sachem:query ?QUERY_SMILES;
+            sachem:cutoff ?CUTOFF
+            ].
+          }}
+          ?compound wdt:P235 ?compound_inchikey;
+                    wdt:P233 ?compound_smiles_conn.
         }}
-      }}
-      ?compound wdt:P235 ?compound_inchikey;
-                wdt:P233 ?compound_smiles_conn.
-      {TAXONOMIC_REFERENCE_OPTIONAL}
+      }}      
+      {TAXONOMIC_REFERENCE_OPTIONAL}      
       {COMPOUND_PROPERTIES_OPTIONAL}
     }}
     """
@@ -463,20 +476,20 @@ def build_compounds_query(qid: str) -> str:
     return f"""{SPARQL_PREFIXES}
     SELECT {COMPOUND_SELECT_VARS} WHERE {{
       {{
-        SELECT ?taxon ?taxon_name WHERE {{
-          ?taxon (wdt:P171*) wd:{qid};
-                 wdt:P225 ?taxon_name.
+        SELECT ?compound ?compound_inchikey ?compound_smiles_conn ?taxon ?taxon_name ?ref_qid WHERE {{
+          ?compound wdt:P235 ?compound_inchikey;
+                    wdt:P233 ?compound_smiles_conn;
+                    p:P703 ?statement.
+          ?statement ps:P703 ?taxon;
+                     prov:wasDerivedFrom ?ref.
+          ?ref pr:P248 ?ref_qid.
+          ?taxon wdt:P225 ?taxon_name.
         }}
-      }}
-      ?statement ps:P703 ?taxon;
-                 prov:wasDerivedFrom ?ref.
-      ?ref pr:P248 ?ref_qid.
+      }}      
+      ?taxon (wdt:P171*) wd:{qid}.      
       OPTIONAL {{ ?ref_qid wdt:P1476 ?ref_title. }}
       OPTIONAL {{ ?ref_qid wdt:P356 ?ref_doi. }}
-      OPTIONAL {{ ?ref_qid wdt:P577 ?ref_date. }}
-      ?compound wdt:P235 ?compound_inchikey;
-                wdt:P233 ?compound_smiles_conn;
-                p:P703 ?statement.
+      OPTIONAL {{ ?ref_qid wdt:P577 ?ref_date. }}      
       {COMPOUND_PROPERTIES_OPTIONAL}
     }}
     """
