@@ -3452,7 +3452,7 @@ def _():
     return
 
 
-if __name__ == "__main__":
+def main():
     import sys
 
     if len(sys.argv) > 1 and sys.argv[1] == "export":
@@ -3694,3 +3694,7 @@ if __name__ == "__main__":
             sys.exit(1)
     else:
         app.run()
+
+
+if __name__ == "__main__":
+    main()
