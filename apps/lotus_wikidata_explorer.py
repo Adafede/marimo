@@ -238,8 +238,8 @@ def build_smiles_substructure_query(smiles: str) -> str:
     Build SPARQL query for chemical substructure search using SACHEM.
 
     Uses the SACHEM (Substructure And Chemistry Enhanced Matching) service
-    from IDSM (Integrated Database of Small Molecules) for professional-grade
-    chemical substructure searching in Wikidata.
+    from IDSM (Integrated Database of Small Molecules) for chemical substructure
+    searching in Wikidata.
 
     Args:
         smiles: SMILES string representing the substructure to search for
@@ -1149,15 +1149,37 @@ def build_active_filters_dict(
     year_start_val: Optional[int],
     year_end_val: Optional[int],
     formula_filters: Optional[FormulaFilters],
-) -> Dict[str, Any]:
+    smiles: Optional[str] = None,
+    smiles_search_type: Optional[str] = None,
+    smiles_threshold: Optional[float] = None,
+    ) -> Dict[str, Any]:
     """
     Build a dictionary of active filters for metadata export.
 
-    This function follows DRY principle by centralizing filter serialization logic.
+    Includes all filter types: mass, year, formula, and chemical structure (SMILES).
+    Args:
+        mass_filter_active: Whether mass filter is enabled
+        mass_min_val: Minimum mass value
+        mass_max_val: Maximum mass value
+        year_filter_active: Whether year filter is enabled
+        year_start_val: Start year
+        year_end_val: End year
+        formula_filters: Molecular formula filters
+        smiles: SMILES string for structure search
+        smiles_search_type: Type of SMILES search ("substructure" or "similarity")
+        smiles_threshold: Similarity threshold (0.0-1.0)
+
+    Returns:
+        Dictionary of active filters with their values
     """
     filters = {}
 
     # Mass filter
+    # Chemical structure (SMILES) search
+    if smiles and smiles.strip():
+        filters["chemical_structure"] = {
+            "smiles": smiles.strip(),
+        }
     if mass_filter_active and (mass_min_val is not None or mass_max_val is not None):
         filters["mass"] = {
             "min": mass_min_val,
@@ -1187,28 +1209,47 @@ def generate_filename(
     filters: Dict[str, Any] = None,
 ) -> str:
     """
-    Generate standardized filename for exports.
+    Generate standardized, descriptive filename for exports.
+
+    Filename pattern:
+    YYYYMMDD_prefix_taxon[_smiles_TYPE][_filtered].ext
 
     Args:
         taxon_name: Name of the taxon (or "*" for all taxa)
         file_type: File extension (e.g., 'csv', 'json', 'ttl')
         prefix: Filename prefix (default: 'lotus_data')
-        filters: Optional dict of active filters (adds "_filtered" suffix if present)
+        filters: Optional dict of active filters (adds context to filename)
 
     Returns:
-        Standardized filename with date
+        Standardized filename with date and filter context
+
+    Examples:
+        >>> generate_filename("Artemisia", "csv", filters={"chemical_structure": {"search_type": "substructure"}})
+        '20251112_lotus_data_Artemisia_smiles_substructure.csv'
     """
     # Handle wildcard for all taxa
     if taxon_name == "*":
         safe_name = "all_taxa"
     else:
-        safe_name = taxon_name.replace(" ", "_")
+        # Replace spaces and special characters
+        safe_name = taxon_name.replace(" ", "_").replace("/", "_")
 
-    # Add "_filtered" suffix if filters are active
-    filter_suffix = "_filtered" if filters and len(filters) > 0 else ""
+    # Build filename components
+    components = [prefix, safe_name]
+
+    # Add SMILES search type if present
+    if filters and "chemical_structure" in filters:
+        search_type = filters["chemical_structure"].get("search_type", "smiles")
+        components.append(f"smiles_{search_type}")
+
+    # Add general filter indicator if other filters are active
+    other_filters = {k: v for k, v in (filters or {}).items() if k != "chemical_structure"}
+    if other_filters:
+        components.append("filtered")
 
     date_str = datetime.now().strftime("%Y%m%d")
-    return f"{date_str}_{prefix}_{safe_name}{filter_suffix}.{file_type}"
+    filename_base = "_".join(components)
+    return f"{date_str}_{filename_base}.{file_type}"
 
 
 @app.function
@@ -1649,21 +1690,52 @@ def create_export_metadata(
         df: Exported DataFrame
         taxon_input: Taxon name or search query string
         qid: Wikidata QID (or empty for structure-only searches)
-        filters: Active filter settings
+        filters: Active filter settings (includes SMILES, mass, year, formula)
 
     Returns:
         Dictionary containing Schema.org-compliant metadata
     """
+    # Build descriptive name and description based on search type
+    smiles_info = filters.get("chemical_structure", {}) if filters else {}
+
+    if smiles_info:
+        search_type = smiles_info.get("search_type", "substructure")
+        smiles_str = smiles_info.get("smiles", "")
+
+        if qid:
+            # Combined search
+            dataset_name = f"LOTUS Data - {search_type.title()} search in {taxon_input}"
+            description = (
+                f"Chemical compounds matching {search_type} search "
+                f"(SMILES: {smiles_str[:50]}{'...' if len(smiles_str) > 50 else ''}) "
+                f"within taxon {taxon_input} (Wikidata QID: {qid}). "
+            )
+        else:
+            # SMILES-only search
+            dataset_name = f"LOTUS Data - Chemical {search_type.title()} Search"
+            description = (
+                f"Chemical compounds matching {search_type} search "
+                f"(SMILES: {smiles_str[:50]}{'...' if len(smiles_str) > 50 else ''}). "
+            )
+
+        if search_type == "similarity":
+            threshold = smiles_info.get("similarity_threshold", 0.8)
+            description += f"Tanimoto similarity threshold: {threshold}. "
+    else:
+        # Taxon-only search
+        dataset_name = f"LOTUS Data - {taxon_input}"
+        description = (
+            f"Chemical compounds from taxon {taxon_input} "
+            + (f"(Wikidata QID: {qid}). " if qid else ". ")
+        )
+
+    description += "Retrieved via LOTUS Wikidata Explorer with professional-grade chemical search capabilities (SACHEM/IDSM)."
+
     metadata = {
         "@context": "https://schema.org/",
         "@type": "Dataset",
-        "name": f"LOTUS Data - {taxon_input}",
-        "description": (
-            f"Chemical compounds"
-            + (f" for taxon {taxon_input} (Wikidata QID: {qid})" if qid else "")
-            + ". Retrieved via LOTUS Wikidata Explorer with professional-grade "
-            + "chemical search capabilities (SACHEM/IDSM)."
-        ),
+        "name": dataset_name,
+        "description": description,
         "version": "0.0.1",
         "dateCreated": datetime.now().isoformat(),
         "license": "https://creativecommons.org/publicdomain/zero/1.0/",
@@ -2940,6 +3012,9 @@ def _(
             year_start_val=year_start.value if year_filter.value else None,
             year_end_val=year_end.value if year_filter.value else None,
             formula_filters=_formula_filt,
+            smiles=smiles_input.value,
+            smiles_search_type=smiles_search_type.value,
+            smiles_threshold=smiles_threshold.value,
         )
         metadata = create_export_metadata(
             export_df, taxon_input.value, qid, active_filters
