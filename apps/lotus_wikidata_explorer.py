@@ -147,6 +147,21 @@ with app.setup:
            ?compound_smiles_iso ?compound_mass ?compound_formula ?compoundLabel 
            ?ref_title ?ref_doi ?ref_date"""
 
+    # Common compound identifier retrieval (used in subqueries)
+    COMPOUND_IDENTIFIERS = """
+      ?compound wdt:P235 ?compound_inchikey;
+                wdt:P233 ?compound_smiles_conn.
+    """
+
+    # Common taxon-reference association pattern (used in subqueries)
+    TAXON_REFERENCE_ASSOCIATION = """
+      ?compound p:P703 ?statement.
+      ?statement ps:P703 ?taxon;
+                 prov:wasDerivedFrom ?ref.
+      ?ref pr:P248 ?ref_qid.
+      ?taxon wdt:P225 ?taxon_name.
+    """
+
     # Common compound property optionals
     COMPOUND_PROPERTIES_OPTIONAL = """
       OPTIONAL { ?compound wdt:P2017 ?compound_smiles_iso. }
@@ -175,6 +190,14 @@ with app.setup:
         OPTIONAL { ?ref_qid wdt:P577 ?ref_date. }
       }
     """
+
+    # Common reference metadata retrieval (after subquery)
+    REFERENCE_METADATA_OPTIONAL = """
+      OPTIONAL { ?ref_qid wdt:P1476 ?ref_title. }
+      OPTIONAL { ?ref_qid wdt:P356 ?ref_doi. }
+      OPTIONAL { ?ref_qid wdt:P577 ?ref_date. }
+    """
+
     WIKIDATA_WIKI_PREFIX = "https://www.wikidata.org/wiki/"
 
     # Subscript translation map (constant for performance)
@@ -296,31 +319,9 @@ def build_taxon_search_query(taxon_name: str) -> str:
 
 @app.function
 def build_smiles_substructure_query(smiles: str) -> str:
-    """
-    Build SPARQL query for chemical substructure search using SACHEM.
-
-    Uses the SACHEM (Substructure And Chemistry Enhanced Matching) service
-    from IDSM (Integrated Database of Small Molecules) for chemical substructure
-    searching in Wikidata.
-
-    PERFORMANCE OPTIMIZATION:
-    Uses subquery to materialize SACHEM results first, then retrieves metadata.
-    This ensures the fast SACHEM search completes before slower metadata retrieval.
-
-    Args:
-        smiles: SMILES string representing the substructure to search for
-                (e.g., "c1ccccc1" for benzene)
-
-    Returns:
-        SPARQL query string for execution against Wikidata endpoint
-
-    Example:
-        >>> query = build_smiles_substructure_query("C1=CC=C(C=C1)O")
-        >>> # Finds all compounds containing a phenol group
-    """
+    """Build SPARQL query for chemical substructure search using SACHEM."""
     return f"""{SPARQL_PREFIXES}{SACHEM_PREFIXES}
     SELECT {COMPOUND_SELECT_VARS} WHERE {{
-      # Step 1: SACHEM substructure search (fast, returns focused set)
       {{
         SELECT ?compound ?compound_inchikey ?compound_smiles_conn WHERE {{
           SERVICE idsm:wikidata {{
@@ -329,15 +330,10 @@ def build_smiles_substructure_query(smiles: str) -> str:
               sachem:query ?SUBSTRUCTURE
             ].
           }}
-          ?compound wdt:P235 ?compound_inchikey;
-                    wdt:P233 ?compound_smiles_conn.
+          {COMPOUND_IDENTIFIERS}
         }}
       }}
-      
-      # Step 2: Get taxonomic and reference data (small dataset)
       {TAXONOMIC_REFERENCE_OPTIONAL}
-      
-      # Step 3: Get compound properties (small dataset)
       {COMPOUND_PROPERTIES_OPTIONAL}
     }}
     """
@@ -345,34 +341,7 @@ def build_smiles_substructure_query(smiles: str) -> str:
 
 @app.function
 def build_smiles_similarity_query(smiles: str, threshold: float = 0.8) -> str:
-    """
-    Build SPARQL query for chemical similarity search using SACHEM.
-
-    Uses the SACHEM service from IDSM to find compounds with similar chemical
-    structures based on Tanimoto coefficient similarity scores.
-
-    The similarity search uses molecular fingerprints to calculate structural
-    similarity. Higher thresholds return fewer, more similar compounds.
-
-    Args:
-        smiles: SMILES string of the query structure
-        threshold: Tanimoto similarity threshold (0.0-1.0)
-            - 1.0: Identical structures only
-            - 0.9: Very similar (close analogs)
-            - 0.8: Similar (default, good balance)
-            - 0.7: Moderately similar
-            - 0.6: Loosely similar
-
-    Returns:
-        SPARQL query string for execution against Wikidata endpoint
-
-    Example:
-        >>> query = build_smiles_similarity_query("CC(=O)Oc1ccccc1C(=O)O", 0.85)
-        >>> # Finds compounds at least 85% similar to aspirin
-
-    Note:
-        Threshold is formatted as xsd:double per SACHEM requirements.
-    """
+    """Build SPARQL query for chemical similarity search using SACHEM."""
     return f"""{SPARQL_PREFIXES}{SACHEM_PREFIXES}
     SELECT {COMPOUND_SELECT_VARS} WHERE {{
       {{
@@ -385,11 +354,10 @@ def build_smiles_similarity_query(smiles: str, threshold: float = 0.8) -> str:
             sachem:cutoff ?CUTOFF
             ].
           }}
-          ?compound wdt:P235 ?compound_inchikey;
-                    wdt:P233 ?compound_smiles_conn.
+          {COMPOUND_IDENTIFIERS}
         }}
-      }}      
-      {TAXONOMIC_REFERENCE_OPTIONAL}      
+      }}
+      {TAXONOMIC_REFERENCE_OPTIONAL}
       {COMPOUND_PROPERTIES_OPTIONAL}
     }}
     """
@@ -399,17 +367,7 @@ def build_smiles_similarity_query(smiles: str, threshold: float = 0.8) -> str:
 def build_smiles_taxon_query(
     smiles: str, qid: str, search_type: str = "substructure", threshold: float = 0.8
 ) -> str:
-    """Build SPARQL query to find compounds by SMILES within a specific taxon.
-
-    Uses the SACHEM service for proper chemical searching combined with
-    taxonomic hierarchy filtering.
-
-    Args:
-        smiles: SMILES string to search for
-        qid: Wikidata QID of the taxon
-        search_type: "substructure" or "similarity"
-        threshold: Similarity threshold (0.0-1.0) for similarity search
-    """
+    """Build SPARQL query to find compounds by SMILES within a specific taxon."""
     if search_type == "similarity":
         # Optimized similarity search: SACHEM first, then taxon filter
         return f"""{SPARQL_PREFIXES}{SACHEM_PREFIXES}
@@ -424,19 +382,12 @@ def build_smiles_taxon_query(
                 sachem:cutoff ?CUTOFF
                 ].
               }}
-              ?compound wdt:P235 ?compound_inchikey;
-                        wdt:P233 ?compound_smiles_conn.
+              {COMPOUND_IDENTIFIERS}
             }}
           }}
-          ?statement ps:P703 ?taxon;
-                     prov:wasDerivedFrom ?ref.
-          ?ref pr:P248 ?ref_qid.
-          ?compound p:P703 ?statement.
-          ?taxon (wdt:P171*) wd:{qid};
-                  wdt:P225 ?taxon_name.
-          OPTIONAL {{ ?ref_qid wdt:P1476 ?ref_title. }}
-          OPTIONAL {{ ?ref_qid wdt:P356 ?ref_doi. }}
-          OPTIONAL {{ ?ref_qid wdt:P577 ?ref_date. }}
+          {TAXON_REFERENCE_ASSOCIATION}
+          ?taxon (wdt:P171*) wd:{qid}
+          {REFERENCE_METADATA_OPTIONAL}
           {COMPOUND_PROPERTIES_OPTIONAL}
         }}
         """
@@ -452,19 +403,12 @@ def build_smiles_taxon_query(
                   sachem:query ?SUBSTRUCTURE
                 ].
               }}
-              ?compound wdt:P235 ?compound_inchikey;
-                        wdt:P233 ?compound_smiles_conn.
+              {COMPOUND_IDENTIFIERS}
             }}
           }}
-          ?statement ps:P703 ?taxon;
-                     prov:wasDerivedFrom ?ref.
-          ?ref pr:P248 ?ref_qid.
-          ?compound p:P703 ?statement.
-          ?taxon (wdt:P171*) wd:{qid};
-                  wdt:P225 ?taxon_name.
-          OPTIONAL {{ ?ref_qid wdt:P1476 ?ref_title. }}
-          OPTIONAL {{ ?ref_qid wdt:P356 ?ref_doi. }}
-          OPTIONAL {{ ?ref_qid wdt:P577 ?ref_date. }}
+          {TAXON_REFERENCE_ASSOCIATION}
+          ?taxon (wdt:P171*) wd:{qid}
+          {REFERENCE_METADATA_OPTIONAL}
           {COMPOUND_PROPERTIES_OPTIONAL}
         }}
         """
@@ -477,19 +421,12 @@ def build_compounds_query(qid: str) -> str:
     SELECT {COMPOUND_SELECT_VARS} WHERE {{
       {{
         SELECT ?compound ?compound_inchikey ?compound_smiles_conn ?taxon ?taxon_name ?ref_qid WHERE {{
-          ?compound wdt:P235 ?compound_inchikey;
-                    wdt:P233 ?compound_smiles_conn;
-                    p:P703 ?statement.
-          ?statement ps:P703 ?taxon;
-                     prov:wasDerivedFrom ?ref.
-          ?ref pr:P248 ?ref_qid.
-          ?taxon wdt:P225 ?taxon_name.
+          {COMPOUND_IDENTIFIERS}
+          {TAXON_REFERENCE_ASSOCIATION}
         }}
-      }}      
-      ?taxon (wdt:P171*) wd:{qid}.      
-      OPTIONAL {{ ?ref_qid wdt:P1476 ?ref_title. }}
-      OPTIONAL {{ ?ref_qid wdt:P356 ?ref_doi. }}
-      OPTIONAL {{ ?ref_qid wdt:P577 ?ref_date. }}      
+      }}
+      ?taxon (wdt:P171*) wd:{qid}.
+      {REFERENCE_METADATA_OPTIONAL}      
       {COMPOUND_PROPERTIES_OPTIONAL}
     }}
     """
@@ -497,25 +434,18 @@ def build_compounds_query(qid: str) -> str:
 
 @app.function
 def build_all_compounds_query() -> str:
-    """Build SPARQL query to retrieve all compounds from LOTUS database."""
+    """Build SPARQL query to retrieve all compounds."""
     return f"""{SPARQL_PREFIXES}
     SELECT ?compound ?compoundLabel ?compound_inchikey ?compound_smiles_iso 
                     ?compound_smiles_conn ?compound_mass ?compound_formula 
                     ?taxon_name ?taxon ?ref_title ?ref_doi ?ref_qid ?ref_date WHERE {{
       {{
         SELECT ?compound ?compound_inchikey ?compound_smiles_conn ?taxon_name ?taxon ?ref_qid WHERE {{
-          ?compound wdt:P235 ?compound_inchikey;
-            wdt:P233 ?compound_smiles_conn;
-            p:P703 ?statement.
-          ?statement ps:P703 ?taxon;
-            prov:wasDerivedFrom ?ref.
-          ?taxon wdt:P225 ?taxon_name.
-          ?ref pr:P248 ?ref_qid.
+          {COMPOUND_IDENTIFIERS}
+          {TAXON_REFERENCE_ASSOCIATION}
         }}
       }}
-      OPTIONAL {{ ?ref_qid wdt:P1476 ?ref_title. }}
-      OPTIONAL {{ ?ref_qid wdt:P356 ?ref_doi. }}
-      OPTIONAL {{ ?ref_qid wdt:P577 ?ref_date. }}
+      {REFERENCE_METADATA_OPTIONAL}
       {COMPOUND_PROPERTIES_OPTIONAL}
     }}
     """
