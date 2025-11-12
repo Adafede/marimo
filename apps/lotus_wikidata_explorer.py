@@ -1,6 +1,7 @@
 # /// script
 # requires-python = ">=3.13"
 # dependencies = [
+#     "httpx==0.28.1",
 #     "marimo",
 #     "polars==1.35.2",
 #     "pyarrow==22.0.0",
@@ -38,6 +39,7 @@ app = marimo.App(width="full", app_title="LOTUS Wikidata Explorer")
 with app.setup:
     import marimo as mo
     import polars as pl
+    import httpx  # Used by sparqlx, imported for exception handling
     import json
     import re
     import time
@@ -74,10 +76,10 @@ with app.setup:
         "sparql_endpoint": "https://qlever.dev/api/wikidata",
         # "sparql_endpoint": "https://query-legacy-full.wikidata.org/sparql",
         "idsm_endpoint": "https://idsm.elixir-czech.cz/sparql/endpoint/",
-        "user_agent": "LOTUS Explorer/1.0.0 (https://github.com/Adafede/marimo/blob/main/apps/lotus_wikidata_explorer.py)",
         # Network & Performance
         "max_retries": 3,
         "retry_backoff": 2,
+        "query_timeout": 300,  # Query timeout in seconds (5 minutes)
         "table_row_limit": 10000,  # Max rows to display (prevents browser slowdown)
         "lazy_generation_threshold": 5000,  # Defer download generation for large datasets
         "download_embed_threshold_bytes": 8_000_000,  # Compress downloads > 8MB
@@ -225,7 +227,10 @@ with app.setup:
     # ====================================================================
 
     # Global SPARQL wrapper for connection reuse (significant performance improvement)
-    SPARQL_WRAPPER = SPARQLWrapper(sparql_endpoint=CONFIG["sparql_endpoint"])
+    SPARQL_WRAPPER = SPARQLWrapper(
+        sparql_endpoint=CONFIG["sparql_endpoint"],
+        client_config={"timeout": CONFIG["query_timeout"]},
+    )
 
     # ====================================================================
     # DATA CLASSES
@@ -435,11 +440,7 @@ def build_all_compounds_query() -> str:
 def execute_sparql(
     query: str, max_retries: int = CONFIG["max_retries"]
 ) -> Dict[str, Any]:
-    """Execute SPARQL query using sparqlx with retry logic.
-
-    Uses sparqlx which implements URL-encoded POST according to SPARQL 1.2 Protocol.
-    Automatically handles response formats and provides connection pooling via httpx.
-    """
+    """Execute SPARQL query using sparqlx with retry logic."""
     for attempt in range(max_retries):
         try:
             # sparqlx handles the POST request with proper headers automatically
@@ -449,30 +450,42 @@ def execute_sparql(
             # sparqlx returns httpx.Response, get JSON data
             return response.json()
 
+        except httpx.TimeoutException as e:
+            # Handle timeout exceptions specifically
+            if attempt == max_retries - 1:
+                raise Exception(
+                    f"❌ Query timed out after {max_retries} attempts "
+                    f"({CONFIG['query_timeout']}s timeout).\n"
+                    f"💡 Try: Add filters to reduce result size or simplify the query."
+                )
+            time.sleep(CONFIG["retry_backoff"] * (2**attempt))
+
+        except httpx.HTTPStatusError as e:
+            # Handle HTTP status errors (4xx, 5xx)
+            status_code = e.response.status_code
+            if attempt == max_retries - 1:
+                error_detail = f" - {e.response.text[:200]}" if e.response.text else ""
+                raise Exception(
+                    f"🌐 HTTP {status_code} error after {max_retries} attempts{error_detail}\n"
+                    f"💡 Try: Check your internet connection or try again later."
+                )
+            # Retry on server errors (5xx), but not client errors (4xx)
+            if 500 <= status_code < 600:
+                time.sleep(CONFIG["retry_backoff"] * (2**attempt))
+            else:
+                raise  # Don't retry client errors
+
+        except (httpx.NetworkError, httpx.ConnectError) as e:
+            # Handle network/connection errors
+            if attempt == max_retries - 1:
+                raise Exception(
+                    f"🌐 Network error after {max_retries} attempts: {str(e)}\n"
+                    f"💡 Try: Check your internet connection."
+                )
+            time.sleep(CONFIG["retry_backoff"] * (2**attempt))
+
         except Exception as e:
-            error_msg = str(e)
-
-            # Check for timeout-like errors
-            if "timeout" in error_msg.lower() or "timed out" in error_msg.lower():
-                if attempt == max_retries - 1:
-                    raise Exception(
-                        f"❌ Query timed out after {max_retries} attempts.\n"
-                        f"💡 Try: Add filters to reduce result size or simplify the query."
-                    )
-                time.sleep(CONFIG["retry_backoff"] * (2**attempt))
-                continue
-
-            # Check for HTTP errors
-            if "status" in error_msg.lower() or "http" in error_msg.lower():
-                if attempt == max_retries - 1:
-                    raise Exception(
-                        f"🌐 HTTP error after {max_retries} attempts: {error_msg}\n"
-                        f"💡 Try: Check your internet connection or try again later."
-                    )
-                time.sleep(CONFIG["retry_backoff"] * (2**attempt))
-                continue
-
-            # Other errors
+            # Handle any other errors
             if attempt == max_retries - 1:
                 query_snippet = query[:200] + "..." if len(query) > 200 else query
                 raise Exception(
