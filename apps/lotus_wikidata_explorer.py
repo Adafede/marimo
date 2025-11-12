@@ -290,6 +290,26 @@ with app.setup:
 
 
 @app.function
+def escape_smiles_for_sparql(smiles: str) -> str:
+    """
+    Escape SMILES string for safe use in SPARQL queries.
+
+    SMILES strings can contain backslashes (e.g., /C=C\3/) which are escape
+    characters in SPARQL string literals and must be escaped.
+
+    Args:
+        smiles: Raw SMILES string
+
+    Returns:
+        Escaped SMILES string safe for use in SPARQL queries
+    """
+    if not smiles:
+        return smiles
+    # Escape backslashes by doubling them
+    return smiles.replace("\\", "\\\\")
+
+
+@app.function
 def build_taxon_search_query(taxon_name: str) -> str:
     """Build SPARQL query to find taxa by scientific name. Returns up to 10 results."""
     return f"""
@@ -304,12 +324,13 @@ def build_taxon_search_query(taxon_name: str) -> str:
 @app.function
 def build_smiles_substructure_query(smiles: str) -> str:
     """Build SPARQL query for chemical substructure search using SACHEM."""
+    escaped_smiles = escape_smiles_for_sparql(smiles)
     return f"""{SPARQL_PREFIXES}{SACHEM_PREFIXES}
     SELECT {COMPOUND_SELECT_VARS} WHERE {{
       {{
         SELECT ?compound ?compound_inchikey ?compound_smiles_conn WHERE {{
           SERVICE idsm:wikidata {{
-            VALUES ?SUBSTRUCTURE {{ "{smiles}" }}
+            VALUES ?SUBSTRUCTURE {{ "{escaped_smiles}" }}
             ?compound sachem:substructureSearch [
               sachem:query ?SUBSTRUCTURE
             ].
@@ -326,12 +347,13 @@ def build_smiles_substructure_query(smiles: str) -> str:
 @app.function
 def build_smiles_similarity_query(smiles: str, threshold: float = 0.8) -> str:
     """Build SPARQL query for chemical similarity search using SACHEM."""
+    escaped_smiles = escape_smiles_for_sparql(smiles)
     return f"""{SPARQL_PREFIXES}{SACHEM_PREFIXES}
     SELECT {COMPOUND_SELECT_VARS} WHERE {{
       {{
         SELECT ?compound ?compound_inchikey ?compound_smiles_conn WHERE {{
           SERVICE idsm:wikidata {{
-            VALUES ?QUERY_SMILES {{ "{smiles}" }}
+            VALUES ?QUERY_SMILES {{ "{escaped_smiles}" }}
             VALUES ?CUTOFF {{ "{threshold}"^^xsd:double }}
             ?compound sachem:similarCompoundSearch[
             sachem:query ?QUERY_SMILES;
@@ -352,6 +374,7 @@ def build_smiles_taxon_query(
     smiles: str, qid: str, search_type: str = "substructure", threshold: float = 0.8
 ) -> str:
     """Build SPARQL query to find compounds by SMILES within a specific taxon."""
+    escaped_smiles = escape_smiles_for_sparql(smiles)
     if search_type == "similarity":
         # Optimized similarity search: SACHEM first, then taxon filter
         return f"""{SPARQL_PREFIXES}{SACHEM_PREFIXES}
@@ -359,7 +382,7 @@ def build_smiles_taxon_query(
           {{
             SELECT ?compound ?compound_inchikey ?compound_smiles_conn WHERE {{
               SERVICE idsm:wikidata {{
-                VALUES ?QUERY_SMILES {{ "{smiles}" }}
+                VALUES ?QUERY_SMILES {{ "{escaped_smiles}" }}
                 VALUES ?CUTOFF {{ "{threshold}"^^xsd:double }}
                 ?compound sachem:similarCompoundSearch[
                 sachem:query ?QUERY_SMILES;
@@ -382,7 +405,7 @@ def build_smiles_taxon_query(
           {{
             SELECT ?compound ?compound_inchikey ?compound_smiles_conn WHERE {{
               SERVICE idsm:wikidata {{
-                VALUES ?SUBSTRUCTURE {{ "{smiles}" }}
+                VALUES ?SUBSTRUCTURE {{ "{escaped_smiles}" }}
                 ?compound sachem:substructureSearch [
                   sachem:query ?SUBSTRUCTURE
                 ].
