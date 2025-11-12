@@ -1668,10 +1668,18 @@ def export_to_rdf_turtle(df: pl.DataFrame, taxon_input: str, qid: str) -> str:
     g.bind("dcterms", DCTERMS)
     g.bind("bibo", BIBO)
 
-    # Dataset URI
-    dataset_uri = URIRef(
-        f"https://lotus.naturalproducts.net/dataset/{url_quote(taxon_input)}"
-    )
+    # Dataset URI - this is a user-generated export, use a blank node
+    # The dataset represents THIS specific query/export
+    from rdflib import BNode
+    import hashlib
+
+    # Create a deterministic URI based on the export parameters for reproducibility
+    # This allows the same query to generate the same dataset URI
+    export_id = hashlib.sha256(
+        f"{qid}:{taxon_input}:{datetime.now().strftime('%Y-%m-%d')}".encode()
+    ).hexdigest()[:16]
+
+    dataset_uri = URIRef(f"urn:uuid:lotus-export-{export_id}")
 
     # Dataset metadata
     g.add((dataset_uri, RDF.type, SCHEMA.Dataset))
