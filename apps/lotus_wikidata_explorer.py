@@ -114,6 +114,62 @@ with app.setup:
 
     # Wikidata URLs (constants)
     WIKIDATA_ENTITY_PREFIX = "http://www.wikidata.org/entity/"
+
+    # ====================================================================
+    # SPARQL QUERY FRAGMENTS
+    # ====================================================================
+
+    # Common SPARQL prefixes
+    SPARQL_PREFIXES = """
+    PREFIX p: <http://www.wikidata.org/prop/>
+    PREFIX pr: <http://www.wikidata.org/prop/reference/>
+    PREFIX prov: <http://www.w3.org/ns/prov#>
+    PREFIX ps: <http://www.wikidata.org/prop/statement/>
+    PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+    PREFIX wd: <http://www.wikidata.org/entity/>
+    PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+    PREFIX wikibase: <http://wikiba.se/ontology#>
+    """
+
+    SACHEM_PREFIXES = """
+    PREFIX sachem: <http://bioinfo.uochb.cas.cz/rdf/v1.0/sachem#>
+    PREFIX idsm: <https://idsm.elixir-czech.cz/sparql/endpoint/>
+    PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+    """
+
+    # Common SELECT clause for compound queries
+    COMPOUND_SELECT_VARS = """?compound ?compound_inchikey ?compound_smiles_conn ?taxon_name ?taxon ?ref_qid 
+           ?compound_smiles_iso ?compound_mass ?compound_formula ?compoundLabel 
+           ?ref_title ?ref_doi ?ref_date"""
+
+    # Common compound property optionals
+    COMPOUND_PROPERTIES_OPTIONAL = """
+      OPTIONAL { ?compound wdt:P2017 ?compound_smiles_iso. }
+      OPTIONAL { ?compound wdt:P2067 ?compound_mass. }
+      OPTIONAL { ?compound wdt:P274 ?compound_formula. }
+      OPTIONAL {
+        ?compound rdfs:label ?compoundLabel.
+        FILTER(LANG(?compoundLabel) = "en")
+      }
+      OPTIONAL {
+        ?compound rdfs:label ?compoundLabel.
+        FILTER(LANG(?compoundLabel) = "mul")
+      }
+    """
+
+    # Common taxonomic and reference optionals
+    TAXONOMIC_REFERENCE_OPTIONAL = """
+      OPTIONAL {
+        ?statement ps:P703 ?taxon;
+                   prov:wasDerivedFrom ?ref.
+        ?ref pr:P248 ?ref_qid.
+        ?compound p:P703 ?statement.
+        ?taxon wdt:P225 ?taxon_name.
+        OPTIONAL { ?ref_qid wdt:P1476 ?ref_title. }
+        OPTIONAL { ?ref_qid wdt:P356 ?ref_doi. }
+        OPTIONAL { ?ref_qid wdt:P577 ?ref_date. }
+      }
+    """
     WIKIDATA_WIKI_PREFIX = "https://www.wikidata.org/wiki/"
 
     # Subscript translation map (constant for performance)
@@ -253,24 +309,11 @@ def build_smiles_substructure_query(smiles: str) -> str:
         >>> query = build_smiles_substructure_query("C1=CC=C(C=C1)O")
         >>> # Finds all compounds containing a phenol group
     """
-    return f"""
-    PREFIX p: <http://www.wikidata.org/prop/>
-    PREFIX pr: <http://www.wikidata.org/prop/reference/>
-    PREFIX prov: <http://www.w3.org/ns/prov#>
-    PREFIX ps: <http://www.wikidata.org/prop/statement/>
-    PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-    PREFIX wdt: <http://www.wikidata.org/prop/direct/>
-    PREFIX sachem: <http://bioinfo.uochb.cas.cz/rdf/v1.0/sachem#>
-    PREFIX idsm: <https://idsm.elixir-czech.cz/sparql/endpoint/>
-
-    SELECT ?compound ?compound_inchikey ?compound_smiles_conn ?taxon_name ?taxon ?ref_qid 
-           ?compound_smiles_iso ?compound_mass ?compound_formula ?compoundLabel 
-           ?ref_title ?ref_doi ?ref_date WHERE {{
+    return f"""{SPARQL_PREFIXES}{SACHEM_PREFIXES}
+    SELECT {COMPOUND_SELECT_VARS} WHERE {{
       {{
         SERVICE idsm:wikidata {{
-          VALUES ?SUBSTRUCTURE {{
-            "{smiles}"
-          }}
+          VALUES ?SUBSTRUCTURE {{ "{smiles}" }}
           ?compound sachem:substructureSearch [
             sachem:query ?SUBSTRUCTURE
           ].
@@ -278,27 +321,8 @@ def build_smiles_substructure_query(smiles: str) -> str:
       }}
       ?compound wdt:P235 ?compound_inchikey;
                 wdt:P233 ?compound_smiles_conn.
-      OPTIONAL {{
-        ?statement ps:P703 ?taxon;
-                   prov:wasDerivedFrom ?ref.
-        ?ref pr:P248 ?ref_qid.
-        ?compound p:P703 ?statement.
-        ?taxon wdt:P225 ?taxon_name.
-        OPTIONAL {{ ?ref_qid wdt:P1476 ?ref_title. }}
-        OPTIONAL {{ ?ref_qid wdt:P356 ?ref_doi. }}
-        OPTIONAL {{ ?ref_qid wdt:P577 ?ref_date. }}
-      }}
-      OPTIONAL {{ ?compound wdt:P2017 ?compound_smiles_iso. }}
-      OPTIONAL {{ ?compound wdt:P2067 ?compound_mass. }}
-      OPTIONAL {{ ?compound wdt:P274 ?compound_formula. }}
-      OPTIONAL {{
-        ?compound rdfs:label ?compoundLabel.
-        FILTER(LANG(?compoundLabel) = "en")
-      }}
-      OPTIONAL {{
-        ?compound rdfs:label ?compoundLabel.
-        FILTER(LANG(?compoundLabel) = "mul")
-      }}
+      {TAXONOMIC_REFERENCE_OPTIONAL}
+      {COMPOUND_PROPERTIES_OPTIONAL}
     }}
     """
 
@@ -333,30 +357,12 @@ def build_smiles_similarity_query(smiles: str, threshold: float = 0.8) -> str:
     Note:
         Threshold is formatted as xsd:double per SACHEM requirements.
     """
-    return f"""
-    PREFIX p: <http://www.wikidata.org/prop/>
-    PREFIX pr: <http://www.wikidata.org/prop/reference/>
-    PREFIX prov: <http://www.w3.org/ns/prov#>
-    PREFIX ps: <http://www.wikidata.org/prop/statement/>
-    PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-    PREFIX wdt: <http://www.wikidata.org/prop/direct/>
-    PREFIX wikibase: <http://wikiba.se/ontology#>
-    PREFIX sachem: <http://bioinfo.uochb.cas.cz/rdf/v1.0/sachem#>
-    PREFIX idsm: <https://idsm.elixir-czech.cz/sparql/endpoint/>
-    PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
-
-    SELECT ?compound ?compound_inchikey ?compound_smiles_conn ?taxon_name ?taxon ?ref_qid 
-           ?compound_smiles_iso ?compound_mass ?compound_formula ?compoundLabel 
-           ?ref_title ?ref_doi ?ref_date WHERE {{
-      # Similarity search using SACHEM service with Tanimoto threshold
+    return f"""{SPARQL_PREFIXES}{SACHEM_PREFIXES}
+    SELECT {COMPOUND_SELECT_VARS} WHERE {{
       {{
         SERVICE idsm:wikidata {{
-          VALUES ?QUERY_SMILES {{
-            "{smiles}"
-          }}
-          VALUES ?CUTOFF {{
-            "{threshold}"^^xsd:double
-          }}
+          VALUES ?QUERY_SMILES {{ "{smiles}" }}
+          VALUES ?CUTOFF {{ "{threshold}"^^xsd:double }}
           ?compound sachem:similarCompoundSearch[
           sachem:query ?QUERY_SMILES;
           sachem:cutoff ?CUTOFF
@@ -365,28 +371,8 @@ def build_smiles_similarity_query(smiles: str, threshold: float = 0.8) -> str:
       }}
       ?compound wdt:P235 ?compound_inchikey;
                 wdt:P233 ?compound_smiles_conn.
-      OPTIONAL {{
-        ?statement ps:P703 ?taxon;
-                   prov:wasDerivedFrom ?ref.
-        ?ref pr:P248 ?ref_qid.
-        ?compound p:P703 ?statement.
-        ?taxon wdt:P225 ?taxon_name.
-        OPTIONAL {{ ?ref_qid wdt:P1476 ?ref_title. }}
-        OPTIONAL {{ ?ref_qid wdt:P356 ?ref_doi. }}
-        OPTIONAL {{ ?ref_qid wdt:P577 ?ref_date. }}
-      }}
-      OPTIONAL {{ ?compound wdt:P2017 ?compound_smiles_iso. }}
-      OPTIONAL {{ ?compound wdt:P2067 ?compound_mass. }}
-      OPTIONAL {{ ?compound wdt:P274 ?compound_formula. }}
-
-      OPTIONAL {{
-        ?compound rdfs:label ?compoundLabel.
-        FILTER(LANG(?compoundLabel) = "en")
-      }}
-      OPTIONAL {{
-        ?compound rdfs:label ?compoundLabel.
-        FILTER(LANG(?compoundLabel) = "mul")
-      }}
+      {TAXONOMIC_REFERENCE_OPTIONAL}
+      {COMPOUND_PROPERTIES_OPTIONAL}
     }}
     """
 
@@ -408,30 +394,12 @@ def build_smiles_taxon_query(
     """
     if search_type == "similarity":
         # For similarity search within taxon
-        return f"""
-        PREFIX p: <http://www.wikidata.org/prop/>
-        PREFIX pr: <http://www.wikidata.org/prop/reference/>
-        PREFIX prov: <http://www.w3.org/ns/prov#>
-        PREFIX ps: <http://www.wikidata.org/prop/statement/>
-        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-        PREFIX wd: <http://www.wikidata.org/entity/>
-        PREFIX wdt: <http://www.wikidata.org/prop/direct/>
-        PREFIX wikibase: <http://wikiba.se/ontology#>
-        PREFIX sachem: <http://bioinfo.uochb.cas.cz/rdf/v1.0/sachem#>
-        PREFIX idsm: <https://idsm.elixir-czech.cz/sparql/endpoint/>
-        PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
-
-        SELECT ?compound ?compound_inchikey ?compound_smiles_conn ?taxon_name ?taxon ?ref_qid 
-               ?compound_smiles_iso ?compound_mass ?compound_formula ?compoundLabel 
-               ?ref_title ?ref_doi ?ref_date WHERE {{
+        return f"""{SPARQL_PREFIXES}{SACHEM_PREFIXES}
+        SELECT {COMPOUND_SELECT_VARS} WHERE {{
           {{
             SERVICE idsm:wikidata {{
-              VALUES ?QUERY_SMILES {{
-                "{smiles}"
-              }}
-              VALUES ?CUTOFF {{
-                "{threshold}"^^xsd:double
-              }}
+              VALUES ?QUERY_SMILES {{ "{smiles}" }}
+              VALUES ?CUTOFF {{ "{threshold}"^^xsd:double }}
               ?compound sachem:similarCompoundSearch[
               sachem:query ?QUERY_SMILES;
               sachem:cutoff ?CUTOFF
@@ -449,49 +417,23 @@ def build_smiles_taxon_query(
           OPTIONAL {{ ?ref_qid wdt:P1476 ?ref_title. }}
           OPTIONAL {{ ?ref_qid wdt:P356 ?ref_doi. }}
           OPTIONAL {{ ?ref_qid wdt:P577 ?ref_date. }}
-          OPTIONAL {{ ?compound wdt:P2017 ?compound_smiles_iso. }}
-          OPTIONAL {{ ?compound wdt:P2067 ?compound_mass. }}
-          OPTIONAL {{ ?compound wdt:P274 ?compound_formula. }}
-          OPTIONAL {{
-            ?compound rdfs:label ?compoundLabel.
-            FILTER(LANG(?compoundLabel) = "en")
-          }}
-          OPTIONAL {{
-            ?compound rdfs:label ?compoundLabel.
-            FILTER(LANG(?compoundLabel) = "mul")
-          }}
+          {COMPOUND_PROPERTIES_OPTIONAL}
         }}
         """
     else:
         # For substructure search within taxon
-        return f"""
-        PREFIX p: <http://www.wikidata.org/prop/>
-        PREFIX pr: <http://www.wikidata.org/prop/reference/>
-        PREFIX prov: <http://www.w3.org/ns/prov#>
-        PREFIX ps: <http://www.wikidata.org/prop/statement/>
-        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-        PREFIX wd: <http://www.wikidata.org/entity/>
-        PREFIX wdt: <http://www.wikidata.org/prop/direct/>
-        PREFIX wikibase: <http://wikiba.se/ontology#>
-        PREFIX sachem: <http://bioinfo.uochb.cas.cz/rdf/v1.0/sachem#>
-        PREFIX idsm: <https://idsm.elixir-czech.cz/sparql/endpoint/>
-
-        SELECT ?compound ?compound_inchikey ?compound_smiles_conn ?taxon_name ?taxon ?ref_qid 
-               ?compound_smiles_iso ?compound_mass ?compound_formula ?compoundLabel 
-               ?ref_title ?ref_doi ?ref_date WHERE {{
-          # Substructure search using SACHEM service
+        return f"""{SPARQL_PREFIXES}{SACHEM_PREFIXES}
+        SELECT {COMPOUND_SELECT_VARS} WHERE {{
           {{
             SERVICE idsm:wikidata {{
-              VALUES ?SUBSTRUCTURE {{
-                "{smiles}"
-              }}
+              VALUES ?SUBSTRUCTURE {{ "{smiles}" }}
               ?compound sachem:substructureSearch [
                 sachem:query ?SUBSTRUCTURE
               ].
-            }} 
-          }}         
+            }}
+          }}
           ?taxon (wdt:P171*) wd:{qid};
-                  wdt:P225 ?taxon_name.       
+                  wdt:P225 ?taxon_name.
           ?statement ps:P703 ?taxon;
                      prov:wasDerivedFrom ?ref.
           ?ref pr:P248 ?ref_qid.
@@ -501,35 +443,16 @@ def build_smiles_taxon_query(
           OPTIONAL {{ ?ref_qid wdt:P1476 ?ref_title. }}
           OPTIONAL {{ ?ref_qid wdt:P356 ?ref_doi. }}
           OPTIONAL {{ ?ref_qid wdt:P577 ?ref_date. }}
-          OPTIONAL {{ ?compound wdt:P2017 ?compound_smiles_iso. }}
-          OPTIONAL {{ ?compound wdt:P2067 ?compound_mass. }}
-          OPTIONAL {{ ?compound wdt:P274 ?compound_formula. }}
-          OPTIONAL {{
-            ?compound rdfs:label ?compoundLabel.
-            FILTER(LANG(?compoundLabel) = "en")
-          }}
-          OPTIONAL {{
-            ?compound rdfs:label ?compoundLabel.
-            FILTER(LANG(?compoundLabel) = "mul")
-          }}
+          {COMPOUND_PROPERTIES_OPTIONAL}
         }}
         """
 
 
 @app.function
 def build_compounds_query(qid: str) -> str:
-    return f"""
-    PREFIX p: <http://www.wikidata.org/prop/>
-    PREFIX pr: <http://www.wikidata.org/prop/reference/>
-    PREFIX prov: <http://www.w3.org/ns/prov#>
-    PREFIX ps: <http://www.wikidata.org/prop/statement/>
-    PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-    PREFIX wd: <http://www.wikidata.org/entity/>
-    PREFIX wdt: <http://www.wikidata.org/prop/direct/>
-
-    SELECT ?compound ?compound_inchikey ?compound_smiles_conn ?taxon_name ?taxon ?ref_qid 
-           ?compound_smiles_iso ?compound_mass ?compound_formula ?compoundLabel 
-           ?ref_title ?ref_doi ?ref_date WHERE {{
+    """Build SPARQL query to find compounds in a specific taxon and its descendants."""
+    return f"""{SPARQL_PREFIXES}
+    SELECT {COMPOUND_SELECT_VARS} WHERE {{
       {{
         SELECT ?taxon ?taxon_name WHERE {{
           ?taxon (wdt:P171*) wd:{qid};
@@ -545,38 +468,20 @@ def build_compounds_query(qid: str) -> str:
       ?compound wdt:P235 ?compound_inchikey;
                 wdt:P233 ?compound_smiles_conn;
                 p:P703 ?statement.
-
-      OPTIONAL {{ ?compound wdt:P2017 ?compound_smiles_iso. }}
-      OPTIONAL {{ ?compound wdt:P2067 ?compound_mass. }}
-      OPTIONAL {{ ?compound wdt:P274 ?compound_formula. }}
-
-      OPTIONAL {{
-        ?compound rdfs:label ?compoundLabel.
-        FILTER(LANG(?compoundLabel) = "en")
-      }}
-      OPTIONAL {{
-        ?compound rdfs:label ?compoundLabel.
-        FILTER(LANG(?compoundLabel) = "mul")
-      }}
+      {COMPOUND_PROPERTIES_OPTIONAL}
     }}
     """
 
 
 @app.function
 def build_all_compounds_query() -> str:
-    return """
-    PREFIX p: <http://www.wikidata.org/prop/>
-    PREFIX pr: <http://www.wikidata.org/prop/reference/>
-    PREFIX prov: <http://www.w3.org/ns/prov#>
-    PREFIX ps: <http://www.wikidata.org/prop/statement/>
-    PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-    PREFIX wdt: <http://www.wikidata.org/prop/direct/>
-
+    """Build SPARQL query to retrieve all compounds from LOTUS database."""
+    return f"""{SPARQL_PREFIXES}
     SELECT ?compound ?compoundLabel ?compound_inchikey ?compound_smiles_iso 
                     ?compound_smiles_conn ?compound_mass ?compound_formula 
-                    ?taxon_name ?taxon ?ref_title ?ref_doi ?ref_qid ?ref_date WHERE {
-      {
-        SELECT ?compound ?compound_inchikey ?compound_smiles_conn ?taxon_name ?taxon ?ref_qid WHERE {
+                    ?taxon_name ?taxon ?ref_title ?ref_doi ?ref_qid ?ref_date WHERE {{
+      {{
+        SELECT ?compound ?compound_inchikey ?compound_smiles_conn ?taxon_name ?taxon ?ref_qid WHERE {{
           ?compound wdt:P235 ?compound_inchikey;
             wdt:P233 ?compound_smiles_conn;
             p:P703 ?statement.
@@ -584,23 +489,13 @@ def build_all_compounds_query() -> str:
             prov:wasDerivedFrom ?ref.
           ?taxon wdt:P225 ?taxon_name.
           ?ref pr:P248 ?ref_qid.
-        }
-      }
-      OPTIONAL { ?ref_qid wdt:P1476 ?ref_title. }
-      OPTIONAL { ?ref_qid wdt:P356 ?ref_doi. }
-      OPTIONAL { ?ref_qid wdt:P577 ?ref_date. }
-      OPTIONAL { ?compound wdt:P2017 ?compound_smiles_iso. }
-      OPTIONAL { ?compound wdt:P2067 ?compound_mass. }
-      OPTIONAL { ?compound wdt:P274 ?compound_formula. }
-      OPTIONAL {
-        ?compound rdfs:label ?compoundLabel .
-        FILTER(LANG(?compoundLabel) = "en")
-      }
-      OPTIONAL {
-        ?compound rdfs:label ?compoundLabel .
-        FILTER(LANG(?compoundLabel) = "mul")
-      }
-    }
+        }}
+      }}
+      OPTIONAL {{ ?ref_qid wdt:P1476 ?ref_title. }}
+      OPTIONAL {{ ?ref_qid wdt:P356 ?ref_doi. }}
+      OPTIONAL {{ ?ref_qid wdt:P577 ?ref_date. }}
+      {COMPOUND_PROPERTIES_OPTIONAL}
+    }}
     """
 
 
