@@ -11,3 +11,5 @@ dependencies = [
     "rdflib==7.4.0",
     "sparqlx==0.3.0",
 ]
+[tool.setuptools]
+packages = ["apps"]
