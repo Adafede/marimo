@@ -5,8 +5,7 @@
 #     "polars==1.35.2",
 #     "pyarrow==22.0.0",
 #     "rdflib==7.4.0",
-#     "requests==2.31.0",
-#     "urllib3==2.5.0",
+#     "sparqlx==0.3.0",
 # ]
 # [tool.marimo.display]
 # theme = "system"
@@ -41,7 +40,6 @@ with app.setup:
     import polars as pl
     import json
     import re
-    import requests
     import time
     import gzip
     from dataclasses import dataclass, field
@@ -49,10 +47,9 @@ with app.setup:
     from functools import lru_cache
     from rdflib import Graph, Namespace, Literal, URIRef
     from rdflib.namespace import RDF, RDFS, XSD, DCTERMS
-    from requests.adapters import HTTPAdapter
+    from sparqlx import SPARQLWrapper
     from typing import Optional, Dict, Any, Tuple, List
     from urllib.parse import quote as url_quote
-    from urllib3.util.retry import Retry
 
     # ====================================================================
     # CONFIGURATION
@@ -224,39 +221,11 @@ with app.setup:
     }
 
     # ====================================================================
-    # HTTP SESSION
+    # SPARQL WRAPPER
     # ====================================================================
 
-    def create_http_session() -> requests.Session:
-        """
-        Create HTTP session with connection pooling and retry logic.
-
-        Benefits:
-        - Reuses TCP connections (faster subsequent requests)
-        - Automatic retries on transient failures
-        - Connection pooling reduces overhead
-        """
-        session = requests.Session()
-
-        # Configure retry strategy
-        retry_strategy = Retry(
-            total=CONFIG["max_retries"],
-            backoff_factor=CONFIG["retry_backoff"],
-            status_forcelist=[429, 500, 502, 503, 504],
-            allowed_methods=["GET", "POST"],
-        )
-
-        # Mount adapter with retry strategy
-        adapter = HTTPAdapter(
-            max_retries=retry_strategy, pool_connections=10, pool_maxsize=20
-        )
-        session.mount("http://", adapter)
-        session.mount("https://", adapter)
-
-        return session
-
-    # Global session for connection reuse (significant performance improvement)
-    HTTP_SESSION = create_http_session()
+    # Global SPARQL wrapper for connection reuse (significant performance improvement)
+    SPARQL_WRAPPER = SPARQLWrapper(sparql_endpoint=CONFIG["sparql_endpoint"])
 
     # ====================================================================
     # DATA CLASSES
@@ -466,87 +435,44 @@ def build_all_compounds_query() -> str:
 def execute_sparql(
     query: str, max_retries: int = CONFIG["max_retries"]
 ) -> Dict[str, Any]:
-    """Execute SPARQL query with connection pooling and retry logic."""
-    headers = {
-        "Accept": "application/sparql-results+json",
-        "Content-Type": "application/sparql-query",
-        "User-Agent": CONFIG["user_agent"],
-    }
+    """Execute SPARQL query using sparqlx with retry logic.
 
-    url = CONFIG["sparql_endpoint"]
-    timeout = 300
-
-    def try_post():
-        """POST request with query in body (QLever, modern endpoints)."""
-        return HTTP_SESSION.post(url=url, data=query, headers=headers, timeout=timeout)
-
-    def try_get():
-        """GET request with query params (legacy endpoints)."""
-        params = {"query": query, "format": "json"}
-        return HTTP_SESSION.get(
-            url=url, headers=headers, params=params, timeout=timeout
-        )
-
+    Uses sparqlx which implements URL-encoded POST according to SPARQL 1.2 Protocol.
+    Automatically handles response formats and provides connection pooling via httpx.
+    """
     for attempt in range(max_retries):
         try:
-            # Try POST first
-            response = try_post()
-            # If server refuses POST, try GET immediately
-            if response.status_code in (405, 415):
-                response = try_get()
+            # sparqlx handles the POST request with proper headers automatically
+            # response_format="json" for SELECT/ASK queries (default for SELECT)
+            response = SPARQL_WRAPPER.query(query, response_format="json")
 
-            response.raise_for_status()
-
-            # Try to parse JSON; if it fails, attempt GET (some endpoints return JSON only for GET)
-            try:
-                return response.json()
-            except ValueError:
-                # Fallback to GET if we haven't already tried it
-                if response.request.method != "GET":
-                    response = try_get()
-                    response.raise_for_status()
-                    try:
-                        return response.json()
-                    except ValueError as je:
-                        raise Exception(
-                            f"Failed to decode JSON response after GET: {je}\n"
-                            f"Server returned: {response.text[:1000]}"
-                        )
-                else:
-                    raise Exception(
-                        f"Failed to decode JSON response: server returned non-JSON content.\n"
-                        f"Response snippet: {response.text[:1000]}"
-                    )
-
-        except requests.exceptions.Timeout:
-            if attempt == max_retries - 1:
-                raise Exception(
-                    f"❌ Query timed out after {max_retries} attempts.\n"
-                    f"💡 Try: Add filters to reduce result size or simplify the query."
-                )
-            time.sleep(CONFIG["retry_backoff"] * (2**attempt))
-
-        except requests.exceptions.HTTPError as e:
-            if attempt == max_retries - 1:
-                status_code = (
-                    e.response.status_code
-                    if hasattr(e, "response") and e.response is not None
-                    else "Unknown"
-                )
-                error_detail = ""
-                if (
-                    hasattr(e, "response")
-                    and e.response is not None
-                    and e.response.text
-                ):
-                    error_detail = f"\nServer response: {e.response.text[:500]}"
-                raise Exception(
-                    f"🌐 HTTP error {status_code} after {max_retries} attempts.{error_detail}\n"
-                    f"💡 Try: Check your internet connection or try again later."
-                )
-            time.sleep(CONFIG["retry_backoff"] * (2**attempt))
+            # sparqlx returns httpx.Response, get JSON data
+            return response.json()
 
         except Exception as e:
+            error_msg = str(e)
+
+            # Check for timeout-like errors
+            if "timeout" in error_msg.lower() or "timed out" in error_msg.lower():
+                if attempt == max_retries - 1:
+                    raise Exception(
+                        f"❌ Query timed out after {max_retries} attempts.\n"
+                        f"💡 Try: Add filters to reduce result size or simplify the query."
+                    )
+                time.sleep(CONFIG["retry_backoff"] * (2**attempt))
+                continue
+
+            # Check for HTTP errors
+            if "status" in error_msg.lower() or "http" in error_msg.lower():
+                if attempt == max_retries - 1:
+                    raise Exception(
+                        f"🌐 HTTP error after {max_retries} attempts: {error_msg}\n"
+                        f"💡 Try: Check your internet connection or try again later."
+                    )
+                time.sleep(CONFIG["retry_backoff"] * (2**attempt))
+                continue
+
+            # Other errors
             if attempt == max_retries - 1:
                 query_snippet = query[:200] + "..." if len(query) > 200 else query
                 raise Exception(
