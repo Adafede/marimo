@@ -80,6 +80,10 @@ with app.setup:
         pass
 
     CONFIG = {
+        # Application Metadata
+        "app_version": "0.0.1",
+        "app_name": "LOTUS Wikidata Explorer",
+        "app_url": "https://github.com/Adafede/marimo/blob/main/apps/lotus_wikidata_explorer.py",
         # External Services
         "cdk_base": "https://www.simolecule.com/cdkdepict/depict/cot/svg",
         "sparql_endpoint": "https://qlever.cs.uni-freiburg.de/api/wikidata",
@@ -101,6 +105,7 @@ with app.setup:
         "year_default_start": 1900,
         "mass_default_min": 0,
         "mass_default_max": 2000,
+        "mass_ui_max": 10000,
         # Element Count Limits (for formula filter UI)
         "element_c_max": 100,
         "element_h_max": 200,
@@ -1772,14 +1777,14 @@ def create_export_metadata(
         "@type": "Dataset",
         "name": dataset_name,
         "description": description,
-        "version": "0.0.1",
+        "version": CONFIG["app_version"],
         "dateCreated": datetime.now().isoformat(),
         "license": "https://creativecommons.org/publicdomain/zero/1.0/",
         "creator": {
             "@type": "SoftwareApplication",
-            "name": "LOTUS Wikidata Explorer",
-            "version": "0.0.1",
-            "url": "https://github.com/Adafede/marimo/blob/main/apps/lotus_wikidata_explorer.py",
+            "name": CONFIG["app_name"],
+            "version": CONFIG["app_version"],
+            "url": CONFIG["app_url"],
             "license": "https://www.gnu.org/licenses/agpl-3.0.html",
             "applicationCategory": "Scientific Research Tool",
             "operatingSystem": "Platform Independent",
@@ -1882,8 +1887,8 @@ management in natural products research. *eLife* **11**:e70780.
 DOI: [10.7554/eLife.70780](https://doi.org/10.7554/eLife.70780)
 
 ### This Tool
-LOTUS Wikidata Explorer v0.0.1  
-[Source Code](https://github.com/Adafede/marimo/blob/main/apps/lotus_wikidata_explorer.py) (AGPL-3.0)
+{CONFIG["app_name"]} v{CONFIG["app_version"]}  
+[Source Code]({CONFIG["app_url"]}) (AGPL-3.0)
 
 ### Data Sources
 - **LOTUS Initiative**: [Q104225190](https://www.wikidata.org/wiki/Q104225190) - CC0 1.0
@@ -2081,6 +2086,9 @@ def export_to_rdf_turtle(df: pl.DataFrame, taxon_input: str, qid: str) -> str:
     # Serialize to Turtle format
     return g.serialize(format="turtle")
 
+@app.function
+def normalize_element_value(val: int, default: int) -> Optional[int]:
+  return None if val == default else val
 
 @app.cell
 def _():
@@ -2367,7 +2375,7 @@ def _(
     mass_min = mo.ui.number(
         value=state_mass_min,
         start=0,
-        stop=10000,
+        stop=CONFIG["mass_ui_max"],
         step=0.001,
         label="Min mass (Da)",
         full_width=True,
@@ -2376,7 +2384,7 @@ def _(
     mass_max = mo.ui.number(
         value=state_mass_max,
         start=0,
-        stop=10000,
+        stop=CONFIG["mass_ui_max"],
         step=0.001,
         label="Max mass (Da)",
         full_width=True,
@@ -2577,6 +2585,7 @@ def _(
     smiles_input,
     smiles_search_type,
     smiles_threshold,
+    state_auto_run,
     taxon_input,
     year_end,
     year_filter,
@@ -2661,6 +2670,7 @@ def _(
     smiles_threshold,
     state_auto_run,
     taxon_input,
+    taxon_warning,
     year_end,
     year_filter,
     year_start,
@@ -2733,8 +2743,6 @@ def _(
                 formula_filt = None
                 if formula_filter.value:
 
-                    def normalize_element_value(val, default):
-                        return None if val == default else val
 
                     formula_filt = FormulaFilters(
                         exact_formula=exact_formula.value
@@ -3122,9 +3130,6 @@ def _(
         # Build filters for metadata
         _formula_filt = None
         if formula_filter.value:
-            # Helper function to convert CONFIG defaults back to None
-            def _normalize_element_value(val, default):
-                return None if val == default else val
 
             _formula_filt = FormulaFilters(
                 exact_formula=exact_formula.value
@@ -3132,27 +3137,27 @@ def _(
                 else None,
                 c=ElementRange(
                     c_min.value,
-                    _normalize_element_value(c_max.value, CONFIG["element_c_max"]),
+                    normalize_element_value(c_max.value, CONFIG["element_c_max"]),
                 ),
                 h=ElementRange(
                     h_min.value,
-                    _normalize_element_value(h_max.value, CONFIG["element_h_max"]),
+                    normalize_element_value(h_max.value, CONFIG["element_h_max"]),
                 ),
                 n=ElementRange(
                     n_min.value,
-                    _normalize_element_value(n_max.value, CONFIG["element_n_max"]),
+                    normalize_element_value(n_max.value, CONFIG["element_n_max"]),
                 ),
                 o=ElementRange(
                     o_min.value,
-                    _normalize_element_value(o_max.value, CONFIG["element_o_max"]),
+                    normalize_element_value(o_max.value, CONFIG["element_o_max"]),
                 ),
                 p=ElementRange(
                     p_min.value,
-                    _normalize_element_value(p_max.value, CONFIG["element_p_max"]),
+                    normalize_element_value(p_max.value, CONFIG["element_p_max"]),
                 ),
                 s=ElementRange(
                     s_min.value,
-                    _normalize_element_value(s_max.value, CONFIG["element_s_max"]),
+                    normalize_element_value(s_max.value, CONFIG["element_s_max"]),
                 ),
                 f_state=f_state.value,
                 cl_state=cl_state.value,
@@ -3616,9 +3621,7 @@ def _(
 
         # Year filter state
         state_year_filter = url_year_filter
-        state_year_start = (
-            url_year_start if url_year_filter else CONFIG["year_default_start"]
-        )
+        state_year_start = url_year_start if url_year_filter else CONFIG["year_default_start"]
         state_year_end = url_year_end if url_year_filter else datetime.now().year
 
         # Formula filter state
