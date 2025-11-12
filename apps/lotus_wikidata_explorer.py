@@ -15,18 +15,6 @@
 """
 LOTUS Wikidata Explorer
 
-A research tool for exploring chemical compounds from the LOTUS Initiative via
-Wikidata. Features advanced chemical structure searching powered by SACHEM
-(Substructure And Chemistry Enhanced Matching).
-
-Features:
-- Taxonomic search across all LOTUS taxa
-- Chemical structure search (substructure and similarity via SACHEM/IDSM)
-- Combined taxon + structure searching
-- Advanced filtering (mass, molecular formula, publication year)
-- Multiple export formats (CSV, JSON, RDF/Turtle)
-- FAIR data principles with full provenance metadata
-
 Copyright (C) 2025 Adriano Rutz
 
 This program is free software: you can redistribute it and/or modify
@@ -119,6 +107,28 @@ with app.setup:
 
     # Wikidata URLs (constants)
     WIKIDATA_ENTITY_PREFIX = "http://www.wikidata.org/entity/"
+    WIKIDATA_WIKI_PREFIX = "https://www.wikidata.org/wiki/"
+
+    # ====================================================================
+    # ELEMENT CONFIGURATION
+    # ====================================================================
+
+    # Element definitions for formula filters (avoid hardcoding element lists)
+    ELEMENT_CONFIGS = [
+        ("C", "carbon", "element_c_max"),
+        ("H", "hydrogen", "element_h_max"),
+        ("N", "nitrogen", "element_n_max"),
+        ("O", "oxygen", "element_o_max"),
+        ("P", "phosphorus", "element_p_max"),
+        ("S", "sulfur", "element_s_max"),
+    ]
+
+    HALOGEN_CONFIGS = [
+        ("F", "fluorine"),
+        ("Cl", "chlorine"),
+        ("Br", "bromine"),
+        ("I", "iodine"),
+    ]
 
     # ====================================================================
     # SPARQL QUERY FRAGMENTS
@@ -456,24 +466,7 @@ def build_all_compounds_query() -> str:
 def execute_sparql(
     query: str, max_retries: int = CONFIG["max_retries"]
 ) -> Dict[str, Any]:
-    """
-    Execute SPARQL query with connection pooling and retry logic.
-
-    Performance improvements:
-    - Uses persistent HTTP session (reuses TCP connections)
-    - Automatic retry with exponential backoff
-    - Connection pooling reduces overhead by ~30-50%
-
-    Args:
-        query: SPARQL query string
-        max_retries: Maximum number of retry attempts
-
-    Returns:
-        Dict containing SPARQL results
-
-    Raises:
-        Exception: With user-friendly error message if query fails
-    """
+    """Execute SPARQL query with connection pooling and retry logic."""
     headers = {
         "Accept": "application/sparql-results+json",
         "User-Agent": CONFIG["user_agent"],
@@ -554,21 +547,7 @@ def create_structure_image_url(smiles: str) -> str:
 def build_sparql_values_clause(
     variable: str, values: list, use_wd_prefix: bool = True
 ) -> str:
-    """
-    Build a SPARQL VALUES clause for a list of values.
-
-    Args:
-        variable: SPARQL variable name (e.g., 'taxon', 'compound')
-        values: List of QIDs or URIs
-        use_wd_prefix: Whether to prefix values with 'wd:' (default True)
-
-    Returns:
-        SPARQL VALUES clause string
-
-    Example:
-        >>> build_sparql_values_clause('taxon', ['Q12345', 'Q67890'])
-        'VALUES ?taxon { wd:Q12345 wd:Q67890 }'
-    """
+    """Build a SPARQL VALUES clause for a list of values."""
     if use_wd_prefix:
         values_str = " ".join(f"wd:{v}" for v in values)
     else:
@@ -628,12 +607,7 @@ def build_taxon_details_query(qids: List[str]) -> str:
 
 @app.function
 def build_taxon_connectivity_query(qids: List[str]) -> str:
-    """
-    Build query to count compound connections for each taxon.
-
-    This helps disambiguate between multiple taxa with the same name
-    by selecting the one with more data in the knowledge graph.
-    """
+    """Build query to count compound connections for each taxon."""
     values_clause = build_sparql_values_clause("taxon", qids)
     return f"""
     PREFIX p: <http://www.wikidata.org/prop/>
@@ -663,14 +637,7 @@ def build_taxon_connectivity_query(qids: List[str]) -> str:
 def create_taxon_warning_html(
     matches: list, selected_qid: str, is_exact: bool
 ) -> mo.Html:
-    """
-    Create an HTML warning with clickable QID links and taxon details.
-
-    Args:
-        matches: List of (qid, name, description, parent, compound_count) tuples
-        selected_qid: The QID that was selected
-        is_exact: Whether these are exact matches or similar matches
-    """
+    """Create an HTML warning with clickable QID links and taxon details."""
     match_type = "exact matches" if is_exact else "similar taxa"
     intro = (
         f"Ambiguous taxon name. Multiple {match_type} found:"
@@ -728,15 +695,7 @@ def create_taxon_warning_html(
 
 @app.function
 def resolve_taxon_to_qid(taxon_input: str) -> Tuple[Optional[str], Optional[mo.Html]]:
-    """
-    Resolve taxon name or QID to a valid QID.
-
-    Returns:
-        (qid, warning_html) where warning_html is None if no issues, or mo.Html with clickable links
-
-    Special case:
-        If taxon_input is "*", returns ("*", None) to indicate all taxa
-    """
+    """Resolve taxon name or QID to a valid QID."""
     taxon_input = taxon_input.strip()
 
     # Handle wildcard for all taxa
@@ -959,26 +918,21 @@ def serialize_formula_filters(
         result["exact_formula"] = filters.exact_formula.strip()
 
     # Element ranges
-    for element_name, element_range in [
-        ("carbon", filters.c),
-        ("hydrogen", filters.h),
-        ("nitrogen", filters.n),
-        ("oxygen", filters.o),
-        ("phosphorus", filters.p),
-        ("sulfur", filters.s),
-    ]:
+    element_attrs = [filters.c, filters.h, filters.n, filters.o, filters.p, filters.s]
+    for (_, element_name, _), element_range in zip(ELEMENT_CONFIGS, element_attrs):
         range_dict = serialize_element_range(element_range)
         if range_dict:
             result[element_name] = range_dict
 
-    # Halogen states (only include if not "allowed")
+    # Halogen states
+    halogen_attrs = [
+        filters.f_state,
+        filters.cl_state,
+        filters.br_state,
+        filters.i_state,
+    ]
     halogen_states = {}
-    for halogen_name, state in [
-        ("fluorine", filters.f_state),
-        ("chlorine", filters.cl_state),
-        ("bromine", filters.br_state),
-        ("iodine", filters.i_state),
-    ]:
+    for (_, halogen_name), state in zip(HALOGEN_CONFIGS, halogen_attrs):
         if state != "allowed":
             halogen_states[halogen_name] = state
 
@@ -986,6 +940,68 @@ def serialize_formula_filters(
         result["halogens"] = halogen_states
 
     return result if result else None
+
+
+@app.function
+def normalize_element_value(val: int, default: int) -> Optional[int]:
+    """Normalize element value by converting default values to None."""
+    return None if val == default else val
+
+
+@app.function
+def create_formula_filters(
+    exact_formula: str,
+    c_min: int,
+    c_max: int,
+    h_min: int,
+    h_max: int,
+    n_min: int,
+    n_max: int,
+    o_min: int,
+    o_max: int,
+    p_min: int,
+    p_max: int,
+    s_min: int,
+    s_max: int,
+    f_state: str,
+    cl_state: str,
+    br_state: str,
+    i_state: str,
+) -> FormulaFilters:
+    """Factory function to create FormulaFilters from UI values."""
+    return FormulaFilters(
+        exact_formula=exact_formula.strip()
+        if exact_formula and exact_formula.strip()
+        else None,
+        c=ElementRange(
+            c_min,
+            normalize_element_value(c_max, CONFIG["element_c_max"]),
+        ),
+        h=ElementRange(
+            h_min,
+            normalize_element_value(h_max, CONFIG["element_h_max"]),
+        ),
+        n=ElementRange(
+            n_min,
+            normalize_element_value(n_max, CONFIG["element_n_max"]),
+        ),
+        o=ElementRange(
+            o_min,
+            normalize_element_value(o_max, CONFIG["element_o_max"]),
+        ),
+        p=ElementRange(
+            p_min,
+            normalize_element_value(p_max, CONFIG["element_p_max"]),
+        ),
+        s=ElementRange(
+            s_min,
+            normalize_element_value(s_max, CONFIG["element_s_max"]),
+        ),
+        f_state=f_state,
+        cl_state=cl_state,
+        br_state=br_state,
+        i_state=i_state,
+    )
 
 
 @app.function
@@ -1001,25 +1017,7 @@ def build_active_filters_dict(
     smiles_search_type: Optional[str] = None,
     smiles_threshold: Optional[float] = None,
 ) -> Dict[str, Any]:
-    """
-    Build a dictionary of active filters for metadata export.
-
-    Includes all filter types: mass, year, formula, and chemical structure (SMILES).
-    Args:
-        mass_filter_active: Whether mass filter is enabled
-        mass_min_val: Minimum mass value
-        mass_max_val: Maximum mass value
-        year_filter_active: Whether year filter is enabled
-        year_start_val: Start year
-        year_end_val: End year
-        formula_filters: Molecular formula filters
-        smiles: SMILES string for structure search
-        smiles_search_type: Type of SMILES search ("substructure" or "similarity")
-        smiles_threshold: Similarity threshold (0.0-1.0)
-
-    Returns:
-        Dictionary of active filters with their values
-    """
+    """Build a dictionary of active filters for metadata export."""
     filters = {}
 
     # Chemical structure (SMILES) search
@@ -1061,35 +1059,7 @@ def generate_filename(
     prefix: str = "lotus_data",
     filters: Dict[str, Any] = None,
 ) -> str:
-    """
-    Generate standardized, descriptive filename for exports.
-
-    Filename pattern:
-    YYYYMMDD_prefix_taxon[_TYPE][_filtered].ext
-    where TYPE is the search type (substructure/similarity) if SMILES is used
-
-    Args:
-        taxon_name: Name of the taxon (or "*" for all taxa)
-        file_type: File extension (e.g., 'csv', 'json', 'ttl')
-        prefix: Filename prefix (default: 'lotus_data')
-        filters: Optional dict of active filters (adds context to filename)
-
-    Returns:
-        Standardized filename with date and filter context
-
-    Examples:
-        >>> # Substructure search
-        >>> generate_filename("Artemisia", "csv", filters={"chemical_structure": {"search_type": "substructure"}})
-        '20251112_lotus_data_Artemisia_substructure.csv'
-
-        >>> # Similarity search with threshold
-        >>> generate_filename("Salix", "json", filters={"chemical_structure": {"search_type": "similarity", "similarity_threshold": 0.85}})
-        '20251112_lotus_data_Salix_similarity.json'
-
-        >>> # Combined with other filters
-        >>> generate_filename("Cinchona", "csv", filters={"chemical_structure": {"search_type": "substructure"}, "mass": {"min": 300}})
-        '20251112_lotus_data_Cinchona_substructure_filtered.csv'
-    """
+    """Generate standardized, descriptive filename for exports."""
     # Handle wildcard for all taxa
     if taxon_name == "*":
         safe_name = "all_taxa"
@@ -1148,18 +1118,7 @@ def build_api_url(
     br_state: str,
     i_state: str,
 ) -> str:
-    """
-    Build a shareable API URL from current search parameters.
-
-    Returns a URL with query parameters that can be shared or bookmarked
-    to reproduce the exact search.
-
-    Args:
-        All current UI parameter values
-
-    Returns:
-        URL string with encoded query parameters
-    """
+    """Build a shareable API URL from current search parameters."""
     from urllib.parse import urlencode
 
     params = {}
@@ -1245,17 +1204,7 @@ def build_api_url(
 def compress_if_large(
     data: str, filename: str, threshold_bytes: int = None
 ) -> tuple[str, str, str]:
-    """
-    Compress data with gzip if it exceeds the threshold.
-
-    Args:
-        data: String data to potentially compress
-        filename: Original filename
-        threshold_bytes: Size threshold for compression (uses CONFIG if None)
-
-    Returns:
-        Tuple of (data_or_compressed, final_filename, mimetype)
-    """
+    """Compress data with gzip if it exceeds the threshold."""
     if threshold_bytes is None:
         threshold_bytes = CONFIG["download_embed_threshold_bytes"]
 
@@ -1278,16 +1227,7 @@ def apply_range_filter(
     max_val: Optional[float],
     extract_func=None,
 ) -> pl.DataFrame:
-    """
-    Generic range filter for DataFrame columns.
-
-    Args:
-        df: DataFrame to filter
-        column: Column name to filter on
-        min_val: Minimum value (inclusive)
-        max_val: Maximum value (inclusive)
-        extract_func: Optional function to extract value from column (e.g., dt.year())
-    """
+    """Generic range filter for DataFrame columns."""
     if (min_val is None and max_val is None) or column not in df.columns:
         return df
 
@@ -1348,21 +1288,7 @@ def parse_molecular_formula(formula: str) -> tuple:
 
 @app.function
 def formula_matches_criteria(formula: str, filters: FormulaFilters) -> bool:
-    """
-    Check if a molecular formula matches the specified criteria.
-
-    Efficiency optimizations:
-    - Early returns for common cases
-    - Cached formula parsing
-    - Minimal string operations
-
-    Args:
-        formula: Molecular formula to check
-        filters: FormulaFilters dataclass with all criteria
-
-    Returns:
-        True if formula matches all criteria, False otherwise
-    """
+    """Check if a molecular formula matches the specified criteria."""
     # Early return: no formula means keep it (common case)
     if not formula:
         return True
@@ -1412,21 +1338,7 @@ def formula_matches_criteria(formula: str, filters: FormulaFilters) -> bool:
 
 @app.function
 def apply_formula_filter(df: pl.DataFrame, filters: FormulaFilters) -> pl.DataFrame:
-    """
-    Apply molecular formula filters to the dataframe.
-
-    Efficiency note:
-    - Early return if no formula column or inactive filters
-    - List comprehension is faster than append loop
-    - Polars filtering is optimized internally
-
-    Args:
-        df: DataFrame to filter
-        filters: Formula filtering criteria
-
-    Returns:
-        Filtered DataFrame
-    """
+    """Apply molecular formula filters to the dataframe."""
     # Early return for efficiency
     if "mf" not in df.columns or not filters.is_active():
         return df
@@ -1460,72 +1372,6 @@ def query_wikidata(
     1. Taxon-only: Find all compounds in a taxonomic group
     2. SMILES-only: Find compounds by chemical structure (SACHEM)
     3. Combined: Find structures within a specific taxonomic group
-
-    Performance optimizations:
-    - Single DataFrame creation (no intermediate copies)
-    - Lazy column transformations via Polars
-    - Early termination on empty results
-    - Efficient filter chaining
-
-    Args:
-        qid: Wikidata QID for taxon (e.g., "Q157115"), or "*" for all taxa
-        year_start: Filter for publication year >= year_start (inclusive)
-        year_end: Filter for publication year <= year_end (inclusive)
-        mass_min: Filter for molecular mass >= mass_min (Daltons)
-        mass_max: Filter for molecular mass <= mass_max (Daltons)
-        formula_filters: Molecular formula constraints (exact, ranges, halogens)
-        smiles: SMILES string for chemical structure search
-        search_mode: Search strategy to use:
-            - "taxon": Search by taxonomic group only
-            - "smiles": Search by chemical structure only (via SACHEM)
-            - "both": Search for structure within taxonomic group
-        smiles_search_type: Type of chemical search (when search_mode != "taxon"):
-            - "substructure": Find compounds containing the query structure
-            - "similarity": Find structurally similar compounds (Tanimoto)
-        smiles_threshold: Tanimoto similarity threshold (0.0-1.0)
-            Only used when smiles_search_type="similarity"
-            Default: 0.8 (good balance of precision and recall)
-
-    Returns:
-        Polars DataFrame with columns:
-            - structure: Wikidata QID URL
-            - name: Compound name
-            - inchikey: InChIKey identifier
-            - smiles: SMILES notation
-            - taxon_name: Scientific name of source organism
-            - taxon: Taxon Wikidata QID URL
-            - ref_title: Reference publication title
-            - ref_doi: DOI of reference
-            - reference: Reference Wikidata QID URL
-            - pub_date: Publication date
-            - mass: Molecular mass (Daltons)
-            - mf: Molecular formula
-
-    Raises:
-        RuntimeError: If SPARQL query execution fails
-
-    Example:
-        >>> # Find all compounds in Artemisia genus
-        >>> df = query_wikidata(qid="Q157115")
-        >>>
-        >>> # Find aspirin-like compounds
-        >>> df = query_wikidata(
-        ...     qid="",
-        ...     smiles="CC(=O)Oc1ccccc1C(=O)O",
-        ...     search_mode="smiles",
-        ...     smiles_search_type="similarity",
-        ...     smiles_threshold=0.85
-        ... )
-        >>>
-        >>> # Find salicylates in Salix (willow)
-        >>> df = query_wikidata(
-        ...     qid="Q26325",
-        ...     smiles="OC(=O)c1ccccc1O",
-        ...     search_mode="both",
-        ...     smiles_search_type="substructure",
-        ...     mass_min=100,
-        ...     mass_max=500
-        ... )
     """
     # Build query based on search mode
     if search_mode == "both" and smiles and qid:
@@ -1669,21 +1515,7 @@ def prepare_export_dataframe(df: pl.DataFrame) -> pl.DataFrame:
 def create_export_metadata(
     df: pl.DataFrame, taxon_input: str, qid: str, filters: Dict[str, Any]
 ) -> Dict[str, Any]:
-    """
-    Create FAIR-compliant metadata for exported datasets.
-
-    Generates machine-readable metadata following Schema.org standards,
-    including provenance, access information, and citation details.
-
-    Args:
-        df: Exported DataFrame
-        taxon_input: Taxon name or search query string
-        qid: Wikidata QID (or empty for structure-only searches)
-        filters: Active filter settings (includes SMILES, mass, year, formula)
-
-    Returns:
-        Dictionary containing Schema.org-compliant metadata
-    """
+    """Create FAIR-compliant metadata for exported datasets."""
     # Build descriptive name and description based on search type
     smiles_info = filters.get("chemical_structure", {}) if filters else {}
 
@@ -1845,16 +1677,7 @@ DOI: [10.7554/eLife.70780](https://doi.org/10.7554/eLife.70780)
 
 @app.function
 def export_to_rdf_turtle(df: pl.DataFrame, taxon_input: str, qid: str) -> str:
-    """
-    Export data to RDF Turtle format using rdflib following W3C standards.
-
-    Uses standard ontologies:
-    - CHEMINF (Chemical Information Ontology)
-    - SIO (Semanticscience Integrated Ontology)
-    - WD (Wikidata)
-    - schema.org
-    - DCTERMS (Dublin Core Terms)
-    """
+    """Export data to RDF Turtle format using rdflib following W3C standards."""
     # Initialize graph
     g = Graph()
 
@@ -2032,11 +1855,6 @@ def export_to_rdf_turtle(df: pl.DataFrame, taxon_input: str, qid: str) -> str:
 
     # Serialize to Turtle format
     return g.serialize(format="turtle")
-
-
-@app.function
-def normalize_element_value(val: int, default: int) -> Optional[int]:
-    return None if val == default else val
 
 
 @app.cell
@@ -2236,22 +2054,60 @@ def _():
     _url_params_check = mo.query_params()
 
     # Display URL query info if parameters are present
-    if _url_params_check and "taxon" in _url_params_check:
+    if _url_params_check and (
+        "taxon" in _url_params_check or "smiles" in _url_params_check
+    ):
         param_items = []
-        for key in sorted(_url_params_check.keys()):
-            value = _url_params_check.get(key)
-            param_items.append(f"- **{key}**: `{value}`")
 
-        mo.callout(
-            mo.md(f"""
-            ### 🔗 URL Query Detected
+        # List known parameters in logical order
+        known_params = [
+            "taxon",
+            "smiles",
+            "smiles_search_type",
+            "smiles_threshold",
+            "mass_filter",
+            "mass_min",
+            "mass_max",
+            "year_filter",
+            "year_start",
+            "year_end",
+            "formula_filter",
+            "exact_formula",
+            "c_min",
+            "c_max",
+            "h_min",
+            "h_max",
+            "n_min",
+            "n_max",
+            "o_min",
+            "o_max",
+            "p_min",
+            "p_max",
+            "s_min",
+            "s_max",
+            "f_state",
+            "cl_state",
+            "br_state",
+            "i_state",
+        ]
 
-            {chr(10).join(param_items)}
+        # Only show parameters that are actually present
+        for key in known_params:
+            if key in _url_params_check:
+                value = _url_params_check.get(key)
+                param_items.append(f"- **{key}**: `{value}`")
 
-            The search will auto-execute with these parameters.
-            """),
-            kind="info",
-        )
+        if param_items:  # Only show if we found any parameters
+            mo.callout(
+                mo.md(f"""
+                ### 🔗 URL Query Detected
+
+                {chr(10).join(param_items)}
+
+                The search will auto-execute with these parameters.
+                """),
+                kind="info",
+            )
     return
 
 
@@ -2686,49 +2542,23 @@ def _(
                 m_min = mass_min.value if mass_filter.value else None
                 m_max = mass_max.value if mass_filter.value else None
 
-                # Build formula filters using dataclass
+                # Build formula filters using factory function (DRY)
                 formula_filt = None
                 if formula_filter.value:
-                    formula_filt = FormulaFilters(
-                        exact_formula=exact_formula.value
-                        if exact_formula.value.strip()
-                        else None,
-                        c=ElementRange(
-                            c_min.value,
-                            normalize_element_value(
-                                c_max.value, CONFIG["element_c_max"]
-                            ),
-                        ),
-                        h=ElementRange(
-                            h_min.value,
-                            normalize_element_value(
-                                h_max.value, CONFIG["element_h_max"]
-                            ),
-                        ),
-                        n=ElementRange(
-                            n_min.value,
-                            normalize_element_value(
-                                n_max.value, CONFIG["element_n_max"]
-                            ),
-                        ),
-                        o=ElementRange(
-                            o_min.value,
-                            normalize_element_value(
-                                o_max.value, CONFIG["element_o_max"]
-                            ),
-                        ),
-                        p=ElementRange(
-                            p_min.value,
-                            normalize_element_value(
-                                p_max.value, CONFIG["element_p_max"]
-                            ),
-                        ),
-                        s=ElementRange(
-                            s_min.value,
-                            normalize_element_value(
-                                s_max.value, CONFIG["element_s_max"]
-                            ),
-                        ),
+                    formula_filt = create_formula_filters(
+                        exact_formula=exact_formula.value,
+                        c_min=c_min.value,
+                        c_max=c_max.value,
+                        h_min=h_min.value,
+                        h_max=h_max.value,
+                        n_min=n_min.value,
+                        n_max=n_max.value,
+                        o_min=o_min.value,
+                        o_max=o_max.value,
+                        p_min=p_min.value,
+                        p_max=p_max.value,
+                        s_min=s_min.value,
+                        s_max=s_max.value,
                         f_state=f_state.value,
                         cl_state=cl_state.value,
                         br_state=br_state.value,
@@ -3072,37 +2902,24 @@ def _(
         export_df = prepare_export_dataframe(results_df)
         taxon_name = taxon_input.value
         ui_is_large_dataset = len(export_df) > CONFIG["lazy_generation_threshold"]
-        # Build filters for metadata
+
+        # Build filters for metadata using factory function (DRY)
         _formula_filt = None
         if formula_filter.value:
-            _formula_filt = FormulaFilters(
-                exact_formula=exact_formula.value
-                if exact_formula.value.strip()
-                else None,
-                c=ElementRange(
-                    c_min.value,
-                    normalize_element_value(c_max.value, CONFIG["element_c_max"]),
-                ),
-                h=ElementRange(
-                    h_min.value,
-                    normalize_element_value(h_max.value, CONFIG["element_h_max"]),
-                ),
-                n=ElementRange(
-                    n_min.value,
-                    normalize_element_value(n_max.value, CONFIG["element_n_max"]),
-                ),
-                o=ElementRange(
-                    o_min.value,
-                    normalize_element_value(o_max.value, CONFIG["element_o_max"]),
-                ),
-                p=ElementRange(
-                    p_min.value,
-                    normalize_element_value(p_max.value, CONFIG["element_p_max"]),
-                ),
-                s=ElementRange(
-                    s_min.value,
-                    normalize_element_value(s_max.value, CONFIG["element_s_max"]),
-                ),
+            _formula_filt = create_formula_filters(
+                exact_formula=exact_formula.value,
+                c_min=c_min.value,
+                c_max=c_max.value,
+                h_min=h_min.value,
+                h_max=h_max.value,
+                n_min=n_min.value,
+                n_max=n_max.value,
+                o_min=o_min.value,
+                o_max=o_max.value,
+                p_min=p_min.value,
+                p_max=p_max.value,
+                s_min=s_min.value,
+                s_max=s_max.value,
                 f_state=f_state.value,
                 cl_state=cl_state.value,
                 br_state=br_state.value,
