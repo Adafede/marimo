@@ -1175,12 +1175,17 @@ def build_active_filters_dict(
     """
     filters = {}
 
-    # Mass filter
     # Chemical structure (SMILES) search
     if smiles and smiles.strip():
         filters["chemical_structure"] = {
             "smiles": smiles.strip(),
+            "search_type": smiles_search_type or "substructure",
         }
+        # Add threshold only for similarity searches
+        if smiles_search_type == "similarity" and smiles_threshold is not None:
+            filters["chemical_structure"]["similarity_threshold"] = smiles_threshold
+
+    # Mass filter
     if mass_filter_active and (mass_min_val is not None or mass_max_val is not None):
         filters["mass"] = {
             "min": mass_min_val,
@@ -1213,7 +1218,8 @@ def generate_filename(
     Generate standardized, descriptive filename for exports.
 
     Filename pattern:
-    YYYYMMDD_prefix_taxon[_smiles_TYPE][_filtered].ext
+    YYYYMMDD_prefix_taxon[_TYPE][_filtered].ext
+    where TYPE is the search type (substructure/similarity) if SMILES is used
 
     Args:
         taxon_name: Name of the taxon (or "*" for all taxa)
@@ -1225,8 +1231,17 @@ def generate_filename(
         Standardized filename with date and filter context
 
     Examples:
+        >>> # Substructure search
         >>> generate_filename("Artemisia", "csv", filters={"chemical_structure": {"search_type": "substructure"}})
-        '20251112_lotus_data_Artemisia_smiles_substructure.csv'
+        '20251112_lotus_data_Artemisia_substructure.csv'
+
+        >>> # Similarity search with threshold
+        >>> generate_filename("Salix", "json", filters={"chemical_structure": {"search_type": "similarity", "similarity_threshold": 0.85}})
+        '20251112_lotus_data_Salix_similarity.json'
+
+        >>> # Combined with other filters
+        >>> generate_filename("Cinchona", "csv", filters={"chemical_structure": {"search_type": "substructure"}, "mass": {"min": 300}})
+        '20251112_lotus_data_Cinchona_substructure_filtered.csv'
     """
     # Handle wildcard for all taxa
     if taxon_name == "*":
@@ -1240,8 +1255,8 @@ def generate_filename(
 
     # Add SMILES search type if present
     if filters and "chemical_structure" in filters:
-        search_type = filters["chemical_structure"].get("search_type", "smiles")
-        components.append(f"smiles_{search_type}")
+        search_type = filters["chemical_structure"].get("search_type", "substructure")
+        components.append(search_type)  # Just the type, not "smiles_type"
 
     # Add general filter indicator if other filters are active
     other_filters = {k: v for k, v in (filters or {}).items() if k != "chemical_structure"}
