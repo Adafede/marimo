@@ -1153,7 +1153,7 @@ def build_active_filters_dict(
     smiles: Optional[str] = None,
     smiles_search_type: Optional[str] = None,
     smiles_threshold: Optional[float] = None,
-    ) -> Dict[str, Any]:
+) -> Dict[str, Any]:
     """
     Build a dictionary of active filters for metadata export.
 
@@ -1259,13 +1259,139 @@ def generate_filename(
         components.append(search_type)  # Just the type, not "smiles_type"
 
     # Add general filter indicator if other filters are active
-    other_filters = {k: v for k, v in (filters or {}).items() if k != "chemical_structure"}
+    other_filters = {
+        k: v for k, v in (filters or {}).items() if k != "chemical_structure"
+    }
     if other_filters:
         components.append("filtered")
 
     date_str = datetime.now().strftime("%Y%m%d")
     filename_base = "_".join(components)
     return f"{date_str}_{filename_base}.{file_type}"
+
+
+@app.function
+def build_api_url(
+    taxon: str,
+    smiles: str,
+    smiles_search_type: str,
+    smiles_threshold: float,
+    mass_filter: bool,
+    mass_min: float,
+    mass_max: float,
+    year_filter: bool,
+    year_start: int,
+    year_end: int,
+    formula_filter: bool,
+    exact_formula: str,
+    c_min: int,
+    c_max: int,
+    h_min: int,
+    h_max: int,
+    n_min: int,
+    n_max: int,
+    o_min: int,
+    o_max: int,
+    p_min: int,
+    p_max: int,
+    s_min: int,
+    s_max: int,
+    f_state: str,
+    cl_state: str,
+    br_state: str,
+    i_state: str,
+) -> str:
+    """
+    Build a shareable API URL from current search parameters.
+
+    Returns a URL with query parameters that can be shared or bookmarked
+    to reproduce the exact search.
+
+    Args:
+        All current UI parameter values
+
+    Returns:
+        URL string with encoded query parameters
+    """
+    from urllib.parse import urlencode
+
+    params = {}
+
+    # Taxon parameter
+    if taxon and taxon.strip():
+        params["taxon"] = taxon.strip()
+
+    # SMILES parameters
+    if smiles and smiles.strip():
+        params["smiles"] = smiles.strip()
+        params["smiles_search_type"] = smiles_search_type
+        if smiles_search_type == "similarity":
+            params["smiles_threshold"] = str(smiles_threshold)
+
+    # Mass filter
+    if mass_filter:
+        params["mass_filter"] = "true"
+        if mass_min is not None:
+            params["mass_min"] = str(mass_min)
+        if mass_max is not None:
+            params["mass_max"] = str(mass_max)
+
+    # Year filter
+    if year_filter:
+        params["year_filter"] = "true"
+        if year_start is not None:
+            params["year_start"] = str(year_start)
+        if year_end is not None:
+            params["year_end"] = str(year_end)
+
+    # Formula filter
+    if formula_filter:
+        params["formula_filter"] = "true"
+        if exact_formula and exact_formula.strip():
+            params["exact_formula"] = exact_formula.strip()
+
+        # Element ranges (only add non-default values)
+        if c_min > 0:
+            params["c_min"] = str(c_min)
+        if c_max != CONFIG["element_c_max"]:
+            params["c_max"] = str(c_max)
+        if h_min > 0:
+            params["h_min"] = str(h_min)
+        if h_max != CONFIG["element_h_max"]:
+            params["h_max"] = str(h_max)
+        if n_min > 0:
+            params["n_min"] = str(n_min)
+        if n_max != CONFIG["element_n_max"]:
+            params["n_max"] = str(n_max)
+        if o_min > 0:
+            params["o_min"] = str(o_min)
+        if o_max != CONFIG["element_o_max"]:
+            params["o_max"] = str(o_max)
+        if p_min > 0:
+            params["p_min"] = str(p_min)
+        if p_max != CONFIG["element_p_max"]:
+            params["p_max"] = str(p_max)
+        if s_min > 0:
+            params["s_min"] = str(s_min)
+        if s_max != CONFIG["element_s_max"]:
+            params["s_max"] = str(s_max)
+
+        # Halogen states (only add non-default)
+        if f_state != "allowed":
+            params["f_state"] = f_state
+        if cl_state != "allowed":
+            params["cl_state"] = cl_state
+        if br_state != "allowed":
+            params["br_state"] = br_state
+        if i_state != "allowed":
+            params["i_state"] = i_state
+
+    # Build URL
+    if params:
+        query_string = urlencode(params)
+        return f"?{query_string}"
+    else:
+        return ""
 
 
 @app.function
@@ -1740,9 +1866,8 @@ def create_export_metadata(
     else:
         # Taxon-only search
         dataset_name = f"LOTUS Data - {taxon_input}"
-        description = (
-            f"Chemical compounds from taxon {taxon_input} "
-            + (f"(Wikidata QID: {qid}). " if qid else ". ")
+        description = f"Chemical compounds from taxon {taxon_input} " + (
+            f"(Wikidata QID: {qid}). " if qid else ". "
         )
 
     description += "Retrieved via LOTUS Wikidata Explorer with professional-grade chemical search capabilities (SACHEM/IDSM)."
@@ -2803,13 +2928,40 @@ def _(
 
 @app.cell
 def _(
+    br_state,
+    c_max,
+    c_min,
+    cl_state,
     download_ui,
+    exact_formula,
+    f_state,
+    formula_filter,
+    h_max,
+    h_min,
+    i_state,
+    mass_filter,
+    mass_max,
+    mass_min,
+    n_max,
+    n_min,
+    o_max,
+    o_min,
+    p_max,
+    p_min,
     qid,
     results_df,
     run_button,
+    s_max,
+    s_min,
+    smiles_input,
+    smiles_search_type,
+    smiles_threshold,
     state_auto_run,
     taxon_input,
     taxon_warning,
+    year_end,
+    year_filter,
+    year_start,
 ):
     # Display summary if either button was clicked or auto-run from URL
     if (not run_button.value and not state_auto_run) or results_df is None:
@@ -2857,6 +3009,37 @@ def _(
                 f"**Taxon:** {taxon_input.value} {create_wikidata_link(qid)}"
             )
 
+        # Add SMILES search info if present
+        search_info_parts = [taxon_info]
+        if smiles_input.value and smiles_input.value.strip():
+            _smiles_str = smiles_input.value.strip()
+            search_type = smiles_search_type.value
+
+            # Truncate long SMILES for display
+            display_smiles = (
+                _smiles_str if len(_smiles_str) <= 50 else f"{_smiles_str[:47]}..."
+            )
+
+            if search_type == "similarity":
+                threshold_val = smiles_threshold.value
+                smiles_info = mo.md(
+                    f"**Chemical search:** {search_type.title()} "
+                    f"(SMILES: `{display_smiles}`, "
+                    f"Tanimoto threshold: **{threshold_val}**)"
+                )
+            else:
+                smiles_info = mo.md(
+                    f"**Chemical search:** {search_type.title()} "
+                    f"(SMILES: `{display_smiles}`)"
+                )
+            search_info_parts.append(smiles_info)
+
+        # Combine search info
+        if len(search_info_parts) > 1:
+            combined_search_info = mo.vstack(search_info_parts, gap=1)
+        else:
+            combined_search_info = search_info_parts[0]
+
         # Stats cards
         stats_cards = mo.hstack(
             [
@@ -2886,24 +3069,82 @@ def _(
             wrap=False,
         )
 
-        # Taxon info and stats on same line
-        taxon_and_stats = mo.hstack(
-            [taxon_info, stats_cards],
-            justify="space-between",
-            align="start",
-        )
-
-        # Build summary section (left)
-        if taxon_warning:
-            summary_section = mo.vstack(
-                [
-                    results_header,
-                    taxon_and_stats,
-                    mo.callout(taxon_warning, kind="warn"),
-                ]
+        # Search info and stats layout
+        if len(search_info_parts) > 1:
+            # Stack vertically when SMILES is present for better readability
+            search_and_stats = mo.vstack(
+                [combined_search_info, stats_cards],
+                gap=2,
             )
         else:
-            summary_section = mo.vstack([results_header, taxon_and_stats])
+            # Single line when no SMILES
+            search_and_stats = mo.hstack(
+                [combined_search_info, stats_cards],
+                justify="space-between",
+                align="start",
+            )
+
+        # Build API URL for sharing
+        api_url = build_api_url(
+            taxon=taxon_input.value,
+            smiles=smiles_input.value,
+            smiles_search_type=smiles_search_type.value,
+            smiles_threshold=smiles_threshold.value,
+            mass_filter=mass_filter.value,
+            mass_min=mass_min.value,
+            mass_max=mass_max.value,
+            year_filter=year_filter.value,
+            year_start=year_start.value,
+            year_end=year_end.value,
+            formula_filter=formula_filter.value,
+            exact_formula=exact_formula.value,
+            c_min=c_min.value,
+            c_max=c_max.value,
+            h_min=h_min.value,
+            h_max=h_max.value,
+            n_min=n_min.value,
+            n_max=n_max.value,
+            o_min=o_min.value,
+            o_max=o_max.value,
+            p_min=p_min.value,
+            p_max=p_max.value,
+            s_min=s_min.value,
+            s_max=s_max.value,
+            f_state=f_state.value,
+            cl_state=cl_state.value,
+            br_state=br_state.value,
+            i_state=i_state.value,
+        )
+
+        # Display shareable URL if parameters exist
+        if api_url:
+            url_display = mo.md(
+                f"""
+                **🔗 Shareable URL**
+
+                Copy and append this to your notebook URL to share this exact search:
+                ```
+                {api_url}
+                ```
+                """
+            )
+            api_url_section = mo.accordion(
+                {"🔁 Share this search": url_display},
+                multiple=False,
+            )
+        else:
+            api_url_section = mo.Html("")
+
+        # Build summary section with all parts
+        summary_parts = [results_header, search_and_stats]
+
+        if api_url:
+            summary_parts.append(api_url_section)
+
+        if taxon_warning:
+            summary_parts.append(mo.callout(taxon_warning, kind="warn"))
+
+        summary_section = mo.vstack(summary_parts)
 
         # Combine summary (left) and downloads (right) side by side
         summary_and_downloads = mo.hstack(
@@ -2943,6 +3184,9 @@ def _(
     run_button,
     s_max,
     s_min,
+    smiles_input,
+    smiles_search_type,
+    smiles_threshold,
     state_auto_run,
     taxon_input,
     year_end,
