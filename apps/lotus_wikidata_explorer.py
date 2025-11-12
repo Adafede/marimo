@@ -1379,7 +1379,7 @@ def query_wikidata(
         else:  # Default to substructure
             query = build_smiles_substructure_query(smiles)
     elif qid == "*" or qid is None:
-      query = build_all_compounds_query()
+        query = build_all_compounds_query()
     else:
         query = build_compounds_query(qid)
 
