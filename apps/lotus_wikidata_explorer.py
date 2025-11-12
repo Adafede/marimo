@@ -15,6 +15,18 @@
 """
 LOTUS Wikidata Explorer
 
+A professional natural products research tool for exploring chemical compounds from the
+LOTUS (Natural Products Occurrence) database via Wikidata. Features advanced chemical
+structure searching powered by SACHEM (Substructure And Chemistry Enhanced Matching).
+
+Features:
+- Taxonomic search across all LOTUS taxa
+- Chemical structure search (substructure and similarity via SACHEM/IDSM)
+- Combined taxon + structure searching
+- Advanced filtering (mass, molecular formula, publication year)
+- Multiple export formats (CSV, JSON, RDF/Turtle)
+- FAIR data principles with full provenance metadata
+
 Copyright (C) 2025 Adriano Rutz
 
 This program is free software: you can redistribute it and/or modify
@@ -62,22 +74,22 @@ with app.setup:
     try:
         mo._runtime.context.get_context().marimo_config["runtime"][
             "output_max_bytes"
-        ] = 1_000_000_000  # 1GB
+        ] = 1_000_000_000  # 1GB for large datasets
     except Exception:
-        # Silently fail if runtime config cannot be set (e.g., in some deployment scenarios)
+        # Silently fail if runtime config cannot be set
         pass
 
     CONFIG = {
         # External Services
         "cdk_base": "https://www.simolecule.com/cdkdepict/depict/cot/svg",
         "sparql_endpoint": "https://qlever.cs.uni-freiburg.de/api/wikidata",
-        # "sparql_endpoint": "https://query-legacy-full.wikidata.org/sparql",
-        "user_agent": "LOTUS Explorer/0.0.1 (https://github.com/Adafede/marimo/blob/main/apps/lotus_wikidata_explorer.py)",
+        "idsm_endpoint": "https://idsm.elixir-czech.cz/sparql/endpoint/",
+        "user_agent": "LOTUS Explorer/1.0.0 (https://github.com/Adafede/marimo/blob/main/apps/lotus_wikidata_explorer.py)",
         # Network & Performance
         "max_retries": 3,
         "retry_backoff": 2,
-        "table_row_limit": 10000,  # Max rows to display in table (prevents browser slowdown)
-        "lazy_generation_threshold": 5000,  # Rows > this: defer download generation
+        "table_row_limit": 10000,  # Max rows to display (prevents browser slowdown)
+        "lazy_generation_threshold": 5000,  # Defer download generation for large datasets
         "download_embed_threshold_bytes": 8_000_000,  # Compress downloads > 8MB
         # UI Styling
         "color_hyperlink": "#006699",
@@ -95,6 +107,8 @@ with app.setup:
         "element_o_max": 50,
         "element_p_max": 20,
         "element_s_max": 20,
+        # Chemical Search
+        "default_similarity_threshold": 0.8,  # Tanimoto coefficient threshold
     }
 
     # Wikidata URLs (constants)
@@ -220,11 +234,23 @@ def build_taxon_search_query(taxon_name: str) -> str:
 
 @app.function
 def build_smiles_substructure_query(smiles: str) -> str:
-    """Build SPARQL query to find compounds by substructure search using SMILES.
+    """
+    Build SPARQL query for chemical substructure search using SACHEM.
 
     Uses the SACHEM (Substructure And Chemistry Enhanced Matching) service
-    from IDSM (Integrated Database of Small Molecules) for proper chemical
-    substructure searching in Wikidata.
+    from IDSM (Integrated Database of Small Molecules) for professional-grade
+    chemical substructure searching in Wikidata.
+
+    Args:
+        smiles: SMILES string representing the substructure to search for
+                (e.g., "c1ccccc1" for benzene)
+
+    Returns:
+        SPARQL query string for execution against Wikidata endpoint
+
+    Example:
+        >>> query = build_smiles_substructure_query("C1=CC=C(C=C1)O")
+        >>> # Finds all compounds containing a phenol group
     """
     return f"""
     PREFIX p: <http://www.wikidata.org/prop/>
@@ -278,15 +304,33 @@ def build_smiles_substructure_query(smiles: str) -> str:
 
 @app.function
 def build_smiles_similarity_query(smiles: str, threshold: float = 0.8) -> str:
-    """Build SPARQL query to find compounds by similarity search using SMILES.
+    """
+    Build SPARQL query for chemical similarity search using SACHEM.
 
-    Uses the SACHEM (Substructure And Chemistry Enhanced Matching) service
-    from IDSM (Integrated Database of Small Molecules) for proper chemical
-    similarity searching in Wikidata with Tanimoto coefficient threshold.
+    Uses the SACHEM service from IDSM to find compounds with similar chemical
+    structures based on Tanimoto coefficient similarity scores.
+
+    The similarity search uses molecular fingerprints to calculate structural
+    similarity. Higher thresholds return fewer, more similar compounds.
 
     Args:
-        smiles: SMILES string to search for
-        threshold: Tanimoto similarity threshold (0.0-1.0), default 0.8
+        smiles: SMILES string of the query structure
+        threshold: Tanimoto similarity threshold (0.0-1.0)
+            - 1.0: Identical structures only
+            - 0.9: Very similar (close analogs)
+            - 0.8: Similar (default, good balance)
+            - 0.7: Moderately similar
+            - 0.6: Loosely similar
+
+    Returns:
+        SPARQL query string for execution against Wikidata endpoint
+
+    Example:
+        >>> query = build_smiles_similarity_query("CC(=O)Oc1ccccc1C(=O)O", 0.85)
+        >>> # Finds compounds at least 85% similar to aspirin
+
+    Note:
+        Threshold is formatted as xsd:double per SACHEM requirements.
     """
     return f"""
     PREFIX p: <http://www.wikidata.org/prop/>
@@ -809,7 +853,7 @@ def create_taxon_warning_html(
         if compound_count is not None:
             details.append(f"<strong>{compound_count:,} compounds</strong>")
 
-        details_str = " — ".join(details) if details else ""
+        details_str = " - ".join(details) if details else ""
 
         # Highlight the selected one
         if qid == selected_qid:
@@ -1032,7 +1076,7 @@ def create_link(url: str, text: str) -> mo.Html:
 @app.function
 def create_wikidata_link(qid: str) -> mo.Html:
     """Create a Wikidata link for a QID."""
-    return create_link(f"{WIKIDATA_WIKI_PREFIX}{qid}", qid) if qid else mo.Html("—")
+    return create_link(f"{WIKIDATA_WIKI_PREFIX}{qid}", qid) if qid else mo.Html("-")
 
 
 @app.function
@@ -1380,28 +1424,78 @@ def query_wikidata(
     smiles_threshold: float = 0.8,
 ) -> pl.DataFrame:
     """
-    Query Wikidata for compounds associated with a taxon or matching a SMILES query.
+    Query Wikidata for compounds associated to taxa using multiple search strategies.
 
-    Efficiency optimizations:
+    Supports three search modes:
+    1. Taxon-only: Find all compounds in a taxonomic group
+    2. SMILES-only: Find compounds by chemical structure (SACHEM)
+    3. Combined: Find structures within a specific taxonomic group
+
+    Performance optimizations:
     - Single DataFrame creation (no intermediate copies)
-    - Lazy column transformations
-    - Filter chaining without intermediate copies
+    - Lazy column transformations via Polars
     - Early termination on empty results
+    - Efficient filter chaining
 
     Args:
-        qid: Wikidata QID for taxon, or "*" for all taxa
-        year_start: Filter start year (inclusive)
-        year_end: Filter end year (inclusive)
-        mass_min: Minimum mass in Daltons
-        mass_max: Maximum mass in Daltons
-        formula_filters: Molecular formula filter criteria
-        smiles: SMILES string for chemical structure search (used in SMILES mode)
-        search_mode: "taxon", "smiles", or "both" - determines which search to perform
-        smiles_search_type: "substructure" or "similarity" - type of SMILES search
-        smiles_threshold: Similarity threshold (0.0-1.0) for similarity search (default: 0.8)
+        qid: Wikidata QID for taxon (e.g., "Q157115"), or "*" for all taxa
+        year_start: Filter for publication year >= year_start (inclusive)
+        year_end: Filter for publication year <= year_end (inclusive)
+        mass_min: Filter for molecular mass >= mass_min (Daltons)
+        mass_max: Filter for molecular mass <= mass_max (Daltons)
+        formula_filters: Molecular formula constraints (exact, ranges, halogens)
+        smiles: SMILES string for chemical structure search
+        search_mode: Search strategy to use:
+            - "taxon": Search by taxonomic group only
+            - "smiles": Search by chemical structure only (via SACHEM)
+            - "both": Search for structure within taxonomic group
+        smiles_search_type: Type of chemical search (when search_mode != "taxon"):
+            - "substructure": Find compounds containing the query structure
+            - "similarity": Find structurally similar compounds (Tanimoto)
+        smiles_threshold: Tanimoto similarity threshold (0.0-1.0)
+            Only used when smiles_search_type="similarity"
+            Default: 0.8 (good balance of precision and recall)
 
     Returns:
-        Polars DataFrame with compound data
+        Polars DataFrame with columns:
+            - structure: Wikidata QID URL
+            - name: Compound name
+            - inchikey: InChIKey identifier
+            - smiles: SMILES notation
+            - taxon_name: Scientific name of source organism
+            - taxon: Taxon Wikidata QID URL
+            - ref_title: Reference publication title
+            - ref_doi: DOI of reference
+            - reference: Reference Wikidata QID URL
+            - pub_date: Publication date
+            - mass: Molecular mass (Daltons)
+            - mf: Molecular formula
+
+    Raises:
+        RuntimeError: If SPARQL query execution fails
+
+    Example:
+        >>> # Find all compounds in Artemisia genus
+        >>> df = query_wikidata(qid="Q157115")
+        >>>
+        >>> # Find aspirin-like compounds
+        >>> df = query_wikidata(
+        ...     qid="",
+        ...     smiles="CC(=O)Oc1ccccc1C(=O)O",
+        ...     search_mode="smiles",
+        ...     smiles_search_type="similarity",
+        ...     smiles_threshold=0.85
+        ... )
+        >>>
+        >>> # Find salicylates in Salix (willow)
+        >>> df = query_wikidata(
+        ...     qid="Q26325",
+        ...     smiles="OC(=O)c1ccccc1O",
+        ...     search_mode="both",
+        ...     smiles_search_type="substructure",
+        ...     mass_min=100,
+        ...     mass_max=500
+        ... )
     """
     # Build query based on search mode
     if search_mode == "both" and smiles and qid:
@@ -1498,10 +1592,10 @@ def create_display_row(row: Dict[str, str]) -> Dict[str, Any]:
         "Compound SMILES": row["smiles"],
         "Compound InChIKey": row["inchikey"],
         "Taxon": row["taxon_name"],
-        "Reference title": row["ref_title"] or "—",
+        "Reference title": row["ref_title"] or "-",
         "Reference DOI": create_link(f"https://doi.org/{doi}", doi)
         if doi
-        else mo.Html("—"),
+        else mo.Html("-"),
         "Compound QID": create_wikidata_link(struct_qid),
         "Taxon QID": create_wikidata_link(taxon_qid),
         "Reference QID": create_wikidata_link(ref_qid),
@@ -1546,15 +1640,30 @@ def create_export_metadata(
     df: pl.DataFrame, taxon_input: str, qid: str, filters: Dict[str, Any]
 ) -> Dict[str, Any]:
     """
-    Create metadata for exported data following FAIR principles.
+    Create FAIR-compliant metadata for exported datasets.
 
-    Returns machine-readable metadata with provenance, access info, and citations.
+    Generates machine-readable metadata following Schema.org standards,
+    including provenance, access information, and citation details.
+
+    Args:
+        df: Exported DataFrame
+        taxon_input: Taxon name or search query string
+        qid: Wikidata QID (or empty for structure-only searches)
+        filters: Active filter settings
+
+    Returns:
+        Dictionary containing Schema.org-compliant metadata
     """
     metadata = {
         "@context": "https://schema.org/",
         "@type": "Dataset",
-        "name": f"LOTUS Data for {taxon_input}",
-        "description": f"Chemical compounds found in taxon {taxon_input} (Wikidata QID: {qid})",
+        "name": f"LOTUS Data - {taxon_input}",
+        "description": (
+            f"Chemical compounds"
+            + (f" for taxon {taxon_input} (Wikidata QID: {qid})" if qid else "")
+            + ". Retrieved via LOTUS Wikidata Explorer with professional-grade "
+            + "chemical search capabilities (SACHEM/IDSM)."
+        ),
         "version": "0.0.1",
         "dateCreated": datetime.now().isoformat(),
         "license": "https://creativecommons.org/publicdomain/zero/1.0/",
@@ -1564,6 +1673,9 @@ def create_export_metadata(
             "version": "0.0.1",
             "url": "https://github.com/Adafede/marimo/blob/main/apps/lotus_wikidata_explorer.py",
             "license": "https://www.gnu.org/licenses/agpl-3.0.html",
+            "applicationCategory": "Scientific Research Tool",
+            "operatingSystem": "Platform Independent",
+            "softwareRequirements": "Python 3.13+, Marimo",
         },
         "provider": [
             {
@@ -1575,6 +1687,13 @@ def create_export_metadata(
                 "@type": "Organization",
                 "name": "Wikidata",
                 "url": "https://www.wikidata.org/",
+                "description": "Free and Open Knowledge Base",
+            },
+            {
+                "@type": "Organization",
+                "name": "IDSM (Integrated Database of Small Molecules)",
+                "url": "https://idsm.elixir-czech.cz/",
+                "description": "SACHEM Chemical Search Service Provider",
             },
         ],
         "citation": [
@@ -1594,6 +1713,12 @@ def create_export_metadata(
                 "@type": "DataDownload",
                 "encodingFormat": "application/json",
                 "contentUrl": "data:application/json",
+            },
+            {
+                "@type": "DataDownload",
+                "encodingFormat": "text/turtle",
+                "contentUrl": "data:text/turtle",
+                "description": "RDF/Turtle format with semantic web annotations",
             },
         ],
         "numberOfRecords": len(df),
@@ -1616,6 +1741,12 @@ def create_export_metadata(
             "taxon_qid": qid,
         },
         "sparql_endpoint": CONFIG["sparql_endpoint"],
+        "chemical_search_service": {
+            "name": "SACHEM",
+            "provider": "IDSM",
+            "endpoint": CONFIG["idsm_endpoint"],
+            "capabilities": ["substructure_search", "similarity_search"],
+        },
     }
 
     # Add filters if any are active
@@ -1647,8 +1778,8 @@ LOTUS Wikidata Explorer v0.0.1
 [Source Code](https://github.com/Adafede/marimo/blob/main/apps/lotus_wikidata_explorer.py) (AGPL-3.0)
 
 ### Data Sources
-- **LOTUS Initiative**: [Q104225190](https://www.wikidata.org/wiki/Q104225190) — CC0 1.0
-- **Wikidata**: [www.wikidata.org](https://www.wikidata.org/) — CC0 1.0
+- **LOTUS Initiative**: [Q104225190](https://www.wikidata.org/wiki/Q104225190) - CC0 1.0
+- **Wikidata**: [www.wikidata.org](https://www.wikidata.org/) - CC0 1.0
 """
 
 
@@ -1948,38 +2079,55 @@ def _():
             ### Quick Start Guide
 
             1. **Enter a taxon name** (e.g., "Artemisia annua") or Wikidata QID (e.g., "Q157115")
-            2. **Optional:** Enter a SMILES string for structure-based search (e.g., "CC(=O)Oc1ccccc1C(=O)O" for aspirin)
-            3. **Choose search behavior:**
-               - **Both taxon and SMILES**: Searches for the structure within that taxon only
-               - **SMILES only** (taxon empty or "*"): Searches for the structure across all compounds
-               - **Taxon only** (SMILES empty): Searches for all compounds in that taxon
-            4. **Optional:** Select SMILES search type (substructure or similarity)
-            5. **Optional:** Apply filters for mass, publication year, or molecular formula
-            6. **Click "🔍 Search Wikidata"** to retrieve data
-            7. **Download** your results in CSV, JSON, RDF/Turtle, or with full metadata
+            2. **Optional:** Enter a SMILES string for structure-based search
+               - Example: `CC(=O)Oc1ccccc1C(=O)O` (aspirin)
+               - Example: `c1ccccc1` (benzene)
+            3. **Search modes** (automatic based on input):
+               - **Taxon + SMILES**: Find specific structures within a taxonomic group
+               - **SMILES only**: Find structures across all compounds (leave taxon empty or use "*")
+               - **Taxon only**: Find all compounds in a taxonomic group (leave SMILES empty)
+            4. **SMILES search type**:
+               - **Substructure**: Find compounds containing your structure (exact match)
+               - **Similarity**: Find structurally similar compounds (uses Tanimoto coefficient)
+            5. **Similarity threshold** (when using similarity search):
+               - Adjust slider from 0.0 to 1.0 (default: 0.8)
+               - Higher = more similar, fewer results
+               - Lower = less similar, more results
+            6. **Optional filters**: Mass range, publication year, molecular formula constraints
+            7. **Click "🔍 Search Wikidata"** to retrieve data
+            8. **Export**: Download results in CSV, JSON, RDF/Turtle, or with full metadata
 
             ### Features
 
-            #### Search Options
+            #### Search Capabilities
 
-            **Taxon Search** 🔬  
-            - Search by scientific name (case-insensitive)
-            - Search directly by Wikidata QID for precision
-            - Use **"*"** (asterisk) to query all taxa at once
-            - **Ambiguous name resolution**: When multiple taxa share the same scientific name, the system automatically selects the one with the most compound associations
-            - Displays helpful suggestions for similar taxa
+            **Taxonomic Search** 🔬
+            - Search by scientific name (case-insensitive partial matching)
+            - Direct search by Wikidata QID for precision (e.g., Q157115)
+            - Wildcard search with **"*"** to query all taxa
+            - **Smart disambiguation**: Automatically selects the taxon with most compound data when names overlap
+            - Taxonomic hierarchy traversal (searches include all descendants)
+            - Helpful suggestions for ambiguous or misspelled names
 
-            **SMILES Search** 🧪  
-            - Search by chemical structure using SMILES notation
-            - **Substructure search**: Finds compounds containing the query structure
-            - **Similarity search**: Finds compounds with similar structures using Tanimoto coefficient
-            - **Powered by SACHEM**: Uses the SACHEM (Substructure And Chemistry Enhanced Matching) service from IDSM for proper chemical substructure and similarity searching
-            - Can be combined with taxon to narrow results
+            **Chemical Structure Search** 🧪 (Powered by SACHEM/IDSM)
+            - **Professional-grade** chemical search using SACHEM technology
+            - **Substructure search**:
+              - Graph-based matching (not text search)
+              - Stereochemistry-aware
+              - Respects chemical bond orders
+              - Example use: Find all alkaloids, find phenol-containing compounds
+            - **Similarity search**:
+              - Fingerprint-based Tanimoto similarity
+              - Adjustable threshold (0.0-1.0)
+              - Example use: Find aspirin analogs, discover compound families
+            - Can be combined with taxon for targeted searches
+            - Example: "Find salicylates in Salix (willow) species"
 
-            **Combined Search** 🔬+🧪  
-            - Enter both taxon and SMILES to find specific structures in specific taxa
-            - Example: Find aspirin-like compounds in Salix (willow) species
-            - Uses professional-grade chemical search algorithms
+            **Combined Search** 🔬 + 🧪
+            - Search for specific chemical structures within taxonomic groups
+            - Validate ethnobotanical knowledge
+            - Discover chemotaxonomic patterns
+            - Example: "Find quinoline alkaloids in Cinchona"
 
             #### Filtering Options
 
@@ -2076,23 +2224,23 @@ def _(
     ## TAXON INPUT
     taxon_input = mo.ui.text(
         value=state_taxon,
-        label="🔬 Taxon name or QID",
-        placeholder="e.g., Swertia chirayita, Anabaena, Q157115, or * for all taxa",
+        label="🔬 Taxon Name or Wikidata QID - Optional",
+        placeholder="e.g., Artemisia annua, Cinchona, Q157115, or * for all taxa",
         full_width=True,
     )
 
     ## SMILES INPUT
     smiles_input = mo.ui.text(
         value=state_smiles,
-        label="🧪 SMILES (optional - for structure search)",
-        placeholder="e.g., CC(=O)Oc1ccccc1C(=O)O (aspirin)",
+        label="🧪 Chemical Structure (SMILES) - Optional",
+        placeholder="e.g., c1ccccc1 (benzene), CC(=O)Oc1ccccc1C(=O)O (aspirin)",
         full_width=True,
     )
 
     smiles_search_type = mo.ui.dropdown(
         options=["substructure", "similarity"],
         value=state_smiles_search_type,
-        label="SMILES Search Type",
+        label="🔍 Chemical Search Type",
         full_width=True,
     )
 
@@ -2101,7 +2249,7 @@ def _(
         stop=1.0,
         step=0.05,
         value=state_smiles_threshold,
-        label="Similarity Threshold",
+        label="🎯 Similarity Threshold",
         full_width=True,
     )
 
@@ -2808,10 +2956,10 @@ def _(
                     "Compound SMILES": row["smiles"],
                     "Compound InChIKey": row["inchikey"],
                     "Taxon": row["taxon_name"],
-                    "Reference title": row["ref_title"] or "—",
+                    "Reference title": row["ref_title"] or "-",
                     "Reference DOI": create_link(f"https://doi.org/{doi}", doi)
                     if (doi := row["ref_doi"])
-                    else mo.Html("—"),
+                    else mo.Html("-"),
                     "Compound QID": create_wikidata_link(extract_qid(row["structure"])),
                     "Taxon QID": create_wikidata_link(extract_qid(row["taxon"])),
                     "Reference QID": create_wikidata_link(
@@ -2999,7 +3147,7 @@ def _(
             [
                 mo.callout(
                     mo.md(
-                        f"✅ **CSV Ready** — {len(csv_generation_data['export_df']):,} entries"
+                        f"✅ **CSV Ready** - {len(csv_generation_data['export_df']):,} entries"
                         + (
                             " (compressed)"
                             if _csv_mimetype == "application/gzip"
@@ -3037,7 +3185,7 @@ def _(
             [
                 mo.callout(
                     mo.md(
-                        f"✅ **JSON Ready** — {len(json_generation_data['export_df']):,} entries"
+                        f"✅ **JSON Ready** - {len(json_generation_data['export_df']):,} entries"
                         + (
                             " (compressed)"
                             if _json_mimetype == "application/gzip"
@@ -3079,7 +3227,7 @@ def _(
             [
                 mo.callout(
                     mo.md(
-                        f"✅ **RDF/Turtle Ready** — {len(rdf_generation_data['export_df']):,} entries"
+                        f"✅ **RDF/Turtle Ready** - {len(rdf_generation_data['export_df']):,} entries"
                         + (
                             " (compressed)"
                             if _rdf_mimetype == "application/gzip"
