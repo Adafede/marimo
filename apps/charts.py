@@ -13,7 +13,7 @@
 
 import marimo
 
-__generated_with = "0.16.3"
+__generated_with = "0.17.7"
 app = marimo.App(width="medium")
 
 with app.setup:
@@ -25,16 +25,14 @@ with app.setup:
 
 @app.cell
 def _():
-    mo.md(
-        """
-        # Interactive Data Visualization
+    mo.md("""
+    # Interactive Data Visualization
 
-        <img src="public/logo.png" width="200" />
+    <img src="public/logo.png" width="200" />
 
-        This notebook demonstrates a simple interactive visualization using Altair.
-        Try selecting the points!
-        """
-    )
+    This notebook demonstrates a simple interactive visualization using Altair.
+    Try selecting the points!
+    """)
     return
 
 
