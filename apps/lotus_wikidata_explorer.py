@@ -3452,10 +3452,245 @@ def _():
     return
 
 
-@app.function
-def main(app):
-    app.run()
-
-
 if __name__ == "__main__":
-    app.run()
+    import sys
+
+    if len(sys.argv) > 1 and sys.argv[1] == "export":
+        # CLI mode - extract and reuse app.setup functions
+        import argparse
+        import gzip
+        import io
+        from pathlib import Path
+
+        # Parse CLI arguments
+        parser = argparse.ArgumentParser(description="Export LOTUS data")
+        parser.add_argument("export")
+        parser.add_argument("--taxon", required=True, help="Taxon name or QID")
+        parser.add_argument("--output", "-o", help="Output file")
+        parser.add_argument(
+            "--format", "-f", choices=["csv", "json", "ttl"], default="csv"
+        )
+        parser.add_argument("--year-start", type=int, help="Minimum publication year")
+        parser.add_argument("--year-end", type=int, help="Maximum publication year")
+        parser.add_argument("--mass-min", type=float, help="Minimum molecular mass")
+        parser.add_argument("--mass-max", type=float, help="Maximum molecular mass")
+        parser.add_argument(
+            "--smiles", help="SMILES string for chemical structure search"
+        )
+        parser.add_argument(
+            "--smiles-search-type",
+            choices=["exact", "substructure", "similarity"],
+            help="Type of SMILES search (exact, substructure, or similarity)",
+        )
+        parser.add_argument(
+            "--smiles-threshold",
+            type=float,
+            default=0.8,
+            help="Similarity threshold (0.0-1.0, default: 0.8)",
+        )
+        parser.add_argument(
+            "--compress", action="store_true", help="Compress output with gzip"
+        )
+        parser.add_argument(
+            "--metadata-only",
+            action="store_true",
+            help="Show metadata only, don't export data",
+        )
+        parser.add_argument(
+            "--verbose", "-v", action="store_true", help="Verbose output"
+        )
+        args = parser.parse_args()
+
+        try:
+            with open(__file__, "r") as f:
+                file_content = f.read()
+
+            # Strategy: Extract app.setup block AND all @app.function decorated functions
+            # This ensures we get imports, constants, and all the actual functions
+            setup_start = file_content.find("with app.setup:")
+            if setup_start == -1:
+                raise RuntimeError("Could not find app.setup block")
+
+            setup_start += len("with app.setup:\n")
+            next_app_cell = file_content.find("\n@app.", setup_start)
+
+            if next_app_cell == -1:
+                raise RuntimeError("Could not find end of app.setup block")
+
+            setup_block = file_content[setup_start:next_app_cell]
+
+            # Dedent app.setup (remove 4-space indentation)
+            setup_lines = []
+            for line in setup_block.split("\n"):
+                if line.startswith("    "):
+                    setup_lines.append(line[4:])
+                elif line.strip() == "":
+                    setup_lines.append("")
+                else:
+                    break
+
+            # Extract all @app.function blocks (they contain the actual functions)
+            import re
+
+            function_pattern = r"@app\.function\s*\ndef\s+(\w+)"
+            function_blocks = []
+
+            # Find all @app.function decorated functions
+            for match in re.finditer(function_pattern, file_content):
+                func_name = match.group(1)
+                func_start = match.start()
+
+                # Find where this function ends (next @app. or if __name__)
+                next_decorator = file_content.find("\n@app.", func_start + 1)
+                next_main = file_content.find("\nif __name__", func_start)
+
+                if next_decorator != -1:
+                    func_end = next_decorator
+                elif next_main != -1:
+                    func_end = next_main
+                else:
+                    func_end = len(file_content)
+
+                # Extract function definition (skip the @app.function decorator)
+                func_def_start = file_content.find("def " + func_name, func_start)
+                func_block = file_content[func_def_start:func_end].strip()
+                function_blocks.append(func_block)
+
+            # Combine setup and functions into executable code
+            combined_code = (
+                "\n".join(setup_lines) + "\n\n" + "\n\n".join(function_blocks)
+            )
+
+            # Execute in isolated namespace
+            namespace = {}
+            exec(combined_code, namespace)
+
+            if args.verbose:
+                print(f"Querying LOTUS data for: {args.taxon}", file=sys.stderr)
+
+            # Resolve taxon using the REAL function
+            qid, warning = resolve_taxon_to_qid(args.taxon)
+            if not qid:
+                print(f"❌ Taxon not found: {args.taxon}", file=sys.stderr)
+                sys.exit(1)
+
+            # Determine search mode based on whether SMILES is provided
+            search_mode = "taxon"
+            if args.smiles:
+                search_mode = "combined" if qid and qid != "*" else "smiles"
+
+            if args.verbose:
+                if args.smiles:
+                    print(
+                        f"Querying with SMILES: {args.smiles} ({args.smiles_search_type or 'substructure'})",
+                        file=sys.stderr,
+                    )
+                print(
+                    f"Querying LOTUS data for: {args.taxon} (mode: {search_mode})",
+                    file=sys.stderr,
+                )
+
+            # Query using the REAL function with all arguments
+            df = query_wikidata(
+                qid=qid,
+                year_start=args.year_start,
+                year_end=args.year_end,
+                mass_min=args.mass_min,
+                mass_max=args.mass_max,
+                formula_filters=None,
+                smiles=args.smiles,
+                search_mode=search_mode,
+                smiles_search_type=args.smiles_search_type or "substructure",
+                smiles_threshold=args.smiles_threshold,
+            )
+
+            if df.is_empty():
+                print(f"❌ No data found for taxon '{args.taxon}'", file=sys.stderr)
+                sys.exit(1)
+
+            if args.verbose:
+                print(f"✓ Found {len(df):,} entries", file=sys.stderr)
+
+            # Metadata-only mode - use the REAL create_export_metadata function
+            if args.metadata_only:
+                import json
+
+                # Build filters dict in the same format as the UI
+                filters = {}
+
+                # Year filter
+                if args.year_start or args.year_end:
+                    filters["publication_year"] = {}
+                    if args.year_start:
+                        filters["publication_year"]["min"] = args.year_start
+                    if args.year_end:
+                        filters["publication_year"]["max"] = args.year_end
+
+                # Mass filter
+                if args.mass_min or args.mass_max:
+                    filters["molecular_mass"] = {}
+                    if args.mass_min:
+                        filters["molecular_mass"]["min"] = args.mass_min
+                    if args.mass_max:
+                        filters["molecular_mass"]["max"] = args.mass_max
+
+                # Chemical structure filter
+                if args.smiles:
+                    filters["chemical_structure"] = {
+                        "smiles": args.smiles,
+                        "search_type": args.smiles_search_type or "substructure",
+                    }
+                    if args.smiles_search_type == "similarity":
+                        filters["chemical_structure"]["similarity_threshold"] = (
+                            args.smiles_threshold
+                        )
+
+                # Use the REAL metadata function from app.setup
+                metadata = create_export_metadata(
+                    df, args.taxon, qid, filters if filters else None
+                )
+                print(json.dumps(metadata, indent=2))
+                sys.exit(0)
+
+            # Export data using REAL functions
+            if args.format == "csv":
+                data = df.write_csv().encode("utf-8")
+            elif args.format == "json":
+                data = df.write_json().encode("utf-8")
+            elif args.format == "ttl":
+                # Use REAL export functions from app.setup
+                export_df = prepare_export_dataframe(df)
+                data = export_to_rdf_turtle(export_df, args.taxon, qid).encode("utf-8")
+            else:
+                print(f"❌ Unknown format: {args.format}", file=sys.stderr)
+                sys.exit(1)
+
+            # Compress if requested
+            if args.compress:
+                buffer = io.BytesIO()
+                with gzip.GzipFile(fileobj=buffer, mode="wb") as gz:
+                    gz.write(data)
+                data = buffer.getvalue()
+
+            # Write output
+            if args.output:
+                output_path = Path(args.output)
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                output_path.write_bytes(data)
+                if args.verbose:
+                    print(
+                        f"✓ Exported {len(data):,} bytes to: {output_path}",
+                        file=sys.stderr,
+                    )
+            else:
+                sys.stdout.buffer.write(data)
+
+        except Exception as e:
+            print(f"❌ Error: {e}", file=sys.stderr)
+            if args.verbose:
+                import traceback
+
+                traceback.print_exc()
+            sys.exit(1)
+    else:
+        app.run()
