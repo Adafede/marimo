@@ -1344,7 +1344,7 @@ def query_wikidata(
     3. Combined: Find structures within a specific taxonomic group
     """
     # Build query based on search mode
-    if search_mode == "both" and smiles and qid:
+    if search_mode == "combined" and smiles and qid:
         # Combined taxon + SMILES search
         query = build_smiles_taxon_query(
             smiles, qid, smiles_search_type, smiles_threshold
@@ -2544,7 +2544,7 @@ def _(
                         mass_max=m_max,
                         formula_filters=formula_filt,
                         smiles=smiles_str,
-                        search_mode="both",
+                        search_mode="combined",
                         smiles_search_type=smiles_search_type.value,
                         smiles_threshold=smiles_threshold.value,
                     )
