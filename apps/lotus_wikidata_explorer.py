@@ -219,6 +219,259 @@ def build_taxon_search_query(taxon_name: str) -> str:
 
 
 @app.function
+def build_smiles_substructure_query(smiles: str) -> str:
+    """Build SPARQL query to find compounds by substructure search using SMILES.
+
+    Uses the SACHEM (Substructure And Chemistry Enhanced Matching) service
+    from IDSM (Integrated Database of Small Molecules) for proper chemical
+    substructure searching in Wikidata.
+    """
+    return f"""
+    PREFIX p: <http://www.wikidata.org/prop/>
+    PREFIX pr: <http://www.wikidata.org/prop/reference/>
+    PREFIX prov: <http://www.w3.org/ns/prov#>
+    PREFIX ps: <http://www.wikidata.org/prop/statement/>
+    PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+    PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+    PREFIX sachem: <http://bioinfo.uochb.cas.cz/rdf/v1.0/sachem#>
+    PREFIX idsm: <https://idsm.elixir-czech.cz/sparql/endpoint/>
+
+    SELECT ?compound ?compound_inchikey ?compound_smiles_conn ?taxon_name ?taxon ?ref_qid 
+           ?compound_smiles_iso ?compound_mass ?compound_formula ?compoundLabel 
+           ?ref_title ?ref_doi ?ref_date WHERE {{
+      {{
+        SERVICE idsm:wikidata {{
+          VALUES ?SUBSTRUCTURE {{
+            "{smiles}"
+          }}
+          ?compound sachem:substructureSearch [
+            sachem:query ?SUBSTRUCTURE
+          ].
+        }}
+      }}
+      ?compound wdt:P235 ?compound_inchikey;
+                wdt:P233 ?compound_smiles_conn.
+      OPTIONAL {{
+        ?statement ps:P703 ?taxon;
+                   prov:wasDerivedFrom ?ref.
+        ?ref pr:P248 ?ref_qid.
+        ?compound p:P703 ?statement.
+        ?taxon wdt:P225 ?taxon_name.
+        OPTIONAL {{ ?ref_qid wdt:P1476 ?ref_title. }}
+        OPTIONAL {{ ?ref_qid wdt:P356 ?ref_doi. }}
+        OPTIONAL {{ ?ref_qid wdt:P577 ?ref_date. }}
+      }}
+      OPTIONAL {{ ?compound wdt:P2017 ?compound_smiles_iso. }}
+      OPTIONAL {{ ?compound wdt:P2067 ?compound_mass. }}
+      OPTIONAL {{ ?compound wdt:P274 ?compound_formula. }}
+      OPTIONAL {{
+        ?compound rdfs:label ?compoundLabel.
+        FILTER(LANG(?compoundLabel) = "en")
+      }}
+      OPTIONAL {{
+        ?compound rdfs:label ?compoundLabel.
+        FILTER(LANG(?compoundLabel) = "mul")
+      }}
+    }}
+    """
+
+
+@app.function
+def build_smiles_similarity_query(smiles: str, threshold: float = 0.8) -> str:
+    """Build SPARQL query to find compounds by similarity search using SMILES.
+
+    Uses the SACHEM (Substructure And Chemistry Enhanced Matching) service
+    from IDSM (Integrated Database of Small Molecules) for proper chemical
+    similarity searching in Wikidata with Tanimoto coefficient threshold.
+
+    Args:
+        smiles: SMILES string to search for
+        threshold: Tanimoto similarity threshold (0.0-1.0), default 0.8
+    """
+    return f"""
+    PREFIX p: <http://www.wikidata.org/prop/>
+    PREFIX pr: <http://www.wikidata.org/prop/reference/>
+    PREFIX prov: <http://www.w3.org/ns/prov#>
+    PREFIX ps: <http://www.wikidata.org/prop/statement/>
+    PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+    PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+    PREFIX wikibase: <http://wikiba.se/ontology#>
+    PREFIX sachem: <http://bioinfo.uochb.cas.cz/rdf/v1.0/sachem#>
+    PREFIX idsm: <https://idsm.elixir-czech.cz/sparql/endpoint/>
+    PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+    SELECT ?compound ?compound_inchikey ?compound_smiles_conn ?taxon_name ?taxon ?ref_qid 
+           ?compound_smiles_iso ?compound_mass ?compound_formula ?compoundLabel 
+           ?ref_title ?ref_doi ?ref_date WHERE {{
+      # Similarity search using SACHEM service with Tanimoto threshold
+      {{
+        SERVICE idsm:wikidata {{
+          VALUES ?QUERY_SMILES {{
+            "{smiles}"
+          }}
+          VALUES ?CUTOFF {{
+            "{threshold}"^^xsd:double
+          }}
+          ?compound sachem:similarCompoundSearch[
+          sachem:query ?QUERY_SMILES;
+          sachem:cutoff ?CUTOFF
+          ].
+        }}
+      }}
+      ?compound wdt:P235 ?compound_inchikey;
+                wdt:P233 ?compound_smiles_conn.
+      OPTIONAL {{
+        ?statement ps:P703 ?taxon;
+                   prov:wasDerivedFrom ?ref.
+        ?ref pr:P248 ?ref_qid.
+        ?compound p:P703 ?statement.
+        ?taxon wdt:P225 ?taxon_name.
+        OPTIONAL {{ ?ref_qid wdt:P1476 ?ref_title. }}
+        OPTIONAL {{ ?ref_qid wdt:P356 ?ref_doi. }}
+        OPTIONAL {{ ?ref_qid wdt:P577 ?ref_date. }}
+      }}
+      OPTIONAL {{ ?compound wdt:P2017 ?compound_smiles_iso. }}
+      OPTIONAL {{ ?compound wdt:P2067 ?compound_mass. }}
+      OPTIONAL {{ ?compound wdt:P274 ?compound_formula. }}
+
+      OPTIONAL {{
+        ?compound rdfs:label ?compoundLabel.
+        FILTER(LANG(?compoundLabel) = "en")
+      }}
+      OPTIONAL {{
+        ?compound rdfs:label ?compoundLabel.
+        FILTER(LANG(?compoundLabel) = "mul")
+      }}
+    }}
+    """
+
+
+@app.function
+def build_smiles_taxon_query(
+    smiles: str, qid: str, search_type: str = "substructure", threshold: float = 0.8
+) -> str:
+    """Build SPARQL query to find compounds by SMILES within a specific taxon.
+
+    Uses the SACHEM service for proper chemical searching combined with
+    taxonomic hierarchy filtering.
+
+    Args:
+        smiles: SMILES string to search for
+        qid: Wikidata QID of the taxon
+        search_type: "substructure" or "similarity"
+        threshold: Similarity threshold (0.0-1.0) for similarity search
+    """
+    if search_type == "similarity":
+        # For similarity search within taxon
+        return f"""
+        PREFIX p: <http://www.wikidata.org/prop/>
+        PREFIX pr: <http://www.wikidata.org/prop/reference/>
+        PREFIX prov: <http://www.w3.org/ns/prov#>
+        PREFIX ps: <http://www.wikidata.org/prop/statement/>
+        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+        PREFIX wd: <http://www.wikidata.org/entity/>
+        PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+        PREFIX wikibase: <http://wikiba.se/ontology#>
+        PREFIX sachem: <http://bioinfo.uochb.cas.cz/rdf/v1.0/sachem#>
+        PREFIX idsm: <https://idsm.elixir-czech.cz/sparql/endpoint/>
+        PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+        SELECT ?compound ?compound_inchikey ?compound_smiles_conn ?taxon_name ?taxon ?ref_qid 
+               ?compound_smiles_iso ?compound_mass ?compound_formula ?compoundLabel 
+               ?ref_title ?ref_doi ?ref_date WHERE {{
+          {{
+            SERVICE idsm:wikidata {{
+              VALUES ?QUERY_SMILES {{
+                "{smiles}"
+              }}
+              VALUES ?CUTOFF {{
+                "{threshold}"^^xsd:double
+              }}
+              ?compound sachem:similarCompoundSearch[
+              sachem:query ?QUERY_SMILES;
+              sachem:cutoff ?CUTOFF
+              ].
+            }}
+          }}
+          ?taxon (wdt:P171*) wd:{qid};
+                  wdt:P225 ?taxon_name.
+          ?statement ps:P703 ?taxon;
+                     prov:wasDerivedFrom ?ref.
+          ?ref pr:P248 ?ref_qid.
+          ?compound wdt:P235 ?compound_inchikey;
+                    wdt:P233 ?compound_smiles_conn;
+                    p:P703 ?statement.
+          OPTIONAL {{ ?ref_qid wdt:P1476 ?ref_title. }}
+          OPTIONAL {{ ?ref_qid wdt:P356 ?ref_doi. }}
+          OPTIONAL {{ ?ref_qid wdt:P577 ?ref_date. }}
+          OPTIONAL {{ ?compound wdt:P2017 ?compound_smiles_iso. }}
+          OPTIONAL {{ ?compound wdt:P2067 ?compound_mass. }}
+          OPTIONAL {{ ?compound wdt:P274 ?compound_formula. }}
+          OPTIONAL {{
+            ?compound rdfs:label ?compoundLabel.
+            FILTER(LANG(?compoundLabel) = "en")
+          }}
+          OPTIONAL {{
+            ?compound rdfs:label ?compoundLabel.
+            FILTER(LANG(?compoundLabel) = "mul")
+          }}
+        }}
+        """
+    else:
+        # For substructure search within taxon
+        return f"""
+        PREFIX p: <http://www.wikidata.org/prop/>
+        PREFIX pr: <http://www.wikidata.org/prop/reference/>
+        PREFIX prov: <http://www.w3.org/ns/prov#>
+        PREFIX ps: <http://www.wikidata.org/prop/statement/>
+        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+        PREFIX wd: <http://www.wikidata.org/entity/>
+        PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+        PREFIX wikibase: <http://wikiba.se/ontology#>
+        PREFIX sachem: <http://bioinfo.uochb.cas.cz/rdf/v1.0/sachem#>
+        PREFIX idsm: <https://idsm.elixir-czech.cz/sparql/endpoint/>
+
+        SELECT ?compound ?compound_inchikey ?compound_smiles_conn ?taxon_name ?taxon ?ref_qid 
+               ?compound_smiles_iso ?compound_mass ?compound_formula ?compoundLabel 
+               ?ref_title ?ref_doi ?ref_date WHERE {{
+          # Substructure search using SACHEM service
+          {{
+            SERVICE idsm:wikidata {{
+              VALUES ?SUBSTRUCTURE {{
+                "{smiles}"
+              }}
+              ?compound sachem:substructureSearch [
+                sachem:query ?SUBSTRUCTURE
+              ].
+            }} 
+          }}         
+          ?taxon (wdt:P171*) wd:{qid};
+                  wdt:P225 ?taxon_name.       
+          ?statement ps:P703 ?taxon;
+                     prov:wasDerivedFrom ?ref.
+          ?ref pr:P248 ?ref_qid.
+          ?compound wdt:P235 ?compound_inchikey;
+                    wdt:P233 ?compound_smiles_conn;
+                    p:P703 ?statement.
+          OPTIONAL {{ ?ref_qid wdt:P1476 ?ref_title. }}
+          OPTIONAL {{ ?ref_qid wdt:P356 ?ref_doi. }}
+          OPTIONAL {{ ?ref_qid wdt:P577 ?ref_date. }}
+          OPTIONAL {{ ?compound wdt:P2017 ?compound_smiles_iso. }}
+          OPTIONAL {{ ?compound wdt:P2067 ?compound_mass. }}
+          OPTIONAL {{ ?compound wdt:P274 ?compound_formula. }}
+          OPTIONAL {{
+            ?compound rdfs:label ?compoundLabel.
+            FILTER(LANG(?compoundLabel) = "en")
+          }}
+          OPTIONAL {{
+            ?compound rdfs:label ?compoundLabel.
+            FILTER(LANG(?compoundLabel) = "mul")
+          }}
+        }}
+        """
+
+
+@app.function
 def build_compounds_query(qid: str) -> str:
     return f"""
     PREFIX p: <http://www.wikidata.org/prop/>
@@ -241,6 +494,9 @@ def build_compounds_query(qid: str) -> str:
       ?statement ps:P703 ?taxon;
                  prov:wasDerivedFrom ?ref.
       ?ref pr:P248 ?ref_qid.
+      OPTIONAL {{ ?ref_qid wdt:P1476 ?ref_title. }}
+      OPTIONAL {{ ?ref_qid wdt:P356 ?ref_doi. }}
+      OPTIONAL {{ ?ref_qid wdt:P577 ?ref_date. }}
       ?compound wdt:P235 ?compound_inchikey;
                 wdt:P233 ?compound_smiles_conn;
                 p:P703 ?statement.
@@ -257,10 +513,6 @@ def build_compounds_query(qid: str) -> str:
         ?compound rdfs:label ?compoundLabel.
         FILTER(LANG(?compoundLabel) = "mul")
       }}
-
-      OPTIONAL {{ ?ref_qid wdt:P1476 ?ref_title. }}
-      OPTIONAL {{ ?ref_qid wdt:P356 ?ref_doi. }}
-      OPTIONAL {{ ?ref_qid wdt:P577 ?ref_date. }}
     }}
     """
 
@@ -289,6 +541,9 @@ def build_all_compounds_query() -> str:
           ?ref pr:P248 ?ref_qid.
         }
       }
+      OPTIONAL { ?ref_qid wdt:P1476 ?ref_title. }
+      OPTIONAL { ?ref_qid wdt:P356 ?ref_doi. }
+      OPTIONAL { ?ref_qid wdt:P577 ?ref_date. }
       OPTIONAL { ?compound wdt:P2017 ?compound_smiles_iso. }
       OPTIONAL { ?compound wdt:P2067 ?compound_mass. }
       OPTIONAL { ?compound wdt:P274 ?compound_formula. }
@@ -300,9 +555,6 @@ def build_all_compounds_query() -> str:
         ?compound rdfs:label ?compoundLabel .
         FILTER(LANG(?compoundLabel) = "mul")
       }
-      OPTIONAL { ?ref_qid wdt:P1476 ?ref_title. }
-      OPTIONAL { ?ref_qid wdt:P356 ?ref_doi. }
-      OPTIONAL { ?ref_qid wdt:P577 ?ref_date. }
     }
     """
 
@@ -1122,9 +1374,13 @@ def query_wikidata(
     mass_min: Optional[float] = None,
     mass_max: Optional[float] = None,
     formula_filters: Optional[FormulaFilters] = None,
+    smiles: Optional[str] = None,
+    search_mode: str = "taxon",
+    smiles_search_type: str = "substructure",
+    smiles_threshold: float = 0.8,
 ) -> pl.DataFrame:
     """
-    Query Wikidata for compounds associated with a taxon.
+    Query Wikidata for compounds associated with a taxon or matching a SMILES query.
 
     Efficiency optimizations:
     - Single DataFrame creation (no intermediate copies)
@@ -1139,12 +1395,27 @@ def query_wikidata(
         mass_min: Minimum mass in Daltons
         mass_max: Maximum mass in Daltons
         formula_filters: Molecular formula filter criteria
+        smiles: SMILES string for chemical structure search (used in SMILES mode)
+        search_mode: "taxon", "smiles", or "both" - determines which search to perform
+        smiles_search_type: "substructure" or "similarity" - type of SMILES search
+        smiles_threshold: Similarity threshold (0.0-1.0) for similarity search (default: 0.8)
 
     Returns:
         Polars DataFrame with compound data
     """
-    # Use simplified query for wildcard, otherwise use taxon-specific query
-    if qid == "*":
+    # Build query based on search mode
+    if search_mode == "both" and smiles and qid:
+        # Combined taxon + SMILES search
+        query = build_smiles_taxon_query(
+            smiles, qid, smiles_search_type, smiles_threshold
+        )
+    elif search_mode == "smiles" and smiles:
+        # SMILES-only search
+        if smiles_search_type == "similarity":
+            query = build_smiles_similarity_query(smiles, smiles_threshold)
+        else:  # Default to substructure
+            query = build_smiles_substructure_query(smiles)
+    elif qid == "*":
         query = build_all_compounds_query()
     else:
         query = build_compounds_query(qid)
@@ -1605,7 +1876,14 @@ def _():
 
             ### Available Parameters
 
-            - `taxon` - Taxon name, QID, or **"*"** for all taxa (required)
+            - `taxon` - Taxon name, QID, or **"*"** for all taxa
+            - `smiles` - SMILES string for chemical structure search (optional)
+            - `smiles_search_type` - "substructure" (default) or "similarity"
+            - `smiles_threshold` - Similarity threshold (0.0-1.0, default: 0.8) - only used when `smiles_search_type=similarity`
+            - **Combination behavior:**
+              - Both `taxon` and `smiles`: Search for structure within that taxon
+              - `smiles` only (taxon empty or "*"): Search across all compounds
+              - `taxon` only (smiles empty): Search all compounds in taxon
             - `mass_filter=true` - Enable mass filter
             - `mass_min`, `mass_max` - Mass range in Daltons
             - `year_filter=true` - Enable year filter
@@ -1621,6 +1899,18 @@ def _():
             - `f_state`, `cl_state`, `br_state`, `i_state` - Halogen states (allowed/required/excluded)
 
             ### Examples
+
+            #### Search by structure within a taxon (combined)
+
+            ```text
+            ?taxon=Salix&smiles=CC(=O)Oc1ccccc1C(=O)O&smiles_search_type=substructure
+            ```
+
+            #### Search by structure across all compounds with similarity threshold
+
+            ```text
+            ?smiles=CC(=O)Oc1ccccc1C(=O)O&smiles_search_type=similarity&smiles_threshold=0.9
+            ```
 
             #### Search by taxon name with mass filter
 
@@ -1658,18 +1948,38 @@ def _():
             ### Quick Start Guide
 
             1. **Enter a taxon name** (e.g., "Artemisia annua") or Wikidata QID (e.g., "Q157115")
-            2. **Optional:** Apply filters for mass, publication year, or molecular formula
-            3. **Click "🔍 Search Wikidata"** to retrieve data
-            4. **Download** your results in CSV, JSON, RDF/Turtle, or with full metadata
+            2. **Optional:** Enter a SMILES string for structure-based search (e.g., "CC(=O)Oc1ccccc1C(=O)O" for aspirin)
+            3. **Choose search behavior:**
+               - **Both taxon and SMILES**: Searches for the structure within that taxon only
+               - **SMILES only** (taxon empty or "*"): Searches for the structure across all compounds
+               - **Taxon only** (SMILES empty): Searches for all compounds in that taxon
+            4. **Optional:** Select SMILES search type (substructure or similarity)
+            5. **Optional:** Apply filters for mass, publication year, or molecular formula
+            6. **Click "🔍 Search Wikidata"** to retrieve data
+            7. **Download** your results in CSV, JSON, RDF/Turtle, or with full metadata
 
             ### Features
 
-            #### Taxon Search
+            #### Search Options
+
+            **Taxon Search** 🔬  
             - Search by scientific name (case-insensitive)
             - Search directly by Wikidata QID for precision
             - Use **"*"** (asterisk) to query all taxa at once
             - **Ambiguous name resolution**: When multiple taxa share the same scientific name, the system automatically selects the one with the most compound associations
             - Displays helpful suggestions for similar taxa
+
+            **SMILES Search** 🧪  
+            - Search by chemical structure using SMILES notation
+            - **Substructure search**: Finds compounds containing the query structure
+            - **Similarity search**: Finds compounds with similar structures using Tanimoto coefficient
+            - **Powered by SACHEM**: Uses the SACHEM (Substructure And Chemistry Enhanced Matching) service from IDSM for proper chemical substructure and similarity searching
+            - Can be combined with taxon to narrow results
+
+            **Combined Search** 🔬+🧪  
+            - Enter both taxon and SMILES to find specific structures in specific taxa
+            - Example: Find aspirin-like compounds in Salix (willow) species
+            - Uses professional-grade chemical search algorithms
 
             #### Filtering Options
 
@@ -1755,11 +2065,46 @@ def _(
     state_p_min,
     state_s_max,
     state_s_min,
+    state_smiles,
+    state_smiles_search_type,
+    state_smiles_threshold,
     state_taxon,
     state_year_end,
     state_year_filter,
     state_year_start,
 ):
+    ## TAXON INPUT
+    taxon_input = mo.ui.text(
+        value=state_taxon,
+        label="🔬 Taxon name or QID",
+        placeholder="e.g., Swertia chirayita, Anabaena, Q157115, or * for all taxa",
+        full_width=True,
+    )
+
+    ## SMILES INPUT
+    smiles_input = mo.ui.text(
+        value=state_smiles,
+        label="🧪 SMILES (optional - for structure search)",
+        placeholder="e.g., CC(=O)Oc1ccccc1C(=O)O (aspirin)",
+        full_width=True,
+    )
+
+    smiles_search_type = mo.ui.dropdown(
+        options=["substructure", "similarity"],
+        value=state_smiles_search_type,
+        label="SMILES Search Type",
+        full_width=True,
+    )
+
+    smiles_threshold = mo.ui.slider(
+        start=0.0,
+        stop=1.0,
+        step=0.05,
+        value=state_smiles_threshold,
+        label="Similarity Threshold",
+        full_width=True,
+    )
+
     ## MASS FILTERS
     mass_filter = mo.ui.checkbox(label="⚖️ Filter by mass", value=state_mass_filter)
 
@@ -1893,13 +2238,6 @@ def _(
         options=halogen_options, value=state_i_state, label="I", full_width=True
     )
 
-    taxon_input = mo.ui.text(
-        value=state_taxon,
-        label="🔬 Taxon name or QID",
-        placeholder="e.g., Swertia chirayita, Anabaena, Q157115, or * for all taxa",
-        full_width=True,
-    )
-
     ## DATE FILTERS
     current_year = datetime.now().year
     year_filter = mo.ui.checkbox(
@@ -1946,6 +2284,9 @@ def _(
         run_button,
         s_max,
         s_min,
+        smiles_input,
+        smiles_search_type,
+        smiles_threshold,
         taxon_input,
         year_end,
         year_filter,
@@ -1977,6 +2318,9 @@ def _(
     run_button,
     s_max,
     s_min,
+    smiles_input,
+    smiles_search_type,
+    smiles_threshold,
     taxon_input,
     year_end,
     year_filter,
@@ -1985,17 +2329,28 @@ def _(
     filters_ui = [
         mo.md("## 🔍 Search Parameters"),
         taxon_input,
-        mo.md("### Optional Filters"),
-        mo.hstack([mass_filter], justify="start"),
-        mo.hstack([mass_min, mass_max], gap=2, widths="equal")
-        if mass_filter.value
-        else mo.Html(""),
-        mo.hstack([year_filter], justify="start"),
-        mo.hstack([year_start, year_end], gap=2, widths="equal")
-        if year_filter.value
-        else mo.Html(""),
-        mo.hstack([formula_filter], justify="start"),
+        smiles_input,
+        smiles_search_type,
     ]
+
+    # Show threshold slider only when similarity is selected
+    if smiles_search_type.value == "similarity":
+        filters_ui.append(smiles_threshold)
+
+    filters_ui.extend(
+        [
+            mo.md("### Optional Filters"),
+            mo.hstack([mass_filter], justify="start"),
+            mo.hstack([mass_min, mass_max], gap=2, widths="equal")
+            if mass_filter.value
+            else mo.Html(""),
+            mo.hstack([year_filter], justify="start"),
+            mo.hstack([year_start, year_end], gap=2, widths="equal")
+            if year_filter.value
+            else mo.Html(""),
+            mo.hstack([formula_filter], justify="start"),
+        ]
+    )
 
     if formula_filter.value:
         filters_ui.extend(
@@ -2045,6 +2400,9 @@ def _(
     run_button,
     s_max,
     s_min,
+    smiles_input,
+    smiles_search_type,
+    smiles_threshold,
     state_auto_run,
     taxon_input,
     year_end,
@@ -2057,32 +2415,57 @@ def _(
         qid = None
         taxon_warning = None
     else:
-        taxon_input_str = taxon_input.value.strip()
         start_time = time.time()
 
-        # Customize spinner message for wildcard
-        if taxon_input_str == "*":
-            spinner_message = "🔎 Searching all taxa ..."
+        # Get input values
+        smiles_str = smiles_input.value.strip() if smiles_input.value else ""
+        taxon_input_str = taxon_input.value.strip()
+
+        # Determine search mode based on inputs
+        # 1. Both present: use both (SMILES search filtered by taxon)
+        # 2. SMILES only (taxon is empty or "*"): use SMILES only
+        # 3. Taxon only (SMILES empty): use taxon only
+
+        use_smiles = bool(smiles_str)
+        use_taxon = bool(taxon_input_str and taxon_input_str != "*")
+
+        if use_smiles and use_taxon:
+            # Both present - search by structure within taxon
+            spinner_message = (
+                f"🔎 Searching for SMILES '{smiles_str[:30]}...' in {taxon_input_str}"
+            )
+        elif use_smiles:
+            # SMILES only
+            spinner_message = f"🔎 Searching for SMILES: {smiles_str[:50]}..."
+            qid = None
+            taxon_warning = None
         else:
-            spinner_message = f"🔎 Searching for: {taxon_input_str}"
+            # Taxon only
+            if taxon_input_str == "*":
+                spinner_message = "🔎 Searching all taxa ..."
+            else:
+                spinner_message = f"🔎 Searching for: {taxon_input_str}"
 
         with mo.status.spinner(title=spinner_message):
-            qid, taxon_warning = resolve_taxon_to_qid(taxon_input_str)
-            if not qid:
-                mo.stop(
-                    True,
-                    mo.callout(
-                        mo.md(
-                            f"**Taxon not found**\n\n"
-                            f"Could not find '{taxon_input_str}' in Wikidata.\n\n"
-                            f"**Suggestions:**\n"
-                            f"- Check spelling (scientific names are case-sensitive)\n"
-                            f"- Try a different taxonomic level (e.g., genus instead of species)\n"
-                            f"- Use a Wikidata QID directly (e.g., Q157115)"
+            # Resolve taxon if using taxon (either alone or with SMILES)
+            if use_taxon or (not use_smiles and taxon_input_str):
+                taxon_input_str = taxon_input.value.strip()
+                qid, taxon_warning = resolve_taxon_to_qid(taxon_input_str)
+                if not qid:
+                    mo.stop(
+                        True,
+                        mo.callout(
+                            mo.md(
+                                f"**Taxon not found**\n\n"
+                                f"Could not find '{taxon_input_str}' in Wikidata.\n\n"
+                                f"**Suggestions:**\n"
+                                f"- Check spelling (scientific names are case-sensitive)\n"
+                                f"- Try a different taxonomic level (e.g., genus instead of species)\n"
+                                f"- Use a Wikidata QID directly (e.g., Q157115)"
+                            ),
+                            kind="warn",
                         ),
-                        kind="warn",
-                    ),
-                )
+                    )
 
             try:
                 y_start = year_start.value if year_filter.value else None
@@ -2093,8 +2476,7 @@ def _(
                 # Build formula filters using dataclass
                 formula_filt = None
                 if formula_filter.value:
-                    # Helper function to convert CONFIG defaults back to None
-                    # (since UI shows them as placeholders but we don't want them to activate filters)
+
                     def normalize_element_value(val, default):
                         return None if val == default else val
 
@@ -2144,9 +2526,36 @@ def _(
                         i_state=i_state.value,
                     )
 
-                results_df = query_wikidata(
-                    qid, y_start, y_end, m_min, m_max, formula_filt
-                )
+                # Execute query based on what inputs are provided
+                if use_smiles and use_taxon:
+                    # Both SMILES and taxon - search for structure within taxon
+                    results_df = query_wikidata(
+                        qid=qid,
+                        mass_min=m_min,
+                        mass_max=m_max,
+                        formula_filters=formula_filt,
+                        smiles=smiles_str,
+                        search_mode="both",
+                        smiles_search_type=smiles_search_type.value,
+                        smiles_threshold=smiles_threshold.value,
+                    )
+                elif use_smiles:
+                    # SMILES only
+                    results_df = query_wikidata(
+                        qid="",
+                        mass_min=m_min,
+                        mass_max=m_max,
+                        formula_filters=formula_filt,
+                        smiles=smiles_str,
+                        search_mode="smiles",
+                        smiles_search_type=smiles_search_type.value,
+                        smiles_threshold=smiles_threshold.value,
+                    )
+                else:
+                    # Taxon only
+                    results_df = query_wikidata(
+                        qid, y_start, y_end, m_min, m_max, formula_filt
+                    )
             except Exception as e:
                 mo.stop(
                     True, mo.callout(mo.md(f"**Query Error:** {str(e)}"), kind="danger")
@@ -2707,10 +3116,15 @@ def _():
     url_params = mo.query_params()
 
     # Detect if we should auto-execute search
-    url_auto_search = "taxon" in url_params
+    url_auto_search = "taxon" in url_params or "smiles" in url_params
 
     # Get URL parameter values with defaults
     url_taxon = url_params.get("taxon", "Gentiana lutea")
+
+    # SMILES search parameters
+    url_smiles = url_params.get("smiles", "")
+    url_smiles_search_type = url_params.get("smiles_search_type", "substructure")
+    url_smiles_threshold = float(url_params.get("smiles_threshold", "0.8"))
 
     # Mass filter
     url_mass_filter = url_params.get("mass_filter") == "true"
@@ -2764,6 +3178,9 @@ def _():
         url_p_min,
         url_s_max,
         url_s_min,
+        url_smiles,
+        url_smiles_search_type,
+        url_smiles_threshold,
         url_taxon,
         url_year_end,
         url_year_filter,
@@ -2795,6 +3212,9 @@ def _(
     url_p_min,
     url_s_max,
     url_s_min,
+    url_smiles,
+    url_smiles_search_type,
+    url_smiles_threshold,
     url_taxon,
     url_year_end,
     url_year_filter,
@@ -2805,6 +3225,11 @@ def _(
     if url_auto_search:
         # Taxon state
         state_taxon = url_taxon or "Gentiana lutea"
+
+        # SMILES search state
+        state_smiles = url_smiles
+        state_smiles_search_type = url_smiles_search_type
+        state_smiles_threshold = url_smiles_threshold
 
         # Mass filter state
         state_mass_filter = url_mass_filter
@@ -2840,10 +3265,15 @@ def _(
 
         state_auto_run = True
 
-        mo.md(f"**Auto-executing search for:** {url_taxon}")
+        mo.md(
+            f"**Auto-executing search for:** {url_taxon if url_taxon else url_smiles}"
+        )
     else:
         # Default states when no URL parameters
         state_taxon = "Gentiana lutea"
+        state_smiles = ""
+        state_smiles_search_type = "substructure"
+        state_smiles_threshold = 0.8
         state_mass_filter = False
         state_mass_min = CONFIG["mass_default_min"]
         state_mass_max = CONFIG["mass_default_max"]
@@ -2892,6 +3322,9 @@ def _(
         state_p_min,
         state_s_max,
         state_s_min,
+        state_smiles,
+        state_smiles_search_type,
+        state_smiles_threshold,
         state_taxon,
         state_year_end,
         state_year_filter,
