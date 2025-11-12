@@ -11,5 +11,7 @@ dependencies = [
     "rdflib==7.4.0",
     "sparqlx==0.3.0",
 ]
+[project.scripts]
+lotus = "apps.lotus_wikidata_explorer:main"
 [tool.setuptools]
 packages = ["apps"]
