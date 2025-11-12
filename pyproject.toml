@@ -1,0 +1,13 @@
+[project]
+name = "marimo-adafede-deps"
+version = "0.0.1"
+description = "Simple dependency file"
+requires-python = ">=3.13"
+dependencies = [
+    "httpx==0.28.1",
+    "marimo",
+    "polars==1.35.2",
+    "pyarrow==22.0.0",
+    "rdflib==7.4.0",
+    "sparqlx==0.3.0",
+]
