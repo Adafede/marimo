@@ -1370,7 +1370,7 @@ def query_wikidata(
     # Process results efficiently with list comprehension (single pass)
     rows = [
         {
-            "structure": get_binding_value(b, "compound"),
+            "compound": get_binding_value(b, "compound"),
             "name": get_binding_value(b, "compoundLabel"),
             "inchikey": get_binding_value(b, "compound_inchikey"),
             "smiles": get_binding_value(b, "compound_smiles_iso")
@@ -1418,7 +1418,7 @@ def query_wikidata(
 
     # Final operations: deduplicate and sort
     # Note: unique() is efficient in Polars, keeps first occurrence
-    return df.unique(subset=["structure", "taxon", "reference"], keep="first").sort(
+    return df.unique(subset=["compound", "taxon", "reference"], keep="first").sort(
         "name"
     )
 
@@ -1427,7 +1427,7 @@ def query_wikidata(
 def create_display_row(row: Dict[str, str]) -> Dict[str, Any]:
     """Create a display row for the table with images and links."""
     img_url = create_structure_image_url(row["smiles"])
-    struct_qid = extract_qid(row["structure"])
+    compound_qid = extract_qid(row["compound"])
     taxon_qid = extract_qid(row["taxon"])
     ref_qid = extract_qid(row["reference"])
     doi = row["ref_doi"]
@@ -1442,7 +1442,7 @@ def create_display_row(row: Dict[str, str]) -> Dict[str, Any]:
         "Reference DOI": create_link(f"https://doi.org/{doi}", doi)
         if doi
         else mo.Html("-"),
-        "Compound QID": create_wikidata_link(struct_qid),
+        "Compound QID": create_wikidata_link(compound_qid),
         "Taxon QID": create_wikidata_link(taxon_qid),
         "Reference QID": create_wikidata_link(ref_qid),
     }
@@ -1453,7 +1453,7 @@ def prepare_export_dataframe(df: pl.DataFrame) -> pl.DataFrame:
     """Prepare dataframe for export with cleaned QIDs and selected columns."""
     return df.with_columns(
         [
-            pl.col("structure")
+            pl.col("compound")
             .str.replace(WIKIDATA_ENTITY_PREFIX, "", literal=True)
             .alias("compound_qid"),
             pl.col("taxon")
@@ -2641,7 +2641,7 @@ def _(
             )
         summary_and_downloads = mo.vstack(parts) if len(parts) > 1 else parts[0]
     else:
-        n_compounds = results_df.n_unique(subset=["structure"])
+        n_compounds = results_df.n_unique(subset=["compound"])
         n_taxa = results_df.n_unique(subset=["taxon"])
         n_refs = results_df.n_unique(subset=["reference"])
         n_entries = len(results_df)
@@ -2921,7 +2921,7 @@ def _(
                     "Reference DOI": create_link(f"https://doi.org/{doi}", doi)
                     if (doi := row["ref_doi"])
                     else mo.Html("-"),
-                    "Compound QID": create_wikidata_link(extract_qid(row["structure"])),
+                    "Compound QID": create_wikidata_link(extract_qid(row["compound"])),
                     "Taxon QID": create_wikidata_link(extract_qid(row["taxon"])),
                     "Reference QID": create_wikidata_link(
                         extract_qid(row["reference"])
@@ -3492,9 +3492,9 @@ def main():
             "--compress", action="store_true", help="Compress output with gzip"
         )
         parser.add_argument(
-            "--metadata-only",
+            "--show-metadata",
             action="store_true",
-            help="Show metadata only, don't export data",
+            help="Display FAIR-compliant dataset metadata and exit (no data export)",
         )
         parser.add_argument(
             "--verbose", "-v", action="store_true", help="Verbose output"
@@ -3579,16 +3579,38 @@ def main():
             if args.smiles:
                 search_mode = "combined" if qid and qid != "*" else "smiles"
 
+            # Improved verbose logging
             if args.verbose:
+                print(f"🔍 Search Configuration:", file=sys.stderr)
+                print(f"   Mode: {search_mode}", file=sys.stderr)
+                print(f"   Taxon: {args.taxon} (QID: {qid})", file=sys.stderr)
+
                 if args.smiles:
+                    print(f"   SMILES: {args.smiles}", file=sys.stderr)
                     print(
-                        f"Querying with SMILES: {args.smiles} ({args.smiles_search_type or 'substructure'})",
+                        f"   Search Type: {args.smiles_search_type or 'substructure'}",
                         file=sys.stderr,
                     )
-                print(
-                    f"Querying LOTUS data for: {args.taxon} (mode: {search_mode})",
-                    file=sys.stderr,
-                )
+                    if args.smiles_search_type == "similarity":
+                        print(
+                            f"   Similarity Threshold: {args.smiles_threshold}",
+                            file=sys.stderr,
+                        )
+
+                filters_applied = []
+                if args.year_start:
+                    filters_applied.append(f"year ≥ {args.year_start}")
+                if args.year_end:
+                    filters_applied.append(f"year ≤ {args.year_end}")
+                if args.mass_min:
+                    filters_applied.append(f"mass ≥ {args.mass_min}")
+                if args.mass_max:
+                    filters_applied.append(f"mass ≤ {args.mass_max}")
+
+                if filters_applied:
+                    print(f"   Filters: {', '.join(filters_applied)}", file=sys.stderr)
+
+                print(file=sys.stderr)  # Empty line for readability
 
             # Query using the REAL function with all arguments
             df = query_wikidata(
@@ -3605,14 +3627,27 @@ def main():
             )
 
             if df.is_empty():
-                print(f"❌ No data found for taxon '{args.taxon}'", file=sys.stderr)
+                print(f"❌ No data found", file=sys.stderr)
                 sys.exit(1)
 
             if args.verbose:
-                print(f"✓ Found {len(df):,} entries", file=sys.stderr)
+                print(f"✅ Query Results:", file=sys.stderr)
+                print(f"   Total entries: {len(df):,}", file=sys.stderr)
 
-            # Metadata-only mode - use the REAL create_export_metadata function
-            if args.metadata_only:
+                # Show unique counts if columns exist
+                if "compound" in df.columns:
+                    unique_compounds = df.select(pl.col("compound")).n_unique()
+                    print(f"   Unique compounds: {unique_compounds:,}", file=sys.stderr)
+                if "taxon" in df.columns:
+                    unique_taxa = df.select(pl.col("taxon")).n_unique()
+                    print(f"   Unique taxa: {unique_taxa:,}", file=sys.stderr)
+                if "reference" in df.columns:
+                    unique_refs = df.select(pl.col("reference")).n_unique()
+                    print(f"   Unique references: {unique_refs:,}", file=sys.stderr)
+                print(file=sys.stderr)  # Empty line for readability
+
+            # Show metadata mode - use the REAL create_export_metadata function
+            if args.show_metadata:
                 import json
 
                 # Build filters dict in the same format as the UI
@@ -3650,7 +3685,6 @@ def main():
                     df, args.taxon, qid, filters if filters else None
                 )
                 print(json.dumps(metadata, indent=2))
-                sys.exit(0)
 
             # Export data using REAL functions
             if args.format == "csv":
