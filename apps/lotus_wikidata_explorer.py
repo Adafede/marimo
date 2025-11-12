@@ -1498,7 +1498,7 @@ def create_export_metadata(
             dataset_name = f"LOTUS Data - {search_type.title()} search in {taxon_input}"
             description = (
                 f"Chemical compounds matching {search_type} search "
-                f"(SMILES: {smiles_str[:50]}{'...' if len(smiles_str) > 50 else ''}) "
+                f"(SMILES: {smiles_str}) "
                 f"within taxon {taxon_input} (Wikidata QID: {qid}). "
             )
         else:
@@ -1506,7 +1506,7 @@ def create_export_metadata(
             dataset_name = f"LOTUS Data - Chemical {search_type.title()} Search"
             description = (
                 f"Chemical compounds matching {search_type} search "
-                f"(SMILES: {smiles_str[:50]}{'...' if len(smiles_str) > 50 else ''}). "
+                f"(SMILES: {smiles_str}). "
             )
 
         if search_type == "similarity":
@@ -2663,22 +2663,17 @@ def _(
             _smiles_str = smiles_input.value.strip()
             search_type = smiles_search_type.value
 
-            # Truncate long SMILES for display
-            display_smiles = (
-                _smiles_str if len(_smiles_str) <= 50 else f"{_smiles_str[:47]}..."
-            )
-
             if search_type == "similarity":
                 threshold_val = smiles_threshold.value
                 smiles_info = mo.md(
-                    f"**Chemical search:** {search_type.title()} "
-                    f"(SMILES: `{display_smiles}`, "
-                    f"Tanimoto threshold: **{threshold_val}**)"
+                    f"**Chemical search:** `{_smiles_str}`<br>"
+                    f"*{search_type.title()} search*<br>"
+                    f"Tanimoto threshold: **{threshold_val}**"
                 )
             else:
                 smiles_info = mo.md(
-                    f"**Chemical search:** {search_type.title()} "
-                    f"(SMILES: `{display_smiles}`)"
+                    f"**Chemical search:** `{_smiles_str}`<br>"
+                    f"*{search_type.title()} search*"
                 )
             search_info_parts.append(smiles_info)
 
