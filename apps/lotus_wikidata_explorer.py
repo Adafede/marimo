@@ -169,6 +169,7 @@ with app.setup:
     PREFIX prov: <http://www.w3.org/ns/prov#>
     PREFIX ps: <http://www.wikidata.org/prop/statement/>
     PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+    PREFIX schema: <http://schema.org/>
     PREFIX wd: <http://www.wikidata.org/entity/>
     PREFIX wdt: <http://www.wikidata.org/prop/direct/>
     PREFIX wikibase: <http://wikiba.se/ontology#>
@@ -181,43 +182,58 @@ with app.setup:
     """
 
     # Common SELECT clause for compound queries
-    COMPOUND_SELECT_VARS = """?compound ?compound_inchikey ?compound_smiles_conn ?taxon_name ?taxon ?ref_qid 
-           ?compound_smiles_iso ?compound_mass ?compound_formula ?compoundLabel 
-           ?ref_title ?ref_doi ?ref_date"""
+    COMPOUND_SELECT_VARS = """
+    ?compound ?compoundLabel ?compound_inchikey ?compound_smiles_conn
+    ?compound_smiles_iso ?compound_mass ?compound_formula
+    ?taxon_name ?taxon
+    ?ref_qid ?ref_title ?ref_doi ?ref_date
+    ?statement ?ref
+    """
+
+    COMPOUND_MINIMAL_VARS = """
+    ?compound ?compoundLabel ?compound_inchikey ?compound_smiles_conn
+    """
+
+    COMPOUND_INTERIM_VARS = (
+        COMPOUND_MINIMAL_VARS
+        + """
+    ?taxon ?taxon_name ?ref_qid
+    """
+    )
 
     # Common compound identifier retrieval (used in subqueries)
     COMPOUND_IDENTIFIERS = """
-      ?compound wdt:P235 ?compound_inchikey;
-                wdt:P233 ?compound_smiles_conn.
+    ?compound wdt:P235 ?compound_inchikey;
+              wdt:P233 ?compound_smiles_conn.
     """
 
     # Common taxon-reference association pattern (used in subqueries)
     TAXON_REFERENCE_ASSOCIATION = """
-      ?compound p:P703 ?statement.
-      ?statement ps:P703 ?taxon;
-                 prov:wasDerivedFrom ?ref.
-      ?ref pr:P248 ?ref_qid.
-      ?taxon wdt:P225 ?taxon_name.
+    ?compound p:P703 ?statement.
+    ?statement ps:P703 ?taxon;
+               prov:wasDerivedFrom ?ref.
+    ?ref pr:P248 ?ref_qid.
+    ?taxon wdt:P225 ?taxon_name.
     """
 
     # Common compound property optionals
     COMPOUND_PROPERTIES_OPTIONAL = """
-      OPTIONAL { ?compound wdt:P2017 ?compound_smiles_iso. }
-      OPTIONAL { ?compound wdt:P2067 ?compound_mass. }
-      OPTIONAL { ?compound wdt:P274 ?compound_formula. }
-      OPTIONAL {
+    OPTIONAL { ?compound wdt:P2017 ?compound_smiles_iso. }
+    OPTIONAL { ?compound wdt:P2067 ?compound_mass. }
+    OPTIONAL { ?compound wdt:P274 ?compound_formula. }
+    OPTIONAL {
         ?compound rdfs:label ?compoundLabel.
         FILTER(LANG(?compoundLabel) = "en")
-      }
-      OPTIONAL {
+    }
+    OPTIONAL {
         ?compound rdfs:label ?compoundLabel.
         FILTER(LANG(?compoundLabel) = "mul")
-      }
+    }
     """
 
     # Common taxonomic and reference optionals
     TAXONOMIC_REFERENCE_OPTIONAL = """
-      OPTIONAL {
+    OPTIONAL {
         ?statement ps:P703 ?taxon;
                    prov:wasDerivedFrom ?ref.
         ?ref pr:P248 ?ref_qid.
@@ -226,14 +242,14 @@ with app.setup:
         OPTIONAL { ?ref_qid wdt:P1476 ?ref_title. }
         OPTIONAL { ?ref_qid wdt:P356 ?ref_doi. }
         OPTIONAL { ?ref_qid wdt:P577 ?ref_date. }
-      }
+    }
     """
 
     # Common reference metadata retrieval (after subquery)
     REFERENCE_METADATA_OPTIONAL = """
-      OPTIONAL { ?ref_qid wdt:P1476 ?ref_title. }
-      OPTIONAL { ?ref_qid wdt:P356 ?ref_doi. }
-      OPTIONAL { ?ref_qid wdt:P577 ?ref_date. }
+    OPTIONAL { ?ref_qid wdt:P1476 ?ref_title. }
+    OPTIONAL { ?ref_qid wdt:P356 ?ref_doi. }
+    OPTIONAL { ?ref_qid wdt:P577 ?ref_date. }
     """
 
     # Subscript translation map (constant for performance)
@@ -373,8 +389,8 @@ def build_taxon_search_query(taxon_name: str) -> str:
     return f"""
     PREFIX wdt: <http://www.wikidata.org/prop/direct/>
     SELECT ?taxon ?taxon_name WHERE {{
-      VALUES ?taxon_name {{ "{taxon_name}" }}
-      ?taxon wdt:P225 ?taxon_name .
+        VALUES ?taxon_name {{ "{taxon_name}" }}
+        ?taxon wdt:P225 ?taxon_name .
     }}
     """
 
@@ -393,46 +409,51 @@ def build_base_sachem_query(
     # Build SACHEM service clause based on search type
     if search_type == "similarity":
         sachem_clause = f"""
-          SERVICE idsm:wikidata {{
+        SERVICE idsm:wikidata {{
             VALUES ?QUERY_SMILES {{ "{escaped_smiles}" }}
             VALUES ?CUTOFF {{ "{threshold}"^^xsd:double }}
             ?compound sachem:similarCompoundSearch[
             sachem:query ?QUERY_SMILES;
             sachem:cutoff ?CUTOFF
             ].
-          }}"""
+        }}
+        """
     else:
         # substructure
         sachem_clause = f"""
-          SERVICE idsm:wikidata {{
+        SERVICE idsm:wikidata {{
             VALUES ?SUBSTRUCTURE {{ "{escaped_smiles}" }}
             ?compound sachem:substructureSearch [
-              sachem:query ?SUBSTRUCTURE
+                sachem:query ?SUBSTRUCTURE
             ].
-          }}"""
+        }}
+        """
 
     # Build taxon filter if requested
     taxon_filter = ""
     if include_taxon_filter and taxon_qid:
         taxon_filter = f"""
-          {TAXON_REFERENCE_ASSOCIATION}
-          ?taxon (wdt:P171*) wd:{taxon_qid}
-          {REFERENCE_METADATA_OPTIONAL}"""
+        {TAXON_REFERENCE_ASSOCIATION}
+        ?taxon (wdt:P171*) wd:{taxon_qid}
+        {REFERENCE_METADATA_OPTIONAL}
+        """
     else:
         taxon_filter = f"""
-          {TAXONOMIC_REFERENCE_OPTIONAL}"""
+        {TAXONOMIC_REFERENCE_OPTIONAL}
+        """
 
     # Construct full query
-    return f"""{SPARQL_PREFIXES}{SACHEM_PREFIXES}
+    return f"""
+    {SPARQL_PREFIXES}{SACHEM_PREFIXES}
     SELECT {COMPOUND_SELECT_VARS} WHERE {{
-      {{
-        SELECT ?compound ?compound_inchikey ?compound_smiles_conn WHERE {{
-{sachem_clause}
-          {COMPOUND_IDENTIFIERS}
+        {{
+            SELECT {COMPOUND_MINIMAL_VARS} WHERE {{
+                {sachem_clause}
+                {COMPOUND_IDENTIFIERS}
+            }}
         }}
-      }}
-{taxon_filter}
-      {COMPOUND_PROPERTIES_OPTIONAL}
+        {taxon_filter}
+        {COMPOUND_PROPERTIES_OPTIONAL}
     }}
     """
 
@@ -468,10 +489,11 @@ def build_smiles_taxon_query(
 @app.function
 def build_compounds_query(qid: str) -> str:
     """Build SPARQL query to find compounds in a specific taxon and its descendants."""
-    return f"""{SPARQL_PREFIXES}
+    return f"""
+    {SPARQL_PREFIXES}
     SELECT {COMPOUND_SELECT_VARS} WHERE {{
       {{
-        SELECT ?compound ?compound_inchikey ?compound_smiles_conn ?taxon ?taxon_name ?ref_qid WHERE {{
+        SELECT {COMPOUND_INTERIM_VARS} WHERE {{
           {COMPOUND_IDENTIFIERS}
           {TAXON_REFERENCE_ASSOCIATION}
         }}
@@ -486,16 +508,15 @@ def build_compounds_query(qid: str) -> str:
 @app.function
 def build_all_compounds_query() -> str:
     """Build SPARQL query to retrieve all compounds."""
-    return f"""{SPARQL_PREFIXES}
-    SELECT ?compound ?compoundLabel ?compound_inchikey ?compound_smiles_iso 
-                    ?compound_smiles_conn ?compound_mass ?compound_formula 
-                    ?taxon_name ?taxon ?ref_title ?ref_doi ?ref_qid ?ref_date WHERE {{
-      {{
-        SELECT ?compound ?compound_inchikey ?compound_smiles_conn ?taxon_name ?taxon ?ref_qid WHERE {{
-          {COMPOUND_IDENTIFIERS}
-          {TAXON_REFERENCE_ASSOCIATION}
+    return f"""
+    {SPARQL_PREFIXES}
+    SELECT {COMPOUND_SELECT_VARS} WHERE {{
+        {{
+            SELECT {COMPOUND_INTERIM_VARS} WHERE {{
+                    {COMPOUND_IDENTIFIERS}
+                    {TAXON_REFERENCE_ASSOCIATION}
+            }}
         }}
-      }}
       {REFERENCE_METADATA_OPTIONAL}
       {COMPOUND_PROPERTIES_OPTIONAL}
     }}
@@ -629,10 +650,7 @@ def build_sparql_values_clause(
 def build_taxon_details_query(qids: List[str]) -> str:
     values_clause = build_sparql_values_clause("taxon", qids)
     return f"""
-    PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-    PREFIX schema: <http://schema.org/>
-    PREFIX wd: <http://www.wikidata.org/entity/>
-    PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+    {SPARQL_PREFIXES}
 
     SELECT ?taxon ?taxonLabel ?taxonDescription ?taxon_parent ?taxon_parentLabel 
     WHERE {{
@@ -679,10 +697,7 @@ def build_taxon_connectivity_query(qids: List[str]) -> str:
     """Build query to count compound connections for each taxon."""
     values_clause = build_sparql_values_clause("taxon", qids)
     return f"""
-    PREFIX p: <http://www.wikidata.org/prop/>
-    PREFIX ps: <http://www.wikidata.org/prop/statement/>
-    PREFIX wd: <http://www.wikidata.org/entity/>
-    PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+    {SPARQL_PREFIXES}
 
     SELECT ?taxon (COUNT(DISTINCT ?compound) AS ?compound_count) WHERE {{
       {values_clause}
@@ -1508,6 +1523,8 @@ def query_wikidata(
             if (mass_raw := get_binding_value(b, "compound_mass", None))
             else None,
             "mf": get_binding_value(b, "compound_formula"),
+            "statement": get_binding_value(b, "statement"),
+            "ref": get_binding_value(b, "ref"),
         }
         for b in bindings
     ]
@@ -1585,23 +1602,29 @@ def prepare_export_dataframe(df: pl.DataFrame) -> pl.DataFrame:
         ]
     )
 
-    # Select and rename columns for export
-    return df_with_qids.select(
-        [
-            pl.col("name").alias("compound_name"),
-            pl.col("smiles").alias("compound_smiles"),
-            pl.col("inchikey").alias("compound_inchikey"),
-            pl.col("mass").alias("compound_mass"),
-            pl.col("mf").alias("molecular_formula"),
-            "taxon_name",
-            pl.col("ref_title").alias("reference_title"),
-            pl.col("ref_doi").alias("reference_doi"),
-            pl.col("pub_date").alias("reference_date"),
-            "compound_qid",
-            "taxon_qid",
-            "reference_qid",
-        ]
-    )
+    # Select and rename columns for export (including statement and ref URIs for RDF)
+    select_cols = [
+        pl.col("name").alias("compound_name"),
+        pl.col("smiles").alias("compound_smiles"),
+        pl.col("inchikey").alias("compound_inchikey"),
+        pl.col("mass").alias("compound_mass"),
+        pl.col("mf").alias("molecular_formula"),
+        "taxon_name",
+        pl.col("ref_title").alias("reference_title"),
+        pl.col("ref_doi").alias("reference_doi"),
+        pl.col("pub_date").alias("reference_date"),
+        "compound_qid",
+        "taxon_qid",
+        "reference_qid",
+    ]
+
+    # Add statement and ref if they exist (for RDF export)
+    if "statement" in df_with_qids.columns:
+        select_cols.append("statement")
+    if "ref" in df_with_qids.columns:
+        select_cols.append("ref")
+
+    return df_with_qids.select(select_cols)
 
 
 @app.function
@@ -1881,17 +1904,21 @@ def add_dataset_metadata(
     if qid and qid != "*":
         g.add((dataset_uri, SCHEMA.about, WD[qid]))
 
-    # Add provenance hashes as custom Wikidata qualifiers for reproducibility
-    WDQ = Namespace("http://www.wikidata.org/prop/qualifier/")
-    g.bind("wdq", WDQ)
+    # Add provenance hashes using dcterms for reproducibility
+    # Using dcterms:identifier for the query hash (what was asked)
+    # and dcterms:hasVersion for the result hash (what was found)
     g.add(
-        (dataset_uri, WDQ["lotus-query-hash"], Literal(query_hash, datatype=XSD.string))
+        (
+            dataset_uri,
+            DCTERMS.identifier,
+            Literal(f"query:{query_hash}", datatype=XSD.string),
+        )
     )
     g.add(
         (
             dataset_uri,
-            WDQ["lotus-result-hash"],
-            Literal(result_hash, datatype=XSD.string),
+            DCTERMS.hasVersion,
+            Literal(f"result:{result_hash}", datatype=XSD.string),
         )
     )
 
@@ -1915,6 +1942,7 @@ def add_compound_triples(
 ) -> None:
     """Add all triples for a single compound using Wikidata's full RDF structure."""
     WD = Namespace("http://www.wikidata.org/entity/")
+    WDS = Namespace("http://www.wikidata.org/entity/statement/")
     WDT = Namespace("http://www.wikidata.org/prop/direct/")
     P = Namespace("http://www.wikidata.org/prop/")
     PS = Namespace("http://www.wikidata.org/prop/statement/")
@@ -1959,24 +1987,31 @@ def add_compound_triples(
     #   ?ref pr:P248 ?ref_qid.
     taxon_qid = row.get("taxon_qid")
     ref_qid = row.get("reference_qid")
+    statement_uri = row.get("statement")
+    ref_uri_str = row.get("ref")
 
     if taxon_qid:
         taxon_uri = WD[taxon_qid]
 
-        # Create a unique blank node for the statement (reified statement)
-        # In real Wikidata, this would be a specific statement URI, but we use blank nodes
-        statement_node = BNode()
+        # Use actual statement URI from Wikidata if available, otherwise use blank node
+        if statement_uri and statement_uri.strip():
+            statement_node = URIRef(statement_uri)
+        else:
+            statement_node = BNode()
 
         # Full statement pattern (following Wikidata RDF structure)
         g.add((compound_uri, P.P703, statement_node))  # compound has a P703 statement
-        g.add((statement_node, PS.P703, taxon_uri))     # statement value is the taxon
+        g.add((statement_node, PS.P703, taxon_uri))  # statement value is the taxon
 
         # Add provenance if reference exists
         if ref_qid:
             ref_uri = WD[ref_qid]
 
-            # Create reference node (blank node for the reference)
-            ref_node = BNode()
+            # Use actual reference URI from Wikidata if available, otherwise use blank node
+            if ref_uri_str and ref_uri_str.strip():
+                ref_node = URIRef(ref_uri_str)
+            else:
+                ref_node = BNode()
 
             # Link statement to reference via provenance
             g.add((statement_node, PROV.wasDerivedFrom, ref_node))
@@ -2026,21 +2061,21 @@ def export_to_rdf_turtle(
 
     # Define and bind namespaces - full Wikidata RDF structure
     WD = Namespace("http://www.wikidata.org/entity/")
+    WDS = Namespace("http://www.wikidata.org/entity/statement/")
     WDT = Namespace("http://www.wikidata.org/prop/direct/")
     P = Namespace("http://www.wikidata.org/prop/")
     PS = Namespace("http://www.wikidata.org/prop/statement/")
     PR = Namespace("http://www.wikidata.org/prop/reference/")
-    WDQ = Namespace("http://www.wikidata.org/prop/qualifier/")
     PROV = Namespace("http://www.w3.org/ns/prov#")
     SCHEMA = Namespace("http://schema.org/")
 
     # Bind namespaces
     g.bind("wd", WD)
+    g.bind("wds", WDS)
     g.bind("wdt", WDT)
     g.bind("p", P)
     g.bind("ps", PS)
     g.bind("pr", PR)
-    g.bind("wdq", WDQ)
     g.bind("prov", PROV)
     g.bind("schema", SCHEMA)
     g.bind("rdfs", RDFS)
