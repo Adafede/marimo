@@ -106,7 +106,8 @@ with app.setup:
 
     # Wikidata URLs (constants)
     WIKIDATA_ENTITY_PREFIX = "http://www.wikidata.org/entity/"
-    WIKIDATA_WIKI_PREFIX = "https://www.wikidata.org/wiki/"
+    # WIKIDATA_WIKI_PREFIX = "https://www.wikidata.org/wiki/"
+    WIKIDATA_WIKI_PREFIX = "https://scholia.toolforge.org/"
 
     # ====================================================================
     # ELEMENT CONFIGURATION
@@ -206,8 +207,6 @@ with app.setup:
       OPTIONAL { ?ref_qid wdt:P356 ?ref_doi. }
       OPTIONAL { ?ref_qid wdt:P577 ?ref_date. }
     """
-
-    WIKIDATA_WIKI_PREFIX = "https://www.wikidata.org/wiki/"
 
     # Subscript translation map (constant for performance)
     SUBSCRIPT_MAP = str.maketrans("₀₁₂₃₄₅₆₇₈₉", "0123456789")
