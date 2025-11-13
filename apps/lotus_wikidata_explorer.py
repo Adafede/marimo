@@ -1826,13 +1826,11 @@ def create_export_metadata(
                 "@type": "Organization",
                 "name": "Wikidata",
                 "url": WIKIDATA_URL,
-                "description": "Free and Open Knowledge Base",
             },
             {
                 "@type": "Organization",
                 "name": "IDSM (Integrated Database of Small Molecules)",
                 "url": "https://idsm.elixir-czech.cz/",
-                "description": "SACHEM Chemical Search Service Provider",
             },
         ],
         "citation": [
@@ -1857,7 +1855,6 @@ def create_export_metadata(
                 "@type": "DataDownload",
                 "encodingFormat": "text/turtle",
                 "contentUrl": "data:text/turtle",
-                "description": "RDF/Turtle format with semantic web annotations",
             },
         ],
         "numberOfRecords": len(df),
@@ -2259,11 +2256,8 @@ def _():
 def _():
     mo.callout(
         mo.md("""
-        This app is work in progress and may not work as expected in all deployments.
-        **Recommended way to run:**
-        ```bash
-        uvx marimo run https://raw.githubusercontent.com/Adafede/marimo/refs/heads/main/apps/lotus_wikidata_explorer.py
-        ```
+        **Work in progress** - May not work in all deployments.  
+        **Recommended:** `uvx marimo run https://raw.githubusercontent.com/Adafede/marimo/refs/heads/main/apps/lotus_wikidata_explorer.py`
         """),
         kind="info",
     )
@@ -2276,71 +2270,25 @@ def _():
     url_api_section = mo.accordion(
         {
             "🔗 URL Query API": mo.md("""
-            You can query this notebook via URL parameters! When running locally or accessing the published version, add query parameters to automatically execute searches.
+            Query via URL parameters. Add to notebook URL to auto-execute searches.
 
-            ### Available Parameters
+            **Key Parameters:**
+            - `taxon` - Name, QID, or "*" for all
+            - `smiles` - Chemical structure
+            - `smiles_search_type` - "substructure" or "similarity"
+            - `smiles_threshold` - 0.0-1.0 (for similarity)
+            - `mass_filter=true`, `mass_min`, `mass_max`
+            - `year_filter=true`, `year_start`, `year_end`
+            - `formula_filter=true`, `exact_formula`
+            - Element ranges: `c_min`, `c_max`, `h_min`, `h_max`, etc.
+            - Halogen states: `f_state`, `cl_state`, `br_state`, `i_state`
 
-            - `taxon` - Taxon name, QID, or **"*"** for all taxa
-            - `smiles` - SMILES string for chemical structure search (optional)
-            - `smiles_search_type` - "substructure" (default) or "similarity"
-            - `smiles_threshold` - Similarity threshold (0.0-1.0, default: 0.8) - only used when `smiles_search_type=similarity`
-            - **Combination behavior:**
-              - Both `taxon` and `smiles`: Search for structure within that taxon
-              - `smiles` only (taxon empty or "*"): Search across all compounds
-              - `taxon` only (smiles empty): Search all compounds in taxon
-            - `mass_filter=true` - Enable mass filter
-            - `mass_min`, `mass_max` - Mass range in Daltons
-            - `year_filter=true` - Enable year filter
-            - `year_start`, `year_end` - Publication year range
-            - `formula_filter=true` - Enable formula filter
-            - `exact_formula` - Exact molecular formula (e.g., C15H10O5)
-            - `c_min`, `c_max` - Carbon count range
-            - `h_min`, `h_max` - Hydrogen count range
-            - `n_min`, `n_max` - Nitrogen count range
-            - `o_min`, `o_max` - Oxygen count range
-            - `p_min`, `p_max` - Phosphorus count range
-            - `s_min`, `s_max` - Sulfur count range
-            - `f_state`, `cl_state`, `br_state`, `i_state` - Halogen states (allowed/required/excluded)
-
-            ### Examples
-
-            #### Search by structure within a taxon (combined)
-
-            ```text
-            ?taxon=Salix&smiles=CC(=O)Oc1ccccc1C(=O)O&smiles_search_type=substructure
+            **Examples:**
             ```
-
-            #### Search by structure across all compounds with similarity threshold
-
-            ```text
-            ?smiles=CC(=O)Oc1ccccc1C(=O)O&smiles_search_type=similarity&smiles_threshold=0.9
-            ```
-
-            #### Search by taxon name with mass filter
-
-            ```text
-            ?taxon=Swertia&mass_filter=true&mass_min=200&mass_max=600
-            ```
-
-            #### Search by QID with year and carbon range
-
-            ```text
-            ?taxon=Q157115&year_filter=true&year_start=2000&formula_filter=true&c_min=15&c_max=25
-            ```
-
-            #### Search excluding fluorine and requiring chlorine
-
-            ```text
-            ?taxon=Artemisia&formula_filter=true&f_state=excluded&cl_state=required
-            ```
-
-            #### Search all taxa with mass filter
-
-            ```text
+            ?taxon=Salix&smiles=CC(=O)Oc1ccccc1C(=O)O
+            ?smiles=c1ccccc1&smiles_search_type=similarity&smiles_threshold=0.9
             ?taxon=*&mass_filter=true&mass_min=300&mass_max=500
             ```
-
-            **Tip:** Copy the query parameters above and append them to your notebook URL.
             """)
         }
     )
@@ -2348,86 +2296,21 @@ def _():
     # Help & Documentation section (right)
     help_section = mo.accordion(
         {
-            "❓ Help & Documentation": mo.md("""
-            ### Quick Start Guide
+            "❓ Help": mo.md("""
+            **Quick Start:** Enter taxon (or "*") → Add SMILES (optional) → Apply filters → Search
 
-            1. **Enter a taxon name** (e.g., "Artemisia annua") or Wikidata QID (e.g., "Q157115")
-            2. **Optional:** Enter a SMILES string for structure-based search
-               - Example: `CC(=O)Oc1ccccc1C(=O)O` (aspirin)
-               - Example: `c1ccccc1` (benzene)
-            3. **Search modes** (automatic based on input):
-               - **Taxon + SMILES**: Find specific structures within a taxonomic group
-               - **SMILES only**: Find structures across all compounds (leave taxon empty or use "*")
-               - **Taxon only**: Find all compounds in a taxonomic group (leave SMILES empty)
-            4. **SMILES search type**:
-               - **Substructure**: Find compounds containing your structure (exact match)
-               - **Similarity**: Find structurally similar compounds (uses Tanimoto coefficient)
-            5. **Similarity threshold** (when using similarity search):
-               - Adjust slider from 0.0 to 1.0 (default: 0.8)
-               - Higher = more similar, fewer results
-               - Lower = less similar, more results
-            6. **Optional filters**: Mass range, publication year, molecular formula constraints
-            7. **Click "🔍 Search Wikidata"** to retrieve data
-            8. **Export**: Download results in CSV, JSON, RDF/Turtle, or with full metadata
+            **Search Modes:**
+            - **Taxon only**: All compounds in that group
+            - **SMILES only**: Find structures everywhere
+            - **Both**: Find structures in specific taxon
 
-            ### Features
+            **Chemical Search** (SACHEM/IDSM):
+            - **Substructure**: Find compounds containing your structure
+            - **Similarity**: Find similar compounds (Tanimoto 0.0-1.0, default 0.8)
 
-            #### Search Capabilities
+            **Filters:** Mass (Da), Year, Formula (exact or element ranges + halogen control)
 
-            **Taxonomic Search** 🔬
-            - Search by scientific name (case-insensitive partial matching)
-            - Direct search by Wikidata QID for precision (e.g., Q157115)
-            - Wildcard search with **"*"** to query all taxa
-            - **Smart disambiguation**: Automatically selects the taxon with most compound data when names overlap
-            - Taxonomic hierarchy traversal (searches include all descendants)
-            - Helpful suggestions for ambiguous or misspelled names
-
-            **Chemical Structure Search** 🧪 (Powered by SACHEM/IDSM)
-            - **Substructure search**:
-              - Graph-based matching (not text search)
-              - Stereochemistry-aware
-              - Respects chemical bond orders
-              - Example use: Find all alkaloids, find phenol-containing compounds
-            - **Similarity search**:
-              - Fingerprint-based Tanimoto similarity
-              - Adjustable threshold (0.0-1.0)
-              - Example use: Find aspirin analogs, discover compound families
-            - Can be combined with taxon for targeted searches
-            - Example: "Find salicylates in Salix (willow) species"
-
-            **Combined Search** 🔬 + 🧪
-            - Search for specific chemical structures within taxonomic groups
-            - Validate ethnobotanical knowledge
-            - Discover chemotaxonomic patterns
-            - Example: "Find quinoline alkaloids in Cinchona"
-
-            #### Filtering Options
-
-            **Mass Filter** ⚖️  
-            Filter compounds by molecular mass (in Daltons)
-
-            **Molecular Formula Filter** ⚛️  
-            - Search by exact formula (e.g., C15H10O5)
-            - Set element ranges (C, H, N, O, P, S)
-            - Control halogen presence (F, Cl, Br, I):
-              - *Allowed*: Can be present or absent
-              - *Required*: Must be present
-              - *Excluded*: Must not be present
-
-            **Publication Year Filter** 🗓️  
-            Filter by the year references were published
-
-            #### Data Export
-
-            - **CSV**: Spreadsheet-compatible format
-            - **JSON**: Machine-readable structured data
-            - **RDF/Turtle**: Semantic web format
-              - Small datasets (≤{CONFIG["lazy_generation_threshold"]:,} rows): Generated automatically
-              - Large datasets (>{CONFIG["lazy_generation_threshold"]:,} rows): Click "Generate RDF/Turtle" button to create on-demand
-            - **Metadata**: Schema.org-compliant metadata with provenance
-            - **Citation**: Proper citations for your publications
-
-            **Note:** For large datasets (>{CONFIG["lazy_generation_threshold"]:,} rows), export generation is deferred for performance. Click the generation buttons when you're ready to create exports. Files are automatically compressed when >8MB.
+            **Export:** CSV, JSON, RDF/Turtle. Auto-compress >8MB.
             """)
         }
     )
@@ -2489,11 +2372,7 @@ def _():
         if param_items:  # Only show if we found any parameters
             mo.callout(
                 mo.md(f"""
-                ### 🔗 URL Query Detected
-
-                {chr(10).join(param_items)}
-
-                The search will auto-execute with these parameters.
+                **URL Query Detected** - Auto-executing with: {chr(10).join(param_items)}
                 """),
                 kind="info",
             )
