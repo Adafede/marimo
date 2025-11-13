@@ -1587,9 +1587,7 @@ def query_wikidata(
 
 
 @app.function
-def create_display_row(
-    row: Dict[str, str], query_hash: str = "", result_hash: str = ""
-) -> Dict[str, Any]:
+def create_display_row(row: Dict[str, str]) -> Dict[str, Any]:
     """Create a display row for the table with images and links."""
     img_url = create_structure_image_url(row["smiles"])
     compound_qid = extract_qid(row["compound"])
@@ -1618,12 +1616,6 @@ def create_display_row(
         if statement_id
         else mo.Html("-"),
     }
-
-    # Add hashes if provided
-    if query_hash:
-        result["Query Hash"] = query_hash
-    if result_hash:
-        result["Result Hash"] = result_hash
 
     return result
 
@@ -2963,6 +2955,8 @@ def _(
     p_max,
     p_min,
     qid,
+    query_hash,
+    result_hash,
     results_df,
     run_button,
     s_max,
@@ -3049,6 +3043,13 @@ def _(
         else:
             combined_search_info = search_info_parts[0]
 
+        # Hash display for provenance
+        hash_display = mo.md(
+            f"**Provenance Hashes**<br>"
+            f"Query: `{query_hash}`<br>"
+            f"Results: `{result_hash}`"
+        )
+
         # Stats cards
         stats_cards = mo.hstack(
             [
@@ -3082,15 +3083,21 @@ def _(
         if len(search_info_parts) > 1:
             # Stack vertically when SMILES is present for better readability
             search_and_stats = mo.vstack(
-                [combined_search_info, stats_cards],
+                [combined_search_info, hash_display, stats_cards],
                 gap=2,
             )
         else:
             # Single line when no SMILES
-            search_and_stats = mo.hstack(
-                [combined_search_info, stats_cards],
-                justify="space-between",
-                align="start",
+            search_and_stats = mo.vstack(
+                [
+                    mo.hstack(
+                        [combined_search_info, stats_cards],
+                        justify="space-between",
+                        align="start",
+                    ),
+                    hash_display,
+                ],
+                gap=2,
             )
 
         # Build API URL for sharing
@@ -3215,6 +3222,8 @@ def _(
         csv_generation_data = None
         json_generation_data = None
         rdf_generation_data = None
+        query_hash = None
+        result_hash = None
     elif len(results_df) == 0:
         download_ui = mo.callout(
             mo.md("No compounds match your search criteria."), kind="neutral"
@@ -3229,6 +3238,8 @@ def _(
         csv_generation_data = None
         json_generation_data = None
         rdf_generation_data = None
+        query_hash = None
+        result_hash = None
     else:
         # Build filters for metadata (needed for hash computation)
         _formula_filt = None
@@ -3332,8 +3343,6 @@ def _(
                     "Statement": create_link(stmt_uri, stmt_uri.split("/")[-1])
                     if (stmt_uri := row.get("statement", ""))
                     else mo.Html("-"),
-                    "Query Hash": query_hash,
-                    "Result Hash": result_hash,
                 }
                 for row in limited_df.iter_rows(named=True)
             ]
@@ -3349,8 +3358,7 @@ def _(
             )
         else:
             display_data = [
-                create_display_row(row, query_hash, result_hash)
-                for row in results_df.iter_rows(named=True)
+                create_display_row(row) for row in results_df.iter_rows(named=True)
             ]
             display_note = mo.Html("")
         display_table = mo.ui.table(
@@ -3469,6 +3477,8 @@ def _(
         tables_ui,
         taxon_name,
         ui_is_large_dataset,
+        query_hash,
+        result_hash,
     )
 
 
