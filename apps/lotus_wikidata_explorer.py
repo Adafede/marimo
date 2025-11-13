@@ -75,16 +75,16 @@ with app.setup:
         # External Services
         "cdk_base": "https://www.simolecule.com/cdkdepict/depict/cot/svg",
         "sparql_endpoint": "https://qlever.dev/api/wikidata",
-        # "sparql_endpoint": "https://query-legacy-full.wikidata.org/sparql",
+        # "sparql_endpoint": "https://query-legacy-full.wikidata.org/sparql",  # Alternative
         "idsm_endpoint": "https://idsm.elixir-czech.cz/sparql/endpoint/",
-        # Network & Performance
+        # Network & Performance Tuning
         "max_retries": 3,
-        "retry_backoff": 2,
+        "retry_backoff": 2,  # Exponential backoff multiplier
         "query_timeout": 300,  # Query timeout in seconds (5 minutes)
         "table_row_limit": 10000,  # Max rows to display (prevents browser slowdown)
         "lazy_generation_threshold": 5000,  # Defer download generation for large datasets
         "download_embed_threshold_bytes": 8_000_000,  # Compress downloads > 8MB
-        # UI Styling
+        # UI Styling & Display
         "color_hyperlink": "#006699",
         "page_size_default": 10,  # Rows per page in display table
         "page_size_export": 25,  # Rows per page in export table
@@ -94,7 +94,7 @@ with app.setup:
         "mass_default_min": 0,
         "mass_default_max": 2000,
         "mass_ui_max": 10000,
-        # Element Count Limits (for formula filter UI)
+        # Element Count Limits (for molecular formula filter UI)
         "element_c_max": 100,
         "element_h_max": 200,
         "element_n_max": 50,
@@ -319,26 +319,29 @@ with app.setup:
 @app.function
 def validate_smiles(smiles: str) -> Tuple[bool, Optional[str]]:
     """Validate SMILES string for common issues."""
+    # Empty is valid (means no SMILES search)
     if not smiles or not smiles.strip():
-        return True, None  # Empty is valid (means no SMILES search)
+        return True, None
 
     smiles = smiles.strip()
 
-    # Check for obviously invalid patterns
+    # Length validation
     if len(smiles) < 1:
         return False, "SMILES string is too short"
-
     if len(smiles) > 10000:
         return False, "SMILES string is too long (max 10,000 characters)"
 
     # Check for null bytes or control characters
-    if "\x00" in smiles or any(ord(c) < 32 and c not in "\t\n\r" for c in smiles):
-        return False, "SMILES contains invalid control characters"
+    if "\x00" in smiles:
+        return False, "SMILES contains null bytes"
+
+    invalid_chars = [c for c in smiles if ord(c) < 32 and c not in "\t\n\r"]
+    if invalid_chars:
+        return False, f"SMILES contains invalid control characters: {invalid_chars[:3]}"
 
     # Basic sanity check: should contain at least one atom symbol
-    # Common atom symbols in SMILES: C, N, O, S, P, F, Cl, Br, I, etc.
-    has_atom = any(c in smiles for c in "CNOSPFIBcnops")
-    if not has_atom:
+    # Common atom symbols in SMILES: C, N, O, S, P, F, Cl, Br, I, B, c (aromatic), etc.
+    if not any(c in smiles for c in "CNOSPFIBcnops"):
         return False, "SMILES appears to be missing atom symbols"
 
     return True, None
@@ -377,36 +380,19 @@ def build_taxon_search_query(taxon_name: str) -> str:
 
 
 @app.function
-def build_smiles_substructure_query(smiles: str) -> str:
-    """Build SPARQL query for chemical substructure search using SACHEM."""
+def build_base_sachem_query(
+    smiles: str,
+    search_type: str = "substructure",
+    threshold: float = 0.8,
+    include_taxon_filter: bool = False,
+    taxon_qid: Optional[str] = None,
+) -> str:
+    """Build base SACHEM chemical search query."""
     escaped_smiles = escape_smiles_for_sparql(smiles)
-    return f"""{SPARQL_PREFIXES}{SACHEM_PREFIXES}
-    SELECT {COMPOUND_SELECT_VARS} WHERE {{
-      {{
-        SELECT ?compound ?compound_inchikey ?compound_smiles_conn WHERE {{
-          SERVICE idsm:wikidata {{
-            VALUES ?SUBSTRUCTURE {{ "{escaped_smiles}" }}
-            ?compound sachem:substructureSearch [
-              sachem:query ?SUBSTRUCTURE
-            ].
-          }}
-          {COMPOUND_IDENTIFIERS}
-        }}
-      }}
-      {TAXONOMIC_REFERENCE_OPTIONAL}
-      {COMPOUND_PROPERTIES_OPTIONAL}
-    }}
-    """
 
-
-@app.function
-def build_smiles_similarity_query(smiles: str, threshold: float = 0.8) -> str:
-    """Build SPARQL query for chemical similarity search using SACHEM."""
-    escaped_smiles = escape_smiles_for_sparql(smiles)
-    return f"""{SPARQL_PREFIXES}{SACHEM_PREFIXES}
-    SELECT {COMPOUND_SELECT_VARS} WHERE {{
-      {{
-        SELECT ?compound ?compound_inchikey ?compound_smiles_conn WHERE {{
+    # Build SACHEM service clause based on search type
+    if search_type == "similarity":
+        sachem_clause = f"""
           SERVICE idsm:wikidata {{
             VALUES ?QUERY_SMILES {{ "{escaped_smiles}" }}
             VALUES ?CUTOFF {{ "{threshold}"^^xsd:double }}
@@ -414,14 +400,55 @@ def build_smiles_similarity_query(smiles: str, threshold: float = 0.8) -> str:
             sachem:query ?QUERY_SMILES;
             sachem:cutoff ?CUTOFF
             ].
-          }}
+          }}"""
+    else:
+        # substructure
+        sachem_clause = f"""
+          SERVICE idsm:wikidata {{
+            VALUES ?SUBSTRUCTURE {{ "{escaped_smiles}" }}
+            ?compound sachem:substructureSearch [
+              sachem:query ?SUBSTRUCTURE
+            ].
+          }}"""
+
+    # Build taxon filter if requested
+    taxon_filter = ""
+    if include_taxon_filter and taxon_qid:
+        taxon_filter = f"""
+          {TAXON_REFERENCE_ASSOCIATION}
+          ?taxon (wdt:P171*) wd:{taxon_qid}
+          {REFERENCE_METADATA_OPTIONAL}"""
+    else:
+        taxon_filter = f"""
+          {TAXONOMIC_REFERENCE_OPTIONAL}"""
+
+    # Construct full query
+    return f"""{SPARQL_PREFIXES}{SACHEM_PREFIXES}
+    SELECT {COMPOUND_SELECT_VARS} WHERE {{
+      {{
+        SELECT ?compound ?compound_inchikey ?compound_smiles_conn WHERE {{
+{sachem_clause}
           {COMPOUND_IDENTIFIERS}
         }}
       }}
-      {TAXONOMIC_REFERENCE_OPTIONAL}
+{taxon_filter}
       {COMPOUND_PROPERTIES_OPTIONAL}
     }}
     """
+
+
+@app.function
+def build_smiles_substructure_query(smiles: str) -> str:
+    """Build SPARQL query for chemical substructure search using SACHEM."""
+    return build_base_sachem_query(smiles, search_type="substructure")
+
+
+@app.function
+def build_smiles_similarity_query(smiles: str, threshold: float = 0.8) -> str:
+    """Build SPARQL query for chemical similarity search using SACHEM."""
+    return build_base_sachem_query(
+        smiles, search_type="similarity", threshold=threshold
+    )
 
 
 @app.function
@@ -429,51 +456,13 @@ def build_smiles_taxon_query(
     smiles: str, qid: str, search_type: str = "substructure", threshold: float = 0.8
 ) -> str:
     """Build SPARQL query to find compounds by SMILES within a specific taxon."""
-    escaped_smiles = escape_smiles_for_sparql(smiles)
-    if search_type == "similarity":
-        # Optimized similarity search: SACHEM first, then taxon filter
-        return f"""{SPARQL_PREFIXES}{SACHEM_PREFIXES}
-        SELECT {COMPOUND_SELECT_VARS} WHERE {{
-          {{
-            SELECT ?compound ?compound_inchikey ?compound_smiles_conn WHERE {{
-              SERVICE idsm:wikidata {{
-                VALUES ?QUERY_SMILES {{ "{escaped_smiles}" }}
-                VALUES ?CUTOFF {{ "{threshold}"^^xsd:double }}
-                ?compound sachem:similarCompoundSearch[
-                sachem:query ?QUERY_SMILES;
-                sachem:cutoff ?CUTOFF
-                ].
-              }}
-              {COMPOUND_IDENTIFIERS}
-            }}
-          }}
-          {TAXON_REFERENCE_ASSOCIATION}
-          ?taxon (wdt:P171*) wd:{qid}
-          {REFERENCE_METADATA_OPTIONAL}
-          {COMPOUND_PROPERTIES_OPTIONAL}
-        }}
-        """
-    else:
-        # Optimized substructure search: SACHEM first, then taxon filter
-        return f"""{SPARQL_PREFIXES}{SACHEM_PREFIXES}
-        SELECT {COMPOUND_SELECT_VARS} WHERE {{
-          {{
-            SELECT ?compound ?compound_inchikey ?compound_smiles_conn WHERE {{
-              SERVICE idsm:wikidata {{
-                VALUES ?SUBSTRUCTURE {{ "{escaped_smiles}" }}
-                ?compound sachem:substructureSearch [
-                  sachem:query ?SUBSTRUCTURE
-                ].
-              }}
-              {COMPOUND_IDENTIFIERS}
-            }}
-          }}
-          {TAXON_REFERENCE_ASSOCIATION}
-          ?taxon (wdt:P171*) wd:{qid}
-          {REFERENCE_METADATA_OPTIONAL}
-          {COMPOUND_PROPERTIES_OPTIONAL}
-        }}
-        """
+    return build_base_sachem_query(
+        smiles,
+        search_type=search_type,
+        threshold=threshold,
+        include_taxon_filter=True,
+        taxon_qid=qid,
+    )
 
 
 @app.function
@@ -596,7 +585,22 @@ def execute_sparql(
 @lru_cache(maxsize=512)
 def extract_qid(url: str) -> str:
     """Extract QID from Wikidata entity URL. Cached for performance."""
+    if not url:
+        return ""
     return url.replace(WIKIDATA_ENTITY_URL, "")
+
+
+@app.function
+def extract_qids_from_dataframe(df: pl.DataFrame, column: str) -> pl.DataFrame:
+    """Extract QIDs from a DataFrame column containing Wikidata URLs. DRY helper."""
+    if column not in df.columns:
+        return df
+
+    return df.with_columns(
+        pl.col(column)
+        .str.replace(WIKIDATA_ENTITY_URL, "", literal=True)
+        .alias(f"{column}_qid")
+    )
 
 
 @app.function
@@ -1566,7 +1570,8 @@ def create_display_row(row: Dict[str, str]) -> Dict[str, Any]:
 @app.function
 def prepare_export_dataframe(df: pl.DataFrame) -> pl.DataFrame:
     """Prepare dataframe for export with cleaned QIDs and selected columns."""
-    return df.with_columns(
+    # Extract QIDs for all entity columns
+    df_with_qids = df.with_columns(
         [
             pl.col("compound")
             .str.replace(WIKIDATA_ENTITY_URL, "", literal=True)
@@ -1578,7 +1583,10 @@ def prepare_export_dataframe(df: pl.DataFrame) -> pl.DataFrame:
             .str.replace(WIKIDATA_ENTITY_URL, "", literal=True)
             .alias("reference_qid"),
         ]
-    ).select(
+    )
+
+    # Select and rename columns for export
+    return df_with_qids.select(
         [
             pl.col("name").alias("compound_name"),
             pl.col("smiles").alias("compound_smiles"),
@@ -1767,7 +1775,10 @@ def create_dataset_uri(
     """
     Create dataset URI with dual hash system for reproducibility.
 
-    Uses Wikidata namespace since LOTUS data is hosted on Wikidata.
+    NOTE: LOTUS data is hosted on Wikidata (https://www.wikidata.org/wiki/Q104225190).
+    There is no separate LOTUS namespace - data is stored as regular Wikidata entities.
+    This export creates a virtual dataset URI for the query result using a
+    custom namespace pattern under Wikidata to maintain provenance and reproducibility.
     """
     # Query hash - based on search parameters (what was asked)
     query_components = [qid or "", taxon_input or ""]
@@ -1790,8 +1801,8 @@ def create_dataset_uri(
         :16
     ]
 
-    # Use Wikidata namespace with LOTUS-specific pattern
-    # LOTUS data is hosted on Wikidata, so we use wd: namespace with dataset identifier
+    # Create a custom dataset URI pattern within Wikidata namespace
+    # This represents a virtual dataset extracted from Wikidata/LOTUS
     dataset_uri = URIRef(
         f"http://www.wikidata.org/entity/lotus-dataset-{query_hash}-{result_hash}"
     )
@@ -1840,9 +1851,12 @@ def add_dataset_metadata(
     WD = Namespace("http://www.wikidata.org/entity/")
     SCHEMA = Namespace("http://schema.org/")
 
+    # Dataset type and basic metadata
     g.add((dataset_uri, RDF.type, SCHEMA.Dataset))
     g.add((dataset_uri, SCHEMA.name, Literal(dataset_name, datatype=XSD.string)))
     g.add((dataset_uri, SCHEMA.description, Literal(dataset_desc, datatype=XSD.string)))
+
+    # License and provenance - CC0 from Wikidata/LOTUS
     g.add(
         (
             dataset_uri,
@@ -1852,6 +1866,8 @@ def add_dataset_metadata(
     )
     g.add((dataset_uri, SCHEMA.provider, URIRef(WIKIDATA_URL)))
     g.add((dataset_uri, DCTERMS.source, URIRef(WIKIDATA_URL)))
+
+    # Dataset statistics and versioning
     g.add((dataset_uri, SCHEMA.numberOfRecords, Literal(df_len, datatype=XSD.integer)))
     g.add(
         (
@@ -1860,15 +1876,15 @@ def add_dataset_metadata(
             Literal(CONFIG["app_version"], datatype=XSD.string),
         )
     )
-    g.add(
-        (dataset_uri, SCHEMA.isBasedOn, URIRef(WIKIDATA_WIKI_URL + "Q104225190"))
-    )  # LOTUS Initiative
 
-    if qid:
+    # Reference to LOTUS Initiative (Q104225190) as the source project
+    g.add((dataset_uri, SCHEMA.isBasedOn, URIRef(WIKIDATA_WIKI_URL + "Q104225190")))
+
+    # Link to the taxon being queried (if specific)
+    if qid and qid != "*":
         g.add((dataset_uri, SCHEMA.about, WD[qid]))
 
-    # Add provenance hashes as Wikidata properties
-    # Using custom qualifiers under Wikidata namespace for consistency
+    # Add provenance hashes as custom Wikidata qualifiers for reproducibility
     WDQ = Namespace("http://www.wikidata.org/prop/qualifier/")
     g.bind("wdq", WDQ)
     g.add(
@@ -1989,6 +2005,7 @@ def export_to_rdf_turtle(
     SCHEMA = Namespace("http://schema.org/")
     BIBO = Namespace("http://purl.org/ontology/bibo/")
 
+    # Bind namespaces with clear prefixes
     g.bind("wd", WD)
     g.bind("wdt", WDT)
     g.bind("wdq", WDQ)
