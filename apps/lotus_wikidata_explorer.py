@@ -3791,6 +3791,20 @@ def main():
         parser.add_argument("--year-end", type=int, help="Maximum publication year")
         parser.add_argument("--mass-min", type=float, help="Minimum molecular mass")
         parser.add_argument("--mass-max", type=float, help="Maximum molecular mass")
+
+        # Molecular formula filters
+        parser.add_argument(
+            "--formula", help="Exact molecular formula (e.g., C15H10O5)"
+        )
+        parser.add_argument("--c-min", type=int, help="Minimum carbon atoms")
+        parser.add_argument("--c-max", type=int, help="Maximum carbon atoms")
+        parser.add_argument("--h-min", type=int, help="Minimum hydrogen atoms")
+        parser.add_argument("--h-max", type=int, help="Maximum hydrogen atoms")
+        parser.add_argument("--n-min", type=int, help="Minimum nitrogen atoms")
+        parser.add_argument("--n-max", type=int, help="Maximum nitrogen atoms")
+        parser.add_argument("--o-min", type=int, help="Minimum oxygen atoms")
+        parser.add_argument("--o-max", type=int, help="Maximum oxygen atoms")
+
         parser.add_argument(
             "--smiles", help="SMILES string for chemical structure search"
         )
@@ -3812,6 +3826,11 @@ def main():
             "--show-metadata",
             action="store_true",
             help="Display FAIR-compliant dataset metadata and exit (no data export)",
+        )
+        parser.add_argument(
+            "--export-metadata",
+            action="store_true",
+            help="Export metadata as JSON file alongside data (creates <output>.metadata.json)",
         )
         parser.add_argument(
             "--verbose", "-v", action="store_true", help="Verbose output"
@@ -3926,11 +3945,61 @@ def main():
                     filters_applied.append(f"mass ≥ {args.mass_min}")
                 if args.mass_max:
                     filters_applied.append(f"mass ≤ {args.mass_max}")
+                if args.formula:
+                    filters_applied.append(f"formula = {args.formula}")
+                if any(
+                    [
+                        args.c_min,
+                        args.c_max,
+                        args.h_min,
+                        args.h_max,
+                        args.n_min,
+                        args.n_max,
+                        args.o_min,
+                        args.o_max,
+                    ]
+                ):
+                    filters_applied.append("element ranges")
 
                 if filters_applied:
                     print(f"   Filters: {', '.join(filters_applied)}", file=sys.stderr)
 
                 print(file=sys.stderr)  # Empty line for readability
+
+            # Build formula filters if any formula arguments provided
+            formula_filt = None
+            if any(
+                [
+                    args.formula,
+                    args.c_min,
+                    args.c_max,
+                    args.h_min,
+                    args.h_max,
+                    args.n_min,
+                    args.n_max,
+                    args.o_min,
+                    args.o_max,
+                ]
+            ):
+                formula_filt = create_formula_filters(
+                    exact_formula=args.formula or "",
+                    c_min=args.c_min or 0,
+                    c_max=args.c_max or CONFIG["element_c_max"],
+                    h_min=args.h_min or 0,
+                    h_max=args.h_max or CONFIG["element_h_max"],
+                    n_min=args.n_min or 0,
+                    n_max=args.n_max or CONFIG["element_n_max"],
+                    o_min=args.o_min or 0,
+                    o_max=args.o_max or CONFIG["element_o_max"],
+                    p_min=0,
+                    p_max=CONFIG["element_p_max"],
+                    s_min=0,
+                    s_max=CONFIG["element_s_max"],
+                    f_state="allowed",
+                    cl_state="allowed",
+                    br_state="allowed",
+                    i_state="allowed",
+                )
 
             # Query using the REAL function with all arguments
             df = query_wikidata(
@@ -3939,7 +4008,7 @@ def main():
                 year_end=args.year_end,
                 mass_min=args.mass_min,
                 mass_max=args.mass_max,
-                formula_filters=None,
+                formula_filters=formula_filt,
                 smiles=args.smiles,
                 search_mode=search_mode,
                 smiles_search_type=args.smiles_search_type or "substructure",
@@ -3998,6 +4067,10 @@ def main():
                         args.smiles_threshold
                     )
 
+            # Molecular formula filter
+            if formula_filt and formula_filt.is_active():
+                filters["molecular_formula"] = serialize_formula_filters(formula_filt)
+
             # Compute hashes for provenance (before showing metadata or exporting)
             # Query hash - based on search parameters (what was asked)
             query_components = [qid or "", args.taxon or ""]
@@ -4023,8 +4096,12 @@ def main():
             if args.show_metadata:
                 # Use the REAL metadata function from app.setup with provenance hashes
                 metadata = create_export_metadata(
-                    df, args.taxon, qid, filters if filters else None,
-                    query_hash=query_hash, result_hash=result_hash
+                    df,
+                    args.taxon,
+                    qid,
+                    filters if filters else None,
+                    query_hash=query_hash,
+                    result_hash=result_hash,
                 )
                 print(json.dumps(metadata, indent=2))
 
@@ -4046,9 +4123,9 @@ def main():
             elif args.format == "ttl":
                 # RDF export: include ref column for full provenance
                 export_df = prepare_export_dataframe(df, include_rdf_ref=True)
-                data = export_to_rdf_turtle(export_df, args.taxon, qid, None).encode(
-                    "utf-8"
-                )
+                data = export_to_rdf_turtle(
+                    export_df, args.taxon, qid, filters if filters else None
+                ).encode("utf-8")
             else:
                 print(f"❌ Unknown format: {args.format}", file=sys.stderr)
                 sys.exit(1)
@@ -4070,6 +4147,26 @@ def main():
                         f"✓ Exported {len(data):,} bytes to: {output_path}",
                         file=sys.stderr,
                     )
+
+                # Export metadata if requested
+                if args.export_metadata:
+                    metadata = create_export_metadata(
+                        df,
+                        args.taxon,
+                        qid,
+                        filters if filters else None,
+                        query_hash=query_hash,
+                        result_hash=result_hash,
+                    )
+                    metadata_path = output_path.with_suffix(
+                        output_path.suffix + ".metadata.json"
+                    )
+                    metadata_path.write_text(json.dumps(metadata, indent=2))
+                    if args.verbose:
+                        print(
+                            f"✓ Exported metadata to: {metadata_path}",
+                            file=sys.stderr,
+                        )
             else:
                 sys.stdout.buffer.write(data)
 
