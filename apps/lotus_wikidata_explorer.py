@@ -4087,6 +4087,7 @@ def main():
 
             # Build filters dict in the same format as the UI (needed for metadata and provenance)
             import json
+
             filters = {}
 
             # Year filter
