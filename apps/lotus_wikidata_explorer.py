@@ -4085,40 +4085,39 @@ def main():
                     print(f"   Unique references: {unique_refs:,}", file=sys.stderr)
                 print(file=sys.stderr)  # Empty line for readability
 
+            # Build filters dict in the same format as the UI (needed for metadata and provenance)
+            import json
+            filters = {}
+
+            # Year filter
+            if args.year_start or args.year_end:
+                filters["publication_year"] = {}
+                if args.year_start:
+                    filters["publication_year"]["min"] = args.year_start
+                if args.year_end:
+                    filters["publication_year"]["max"] = args.year_end
+
+            # Mass filter
+            if args.mass_min or args.mass_max:
+                filters["molecular_mass"] = {}
+                if args.mass_min:
+                    filters["molecular_mass"]["min"] = args.mass_min
+                if args.mass_max:
+                    filters["molecular_mass"]["max"] = args.mass_max
+
+            # Chemical structure filter
+            if args.smiles:
+                filters["chemical_structure"] = {
+                    "smiles": args.smiles,
+                    "search_type": args.smiles_search_type or "substructure",
+                }
+                if args.smiles_search_type == "similarity":
+                    filters["chemical_structure"]["similarity_threshold"] = (
+                        args.smiles_threshold
+                    )
+
             # Show metadata mode - use the REAL create_export_metadata function
             if args.show_metadata:
-                import json
-
-                # Build filters dict in the same format as the UI
-                filters = {}
-
-                # Year filter
-                if args.year_start or args.year_end:
-                    filters["publication_year"] = {}
-                    if args.year_start:
-                        filters["publication_year"]["min"] = args.year_start
-                    if args.year_end:
-                        filters["publication_year"]["max"] = args.year_end
-
-                # Mass filter
-                if args.mass_min or args.mass_max:
-                    filters["molecular_mass"] = {}
-                    if args.mass_min:
-                        filters["molecular_mass"]["min"] = args.mass_min
-                    if args.mass_max:
-                        filters["molecular_mass"]["max"] = args.mass_max
-
-                # Chemical structure filter
-                if args.smiles:
-                    filters["chemical_structure"] = {
-                        "smiles": args.smiles,
-                        "search_type": args.smiles_search_type or "substructure",
-                    }
-                    if args.smiles_search_type == "similarity":
-                        filters["chemical_structure"]["similarity_threshold"] = (
-                            args.smiles_threshold
-                        )
-
                 # Use the REAL metadata function from app.setup
                 metadata = create_export_metadata(
                     df, args.taxon, qid, filters if filters else None
@@ -4152,8 +4151,6 @@ def main():
                 export_df = prepare_export_dataframe(
                     df,
                     include_rdf_ref=False,
-                    query_hash=query_hash,
-                    result_hash=result_hash,
                 )
                 data = export_df.write_csv().encode("utf-8")
             elif args.format == "json":
@@ -4161,18 +4158,11 @@ def main():
                 export_df = prepare_export_dataframe(
                     df,
                     include_rdf_ref=False,
-                    query_hash=query_hash,
-                    result_hash=result_hash,
                 )
                 data = export_df.write_json().encode("utf-8")
             elif args.format == "ttl":
                 # RDF export: include ref column for full provenance
-                export_df = prepare_export_dataframe(
-                    df,
-                    include_rdf_ref=True,
-                    query_hash=query_hash,
-                    result_hash=result_hash,
-                )
+                export_df = prepare_export_dataframe(df, include_rdf_ref=True)
                 data = export_to_rdf_turtle(export_df, args.taxon, qid, None).encode(
                     "utf-8"
                 )
