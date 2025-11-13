@@ -90,7 +90,7 @@ with app.setup:
     WIKIDATA_WIKI_URL = WIKIDATA_URL + "wiki/"
 
     # ====================================================================
-    # CONFIGURATION
+    # APPLICATION CONFIGURATION
     # ====================================================================
 
     CONFIG = {
@@ -100,35 +100,35 @@ with app.setup:
         "app_url": "https://github.com/Adafede/marimo/blob/main/apps/lotus_wikidata_explorer.py",
         # External Services
         "cdk_base": "https://www.simolecule.com/cdkdepict/depict/cot/svg",
-        "sparql_endpoint": "https://qlever.dev/api/wikidata",
-        # "sparql_endpoint": "https://query-legacy-full.wikidata.org/sparql",  # Alternative
-        "idsm_endpoint": "https://idsm.elixir-czech.cz/sparql/endpoint/",
+        "sparql_endpoint": "https://qlever.dev/api/wikidata",  # Optimized Wikidata SPARQL endpoint
+        # "sparql_endpoint": "https://query-legacy-full.wikidata.org/sparql",  # Alternative (legacy)
+        "idsm_endpoint": "https://idsm.elixir-czech.cz/sparql/endpoint/",  # SACHEM chemical search
         # Network & Performance Tuning
-        "max_retries": 3,
-        "retry_backoff": 2,  # Exponential backoff multiplier
-        "query_timeout": 300,  # Query timeout in seconds (5 minutes)
-        "table_row_limit": 10000,  # Max rows to display (prevents browser slowdown)
-        "lazy_generation_threshold": 5000,  # Defer download generation for large datasets
-        "download_embed_threshold_bytes": 8_000_000,  # Compress downloads > 8MB
+        "max_retries": 3,  # Max retry attempts for failed requests
+        "retry_backoff": 2,  # Exponential backoff multiplier (2^attempt * backoff)
+        "query_timeout": 300,  # SPARQL query timeout in seconds (5 minutes)
+        "table_row_limit": 10000,  # Max rows to display in browser (prevents UI slowdown)
+        "lazy_generation_threshold": 5000,  # Defer download generation for datasets > this size
+        "download_embed_threshold_bytes": 8_000_000,  # Auto-compress downloads > 8MB
         # UI Styling & Display
-        "color_hyperlink": "#006699",
+        "color_hyperlink": "#006699",  # Hyperlink color (accessible blue)
         "page_size_default": 10,  # Rows per page in display table
-        "page_size_export": 25,  # Rows per page in export table
+        "page_size_export": 25,  # Rows per page in export preview table
         # Filter Defaults
-        "year_range_start": 1700,
-        "year_default_start": 1900,
-        "mass_default_min": 0,
-        "mass_default_max": 2000,
-        "mass_ui_max": 10000,
+        "year_range_start": 1700,  # Minimum valid publication year
+        "year_default_start": 1900,  # Default year filter start
+        "mass_default_min": 0,  # Default minimum mass (Da)
+        "mass_default_max": 2000,  # Default maximum mass (Da)
+        "mass_ui_max": 10000,  # Maximum allowed mass in UI (Da)
         # Element Count Limits (for molecular formula filter UI)
-        "element_c_max": 100,
-        "element_h_max": 200,
-        "element_n_max": 50,
-        "element_o_max": 50,
-        "element_p_max": 20,
-        "element_s_max": 20,
+        "element_c_max": 100,  # Max carbon atoms
+        "element_h_max": 200,  # Max hydrogen atoms
+        "element_n_max": 50,  # Max nitrogen atoms
+        "element_o_max": 50,  # Max oxygen atoms
+        "element_p_max": 20,  # Max phosphorus atoms
+        "element_s_max": 20,  # Max sulfur atoms
         # Chemical Search
-        "default_similarity_threshold": 0.8,  # Tanimoto coefficient threshold
+        "default_similarity_threshold": 0.8,  # Default Tanimoto coefficient threshold
     }
 
     # ====================================================================
@@ -370,22 +370,34 @@ def validate_smiles(smiles: str) -> Tuple[bool, Optional[str]]:
 
     # Length validation
     if len(smiles) < 1:
-        return False, "SMILES string is too short"
+        return False, "SMILES string is empty after trimming whitespace"
     if len(smiles) > 10000:
-        return False, "SMILES string is too long (max 10,000 characters)"
+        return False, (
+            f"SMILES string is too long ({len(smiles):,} characters). "
+            f"Maximum allowed: 10,000 characters. "
+            f"Please use a simpler structure or substructure."
+        )
 
-    # Check for null bytes or control characters
+    # Check for null bytes or dangerous control characters
     if "\x00" in smiles:
-        return False, "SMILES contains null bytes"
+        return False, "SMILES contains null bytes (\\x00) which are not allowed"
 
     invalid_chars = [c for c in smiles if ord(c) < 32 and c not in "\t\n\r"]
     if invalid_chars:
-        return False, f"SMILES contains invalid control characters: {invalid_chars[:3]}"
+        chars_display = ", ".join(f"\\x{ord(c):02x}" for c in invalid_chars[:3])
+        return False, (
+            f"SMILES contains invalid control characters: {chars_display}. "
+            f"Only standard ASCII printable characters are allowed."
+        )
 
     # Basic sanity check: should contain at least one atom symbol
     # Common atom symbols in SMILES: C, N, O, S, P, F, Cl, Br, I, B, c (aromatic), etc.
     if not any(c in smiles for c in "CNOSPFIBcnops"):
-        return False, "SMILES appears to be missing atom symbols"
+        return False, (
+            "SMILES appears to be missing atom symbols. "
+            "A valid SMILES must contain at least one element (C, N, O, etc.). "
+            "Example: 'c1ccccc1' for benzene"
+        )
 
     return True, None
 
@@ -568,7 +580,15 @@ def execute_sparql(
             result = response.json()
             if not isinstance(result, dict):
                 raise ValueError(
-                    f"Invalid SPARQL response: expected dict, got {type(result)}"
+                    f"Invalid SPARQL response: expected dict, got {type(result).__name__}. "
+                    f"The endpoint may be experiencing issues."
+                )
+
+            # Ensure required structure exists
+            if "results" not in result:
+                raise ValueError(
+                    "SPARQL response missing 'results' field. "
+                    "The endpoint returned an unexpected format."
                 )
 
             return result
@@ -577,24 +597,36 @@ def execute_sparql(
             # Handle timeout exceptions specifically
             if attempt == max_retries - 1:
                 raise TimeoutError(
-                    f"❌ Query timed out after {max_retries} attempts "
-                    f"({CONFIG['query_timeout']}s timeout).\n"
-                    f"💡 Try: Add filters to reduce result size or simplify the query."
+                    f"⏱️ Query timed out after {max_retries} attempts "
+                    f"({CONFIG['query_timeout']}s timeout each).\n\n"
+                    f"💡 Suggestions:\n"
+                    f"   • Add filters to reduce result size\n"
+                    f"   • Simplify the query (e.g., search specific taxon instead of '*')\n"
+                    f"   • Try searching by specific QID instead of taxon name\n"
+                    f"   • The endpoint may be under heavy load - try again later"
                 ) from e
-            time.sleep(CONFIG["retry_backoff"] * (2**attempt))
+            wait_time = CONFIG["retry_backoff"] * (2**attempt)
+            time.sleep(wait_time)
 
         except httpx.HTTPStatusError as e:
             # Handle HTTP status errors (4xx, 5xx)
             status_code = e.response.status_code
             if attempt == max_retries - 1:
-                error_detail = f" - {e.response.text[:200]}" if e.response.text else ""
+                error_body = (
+                    e.response.text[:500] if e.response.text else "No error details"
+                )
                 raise ConnectionError(
-                    f"🌐 HTTP {status_code} error after {max_retries} attempts{error_detail}\n"
-                    f"💡 Try: Check your internet connection or try again later."
+                    f"🌐 HTTP {status_code} error after {max_retries} attempts\n\n"
+                    f"Error details: {error_body}\n\n"
+                    f"💡 Suggestions:\n"
+                    f"   • Check your internet connection\n"
+                    f"   • The SPARQL endpoint may be temporarily unavailable\n"
+                    f"   • Try again in a few minutes"
                 ) from e
             # Retry on server errors (5xx), but not client errors (4xx)
             if 500 <= status_code < 600:
-                time.sleep(CONFIG["retry_backoff"] * (2**attempt))
+                wait_time = CONFIG["retry_backoff"] * (2**attempt)
+                time.sleep(wait_time)
             else:
                 raise  # Don't retry client errors
 
@@ -602,31 +634,44 @@ def execute_sparql(
             # Handle network/connection errors
             if attempt == max_retries - 1:
                 raise ConnectionError(
-                    f"🌐 Network error after {max_retries} attempts: {str(e)}\n"
-                    f"💡 Try: Check your internet connection."
+                    f"🌐 Network error after {max_retries} attempts: {type(e).__name__}\n\n"
+                    f"Details: {str(e)}\n\n"
+                    f"💡 Suggestions:\n"
+                    f"   • Check your internet connection\n"
+                    f"   • Verify you can access {CONFIG['sparql_endpoint']}\n"
+                    f"   • Check for firewall or proxy issues"
                 ) from e
-            time.sleep(CONFIG["retry_backoff"] * (2**attempt))
+            wait_time = CONFIG["retry_backoff"] * (2**attempt)
+            time.sleep(wait_time)
 
         except json.JSONDecodeError as e:
             # Handle malformed JSON responses
             if attempt == max_retries - 1:
                 raise ValueError(
-                    f"❌ Invalid JSON response from SPARQL endpoint: {str(e)}\n"
+                    f"❌ Invalid JSON response from SPARQL endpoint\n\n"
+                    f"Parse error: {str(e)}\n\n"
                     f"💡 The endpoint may be experiencing issues. Try again later."
                 ) from e
-            time.sleep(CONFIG["retry_backoff"] * (2**attempt))
+            wait_time = CONFIG["retry_backoff"] * (2**attempt)
+            time.sleep(wait_time)
 
         except Exception as e:
             # Handle any other unexpected errors
             if attempt == max_retries - 1:
                 query_snippet = query[:200] + "..." if len(query) > 200 else query
                 raise RuntimeError(
-                    f"❌ Query failed: {type(e).__name__}: {e}\n"
-                    f"Query snippet: {query_snippet}"
+                    f"❌ Unexpected error executing SPARQL query\n\n"
+                    f"Error type: {type(e).__name__}\n"
+                    f"Error message: {str(e)}\n\n"
+                    f"Query snippet: {query_snippet}\n\n"
+                    f"💡 This may be a bug. Please report this error."
                 ) from e
-            time.sleep(CONFIG["retry_backoff"] * (2**attempt))
+            wait_time = CONFIG["retry_backoff"] * (2**attempt)
+            time.sleep(wait_time)
 
-    raise RuntimeError("Unexpected error in execute_sparql: max retries exceeded")
+    raise RuntimeError(
+        "Unexpected error in execute_sparql: max retries exceeded without raising exception"
+    )
 
 
 @app.function
@@ -1504,6 +1549,37 @@ def query_wikidata(
     2. SMILES-only: Find compounds by chemical structure (SACHEM)
     3. Combined: Find structures within a specific taxonomic group
     """
+    # Input validation
+    if search_mode not in ("taxon", "smiles", "combined"):
+        raise ValueError(
+            f"Invalid search_mode: '{search_mode}'. "
+            f"Must be one of: 'taxon', 'smiles', 'combined'"
+        )
+
+    if smiles_search_type not in ("substructure", "similarity"):
+        raise ValueError(
+            f"Invalid smiles_search_type: '{smiles_search_type}'. "
+            f"Must be one of: 'substructure', 'similarity'"
+        )
+
+    if not (0.0 <= smiles_threshold <= 1.0):
+        raise ValueError(
+            f"Invalid smiles_threshold: {smiles_threshold}. "
+            f"Must be between 0.0 and 1.0"
+        )
+
+    if year_start is not None and year_end is not None and year_start > year_end:
+        raise ValueError(
+            f"Invalid year range: start ({year_start}) > end ({year_end}). "
+            f"Start year must be <= end year."
+        )
+
+    if mass_min is not None and mass_max is not None and mass_min > mass_max:
+        raise ValueError(
+            f"Invalid mass range: min ({mass_min}) > max ({mass_max}). "
+            f"Minimum mass must be <= maximum mass."
+        )
+
     # Build query based on search mode
     if search_mode == "combined" and smiles and qid:
         # Combined taxon + SMILES search
@@ -2189,7 +2265,7 @@ def _():
         uvx marimo run https://raw.githubusercontent.com/Adafede/marimo/refs/heads/main/apps/lotus_wikidata_explorer.py
         ```
         """),
-        kind="warn",
+        kind="info",
     )
     return
 
