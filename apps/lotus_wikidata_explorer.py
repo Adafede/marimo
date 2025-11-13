@@ -1587,7 +1587,7 @@ def query_wikidata(
 
 
 @app.function
-def create_display_row(row: Dict[str, str]) -> Dict[str, Any]:
+def create_display_row(row: Dict[str, str], query_hash: str = "", result_hash: str = "") -> Dict[str, Any]:
     """Create a display row for the table with images and links."""
     img_url = create_structure_image_url(row["smiles"])
     compound_qid = extract_qid(row["compound"])
@@ -1599,7 +1599,7 @@ def create_display_row(row: Dict[str, str]) -> Dict[str, Any]:
     statement_uri = row.get("statement", "")
     statement_id = statement_uri.split("/")[-1] if statement_uri else ""
 
-    return {
+    result = {
         "2D Depiction": mo.image(src=img_url),
         "Compound": row["name"],
         "Compound SMILES": row["smiles"],
@@ -1617,10 +1617,21 @@ def create_display_row(row: Dict[str, str]) -> Dict[str, Any]:
         else mo.Html("-"),
     }
 
+    # Add hashes if provided
+    if query_hash:
+        result["Query Hash"] = query_hash
+    if result_hash:
+        result["Result Hash"] = result_hash
+
+    return result
+
 
 @app.function
 def prepare_export_dataframe(
-    df: pl.DataFrame, include_rdf_ref: bool = False
+    df: pl.DataFrame,
+    include_rdf_ref: bool = False,
+    query_hash: Optional[str] = None,
+    result_hash: Optional[str] = None,
 ) -> pl.DataFrame:
     """
     Prepare dataframe for export with cleaned QIDs and selected columns.
@@ -1630,6 +1641,8 @@ def prepare_export_dataframe(
         include_rdf_ref: If True, include ref URI for RDF export.
                         Statement is always included (for display and RDF).
                         Ref is only for RDF export (not needed in CSV/JSON/display).
+        query_hash: SHA256 hash of query parameters (what was asked)
+        result_hash: SHA256 hash of result compound IDs (what was found)
     """
     # Extract QIDs for all entity columns
     df_with_qids = df.with_columns(
@@ -1670,7 +1683,15 @@ def prepare_export_dataframe(
     if include_rdf_ref and "ref" in df_with_qids.columns:
         select_cols.append("ref")
 
-    return df_with_qids.select(select_cols)
+    result_df = df_with_qids.select(select_cols)
+
+    # Add hash columns if provided (for provenance and reproducibility)
+    if query_hash is not None:
+        result_df = result_df.with_columns(pl.lit(query_hash).alias("query_hash"))
+    if result_hash is not None:
+        result_df = result_df.with_columns(pl.lit(result_hash).alias("result_hash"))
+
+    return result_df
 
 
 @app.function
@@ -1678,6 +1699,14 @@ def create_export_metadata(
     df: pl.DataFrame, taxon_input: str, qid: str, filters: Dict[str, Any]
 ) -> Dict[str, Any]:
     """Create FAIR-compliant metadata for exported datasets."""
+    # Extract hashes from dataframe if present (for provenance)
+    query_hash = None
+    result_hash = None
+    if "query_hash" in df.columns:
+        query_hash = df.select("query_hash").row(0)[0] if len(df) > 0 else None
+    if "result_hash" in df.columns:
+        result_hash = df.select("result_hash").row(0)[0] if len(df) > 0 else None
+
     # Build descriptive name and description based on search type
     smiles_info = filters.get("chemical_structure", {}) if filters else {}
 
@@ -1807,6 +1836,24 @@ def create_export_metadata(
     if filters:
         metadata["search_parameters"]["filters"] = filters
 
+    # Add provenance hashes for reproducibility and verification
+    if query_hash or result_hash:
+        metadata["provenance"] = {}
+        if query_hash:
+            metadata["provenance"]["query_hash"] = {
+                "algorithm": "SHA-256",
+                "value": query_hash,
+                "description": "Hash of search parameters (what was asked)",
+            }
+        if result_hash:
+            metadata["provenance"]["result_hash"] = {
+                "algorithm": "SHA-256",
+                "value": result_hash,
+                "description": "Hash of result compound identifiers (what was found)",
+            }
+        if query_hash and result_hash:
+            metadata["provenance"]["dataset_uri"] = f"urn:hash:sha256:{query_hash}:{result_hash}"
+
     return metadata
 
 
@@ -1866,12 +1913,10 @@ def create_dataset_uri(
     )
     result_hash = hashlib.sha256("|".join(compound_ids).encode("utf-8")).hexdigest()
 
-    # Create a content-addressable URI using URN scheme with combined hash
-    # This follows RFC 6920 for naming things with hashes - standard approach
-    combined_hash = hashlib.sha256(
-        f"{query_hash}:{result_hash}".encode("utf-8")
-    ).hexdigest()
-    dataset_uri = URIRef(f"urn:hash:sha256:{combined_hash}")
+    # Create a content-addressable URI using URN scheme with PAIR of hashes
+    # Format: urn:hash:sha256:QUERY_HASH:RESULT_HASH
+    # This allows identifying both what was asked and what was found
+    dataset_uri = URIRef(f"urn:hash:sha256:{query_hash}:{result_hash}")
 
     return dataset_uri, query_hash, result_hash
 
@@ -3176,14 +3221,7 @@ def _(
         json_generation_data = None
         rdf_generation_data = None
     else:
-        # Prepare export dataframe (includes statement for display, excludes ref for CSV/JSON)
-        export_df = prepare_export_dataframe(results_df, include_rdf_ref=False)
-        # For RDF, we need the ref column too
-        export_df_rdf = prepare_export_dataframe(results_df, include_rdf_ref=True)
-        taxon_name = taxon_input.value
-        ui_is_large_dataset = len(export_df) > CONFIG["lazy_generation_threshold"]
-
-        # Build filters for metadata using factory function (DRY)
+        # Build filters for metadata (needed for hash computation)
         _formula_filt = None
         if formula_filter.value:
             _formula_filt = create_formula_filters(
@@ -3217,6 +3255,43 @@ def _(
             smiles_search_type=smiles_search_type.value,
             smiles_threshold=smiles_threshold.value,
         )
+
+        # Compute hashes for provenance (before preparing export dataframes)
+        # Query hash - based on search parameters (what was asked)
+        query_components = [qid or "", taxon_input.value or ""]
+        if active_filters:
+            query_components.append(json.dumps(active_filters, sort_keys=True))
+        query_hash = hashlib.sha256("|".join(query_components).encode("utf-8")).hexdigest()
+
+        # Result hash - based on actual compound identifiers (what was found)
+        # Extract QIDs first for hash computation
+        compound_qids = sorted(
+            [
+                extract_qid(row["compound"])
+                for row in results_df.iter_rows(named=True)
+                if row.get("compound")
+            ]
+        )
+        result_hash = hashlib.sha256("|".join(compound_qids).encode("utf-8")).hexdigest()
+
+        # Prepare export dataframes with hashes (includes statement for display, excludes ref for CSV/JSON)
+        export_df = prepare_export_dataframe(
+            results_df,
+            include_rdf_ref=False,
+            query_hash=query_hash,
+            result_hash=result_hash,
+        )
+        # For RDF, we need the ref column too
+        export_df_rdf = prepare_export_dataframe(
+            results_df,
+            include_rdf_ref=True,
+            query_hash=query_hash,
+            result_hash=result_hash,
+        )
+        taxon_name = taxon_input.value
+        ui_is_large_dataset = len(export_df) > CONFIG["lazy_generation_threshold"]
+
+        # Create metadata using already-built active_filters
         metadata = create_export_metadata(
             export_df, taxon_input.value, qid, active_filters
         )
@@ -3244,6 +3319,8 @@ def _(
                     "Statement": create_link(stmt_uri, stmt_uri.split("/")[-1])
                     if (stmt_uri := row.get("statement", ""))
                     else mo.Html("-"),
+                    "Query Hash": query_hash,
+                    "Result Hash": result_hash,
                 }
                 for row in limited_df.iter_rows(named=True)
             ]
@@ -3259,7 +3336,8 @@ def _(
             )
         else:
             display_data = [
-                create_display_row(row) for row in results_df.iter_rows(named=True)
+                create_display_row(row, query_hash, result_hash)
+                for row in results_df.iter_rows(named=True)
             ]
             display_note = mo.Html("")
         display_table = mo.ui.table(
@@ -3986,18 +4064,50 @@ def main():
                 )
                 print(json.dumps(metadata, indent=2))
 
+            # Compute hashes for provenance (before exporting)
+            # Query hash - based on search parameters (what was asked)
+            query_components = [qid or "", args.taxon or ""]
+            if filters:
+                query_components.append(json.dumps(filters, sort_keys=True))
+            query_hash = hashlib.sha256("|".join(query_components).encode("utf-8")).hexdigest()
+
+            # Result hash - based on actual compound identifiers (what was found)
+            compound_qids = sorted(
+                [
+                    extract_qid(row["compound"])
+                    for row in df.iter_rows(named=True)
+                    if row.get("compound")
+                ]
+            )
+            result_hash = hashlib.sha256("|".join(compound_qids).encode("utf-8")).hexdigest()
+
             # Export data using REAL functions
             if args.format == "csv":
                 # CSV export: exclude ref column (statement included for transparency)
-                export_df = prepare_export_dataframe(df, include_rdf_ref=False)
+                export_df = prepare_export_dataframe(
+                    df,
+                    include_rdf_ref=False,
+                    query_hash=query_hash,
+                    result_hash=result_hash,
+                )
                 data = export_df.write_csv().encode("utf-8")
             elif args.format == "json":
                 # JSON export: exclude ref column (statement included for transparency)
-                export_df = prepare_export_dataframe(df, include_rdf_ref=False)
+                export_df = prepare_export_dataframe(
+                    df,
+                    include_rdf_ref=False,
+                    query_hash=query_hash,
+                    result_hash=result_hash,
+                )
                 data = export_df.write_json().encode("utf-8")
             elif args.format == "ttl":
                 # RDF export: include ref column for full provenance
-                export_df = prepare_export_dataframe(df, include_rdf_ref=True)
+                export_df = prepare_export_dataframe(
+                    df,
+                    include_rdf_ref=True,
+                    query_hash=query_hash,
+                    result_hash=result_hash,
+                )
                 data = export_to_rdf_turtle(export_df, args.taxon, qid, None).encode(
                     "utf-8"
                 )
