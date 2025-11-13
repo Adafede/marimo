@@ -44,10 +44,11 @@ with app.setup:
     import re
     import time
     import gzip
+    import hashlib
     from dataclasses import dataclass, field
     from datetime import datetime
     from functools import lru_cache
-    from rdflib import Graph, Namespace, Literal, URIRef
+    from rdflib import Graph, Namespace, Literal, URIRef, BNode
     from rdflib.namespace import RDF, RDFS, XSD, DCTERMS
     from sparqlx import SPARQLWrapper
     from typing import Optional, Dict, Any, Tuple, List
@@ -104,10 +105,12 @@ with app.setup:
         "default_similarity_threshold": 0.8,  # Tanimoto coefficient threshold
     }
 
-    # Wikidata URLs (constants)
-    WIKIDATA_ENTITY_PREFIX = "http://www.wikidata.org/entity/"
-    # WIKIDATA_WIKI_PREFIX = "https://www.wikidata.org/wiki/"
-    WIKIDATA_WIKI_PREFIX = "https://scholia.toolforge.org/"
+    # URLs (constants)
+    SCHOLIA_URL = "https://scholia.toolforge.org/"
+    WIKIDATA_URL = "https://www.wikidata.org/"
+    WIKIDATA_HTTP_URL = WIKIDATA_URL.replace("https://", "http://")
+    WIKIDATA_ENTITY_URL = WIKIDATA_HTTP_URL + "entity/"
+    WIKIDATA_WIKI_URL = WIKIDATA_URL + "wiki/"
 
     # ====================================================================
     # ELEMENT CONFIGURATION
@@ -523,7 +526,7 @@ def execute_sparql(
 @lru_cache(maxsize=512)
 def extract_qid(url: str) -> str:
     """Extract QID from Wikidata entity URL. Cached for performance."""
-    return url.replace(WIKIDATA_ENTITY_PREFIX, "")
+    return url.replace(WIKIDATA_ENTITY_URL, "")
 
 
 @app.function
@@ -647,7 +650,7 @@ def create_taxon_warning_html(
         compound_count = match_data[4] if len(match_data) > 4 else None
 
         # Create clickable link
-        link = f'<a href="{WIKIDATA_WIKI_PREFIX}{qid}" target="_blank" rel="noopener noreferrer" style="color: {CONFIG["color_hyperlink"]}; text-decoration: none; border-bottom: 1px solid transparent; font-weight: bold;">{qid}</a>'
+        link = f'<a href="{SCHOLIA_URL}{qid}" target="_blank" rel="noopener noreferrer" style="color: {CONFIG["color_hyperlink"]}; text-decoration: none; border-bottom: 1px solid transparent; font-weight: bold;">{qid}</a>'
 
         # Build details string
         details = []
@@ -875,7 +878,7 @@ def create_link(url: str, text: str) -> mo.Html:
 @app.function
 def create_wikidata_link(qid: str) -> mo.Html:
     """Create a Wikidata link for a QID."""
-    return create_link(f"{WIKIDATA_WIKI_PREFIX}{qid}", qid) if qid else mo.Html("-")
+    return create_link(f"{SCHOLIA_URL}{qid}", qid) if qid else mo.Html("-")
 
 
 @app.function
@@ -1476,13 +1479,13 @@ def prepare_export_dataframe(df: pl.DataFrame) -> pl.DataFrame:
     return df.with_columns(
         [
             pl.col("compound")
-            .str.replace(WIKIDATA_ENTITY_PREFIX, "", literal=True)
+            .str.replace(WIKIDATA_ENTITY_URL, "", literal=True)
             .alias("compound_qid"),
             pl.col("taxon")
-            .str.replace(WIKIDATA_ENTITY_PREFIX, "", literal=True)
+            .str.replace(WIKIDATA_ENTITY_URL, "", literal=True)
             .alias("taxon_qid"),
             pl.col("reference")
-            .str.replace(WIKIDATA_ENTITY_PREFIX, "", literal=True)
+            .str.replace(WIKIDATA_ENTITY_URL, "", literal=True)
             .alias("reference_qid"),
         ]
     ).select(
@@ -1565,12 +1568,12 @@ def create_export_metadata(
             {
                 "@type": "Organization",
                 "name": "LOTUS Initiative",
-                "url": "https://www.wikidata.org/wiki/Q104225190",
+                "url": WIKIDATA_WIKI_URL + "Q104225190",
             },
             {
                 "@type": "Organization",
                 "name": "Wikidata",
-                "url": "https://www.wikidata.org/",
+                "url": WIKIDATA_URL,
                 "description": "Free and Open Knowledge Base",
             },
             {
@@ -1668,7 +1671,12 @@ DOI: [10.7554/eLife.70780](https://doi.org/10.7554/eLife.70780)
 
 
 @app.function
-def export_to_rdf_turtle(df: pl.DataFrame, taxon_input: str, qid: str) -> str:
+def export_to_rdf_turtle(
+    df: pl.DataFrame,
+    taxon_input: str,
+    qid: str,
+    filters: Optional[Dict[str, Any]] = None,
+) -> str:
     """Export data to RDF Turtle format using rdflib following W3C standards."""
     # Initialize graph
     g = Graph()
@@ -1690,45 +1698,61 @@ def export_to_rdf_turtle(df: pl.DataFrame, taxon_input: str, qid: str) -> str:
     g.bind("dcterms", DCTERMS)
     g.bind("bibo", BIBO)
 
-    # Dataset URI - this is a user-generated export, use a blank node
-    # The dataset represents THIS specific query/export
-    from rdflib import BNode
-    import hashlib
+    # Dual hash system for reproducible dataset identification:
+    # 1. Query hash: Based on search parameters (what was asked)
+    # 2. Result hash: Based on actual data content (what was found)
 
-    # Create a deterministic URI based on the export parameters for reproducibility
-    # This allows the same query to generate the same dataset URI
-    export_id = hashlib.sha256(
-        f"{qid}:{taxon_input}:{datetime.now().strftime('%Y-%m-%d')}".encode()
-    ).hexdigest()[:16]
+    # Query hash - includes all search parameters
+    query_components = [
+        qid or "",
+        taxon_input or "",
+    ]
+    if filters:
+        query_components.append(json.dumps(filters, sort_keys=True))
 
-    dataset_uri = URIRef(f"urn:uuid:lotus-export-{export_id}")
+    query_hash = hashlib.sha256("|".join(query_components).encode("utf-8")).hexdigest()[
+        :16
+    ]
+
+    # Result hash - based on actual compound identifiers in results
+    # Sort for deterministic ordering
+    compound_ids = sorted(
+        [
+            row.get("compound_qid", "")
+            for row in df.iter_rows(named=True)
+            if row.get("compound_qid")
+        ]
+    )
+    result_hash = hashlib.sha256("|".join(compound_ids).encode("utf-8")).hexdigest()[
+        :16
+    ]
+
+    # Use urn:lotus: namespace with dual identifier
+    dataset_uri = URIRef(f"urn:lotus:dataset:query-{query_hash}:result-{result_hash}")
+
+    # Build descriptive dataset name and description
+    dataset_name = f"LOTUS Data for {taxon_input}"
+    dataset_desc = f"Chemical compounds found in taxon {taxon_input} from Wikidata"
+
+    if filters:
+        smiles_info = filters.get("chemical_structure", {})
+        if smiles_info:
+            search_type = smiles_info.get("search_type", "substructure")
+            dataset_desc += f" using {search_type} search"
+
+        if filters.get("mass_range"):
+            mass = filters["mass_range"]
+            dataset_desc += (
+                f", mass filter: {mass.get('min', 'N/A')}-{mass.get('max', 'N/A')} Da"
+            )
+
+        if filters.get("formula"):
+            dataset_desc += ", molecular formula constraints applied"
 
     # Dataset metadata
     g.add((dataset_uri, RDF.type, SCHEMA.Dataset))
-    g.add(
-        (
-            dataset_uri,
-            SCHEMA.name,
-            Literal(f"LOTUS Data for {taxon_input}", datatype=XSD.string),
-        )
-    )
-    g.add(
-        (
-            dataset_uri,
-            SCHEMA.description,
-            Literal(
-                f"Chemical compounds found in taxon {taxon_input} from Wikidata",
-                datatype=XSD.string,
-            ),
-        )
-    )
-    g.add(
-        (
-            dataset_uri,
-            SCHEMA.dateCreated,
-            Literal(datetime.now().isoformat(), datatype=XSD.dateTime),
-        )
-    )
+    g.add((dataset_uri, SCHEMA.name, Literal(dataset_name, datatype=XSD.string)))
+    g.add((dataset_uri, SCHEMA.description, Literal(dataset_desc, datatype=XSD.string)))
     g.add(
         (
             dataset_uri,
@@ -1736,10 +1760,41 @@ def export_to_rdf_turtle(df: pl.DataFrame, taxon_input: str, qid: str) -> str:
             URIRef("https://creativecommons.org/publicdomain/zero/1.0/"),
         )
     )
-    g.add((dataset_uri, SCHEMA.provider, URIRef("https://www.wikidata.org/")))
-    g.add((dataset_uri, SCHEMA.about, WD[qid]))
-    g.add((dataset_uri, DCTERMS.source, URIRef("https://www.wikidata.org/")))
+    g.add((dataset_uri, SCHEMA.provider, URIRef(WIKIDATA_URL)))
+
+    if qid:
+        g.add((dataset_uri, SCHEMA.about, WD[qid]))
+
+    g.add((dataset_uri, DCTERMS.source, URIRef(WIKIDATA_URL)))
     g.add((dataset_uri, SCHEMA.numberOfRecords, Literal(len(df), datatype=XSD.integer)))
+
+    # Add version and generator information
+    g.add(
+        (
+            dataset_uri,
+            SCHEMA.version,
+            Literal(CONFIG["app_version"], datatype=XSD.string),
+        )
+    )
+    g.add(
+        (dataset_uri, SCHEMA.isBasedOn, URIRef(WIKIDATA_WIKI_URL + "Q104225190"))
+    )  # LOTUS Initiative
+
+    # Add hash identifiers for reproducibility and provenance
+    # Query hash = what was searched, Result hash = what was found
+    LOTUS_NS = Namespace("http://lotus.nprod.net/")
+    g.bind("lotus", LOTUS_NS)
+    g.add((dataset_uri, LOTUS_NS.queryHash, Literal(query_hash, datatype=XSD.string)))
+    g.add((dataset_uri, LOTUS_NS.resultHash, Literal(result_hash, datatype=XSD.string)))
+
+    # Helper function to add optional literal triples (DRY principle)
+    def add_optional_literal(subject, predicate, value, datatype=XSD.string):
+        if value is not None and value != "":
+            g.add((subject, predicate, Literal(value, datatype=datatype)))
+
+    # Track unique entities to avoid redundant triples
+    processed_taxa = set()
+    processed_refs = set()
 
     # Add compound data
     for row in df.iter_rows(named=True):
@@ -1749,109 +1804,62 @@ def export_to_rdf_turtle(df: pl.DataFrame, taxon_input: str, qid: str) -> str:
 
         compound_uri = WD[compound_qid]
 
-        # Link compound to dataset
+        # Link compound to dataset and set type
         g.add((dataset_uri, SCHEMA.hasPart, compound_uri))
-
-        # Compound type
         g.add((compound_uri, RDF.type, SCHEMA.MolecularEntity))
 
-        # Compound label
-        if row.get("compound_name"):
-            g.add(
-                (
-                    compound_uri,
-                    RDFS.label,
-                    Literal(row["compound_name"], datatype=XSD.string),
-                )
-            )
+        # Add compound properties (optimized with helper)
+        add_optional_literal(compound_uri, RDFS.label, row.get("compound_name"))
+        add_optional_literal(
+            compound_uri, CHEMINF["000059"], row.get("compound_inchikey")
+        )
+        add_optional_literal(
+            compound_uri, CHEMINF["000018"], row.get("compound_smiles")
+        )
+        add_optional_literal(
+            compound_uri, CHEMINF["000042"], row.get("molecular_formula")
+        )
 
-        # InChIKey
-        if row.get("compound_inchikey"):
-            g.add(
-                (
-                    compound_uri,
-                    CHEMINF["000059"],
-                    Literal(row["compound_inchikey"], datatype=XSD.string),
-                )
-            )
-
-        # SMILES
-        if row.get("compound_smiles"):
-            g.add(
-                (
-                    compound_uri,
-                    CHEMINF["000018"],
-                    Literal(row["compound_smiles"], datatype=XSD.string),
-                )
-            )
-
-        # Molecular formula
-        if row.get("molecular_formula"):
-            g.add(
-                (
-                    compound_uri,
-                    CHEMINF["000042"],
-                    Literal(row["molecular_formula"], datatype=XSD.string),
-                )
-            )
-
-        # Molecular mass
         if row.get("compound_mass") is not None:
-            g.add(
-                (
-                    compound_uri,
-                    SIO["000218"],
-                    Literal(row["compound_mass"], datatype=XSD.float),
-                )
+            add_optional_literal(
+                compound_uri, SIO["000218"], row["compound_mass"], XSD.float
             )
 
-        # Taxonomic association (found in taxon)
-        if row.get("taxon_qid"):
-            g.add((compound_uri, SIO["000255"], WD[row["taxon_qid"]]))
+        # Taxonomic association
+        taxon_qid = row.get("taxon_qid")
+        if taxon_qid:
+            taxon_uri = WD[taxon_qid]
+            g.add((compound_uri, SIO["000255"], taxon_uri))
 
-        # Taxon name
-        if row.get("taxon_name") and row.get("taxon_qid"):
-            taxon_uri = WD[row["taxon_qid"]]
-            g.add(
-                (taxon_uri, RDFS.label, Literal(row["taxon_name"], datatype=XSD.string))
-            )
-            g.add((taxon_uri, RDF.type, SCHEMA.Taxon))
+            # Add taxon metadata once per unique taxon
+            if taxon_qid not in processed_taxa:
+                g.add((taxon_uri, RDF.type, SCHEMA.Taxon))
+                add_optional_literal(taxon_uri, RDFS.label, row.get("taxon_name"))
+                processed_taxa.add(taxon_qid)
 
-        # Reference
-        if row.get("reference_qid"):
-            ref_uri = WD[row["reference_qid"]]
+        # Reference metadata
+        ref_qid = row.get("reference_qid")
+        if ref_qid:
+            ref_uri = WD[ref_qid]
             g.add((compound_uri, DCTERMS.source, ref_uri))
 
-            # Reference metadata
-            if row.get("reference_title"):
-                g.add(
-                    (
-                        ref_uri,
-                        DCTERMS.title,
-                        Literal(row["reference_title"], datatype=XSD.string),
+            # Add reference metadata once per unique reference
+            if ref_qid not in processed_refs:
+                g.add((ref_uri, RDF.type, BIBO.Article))
+                add_optional_literal(ref_uri, DCTERMS.title, row.get("reference_title"))
+
+                if row.get("reference_doi"):
+                    doi_uri = URIRef(
+                        f"https://doi.org/{url_quote(row['reference_doi'], safe='')}"
                     )
-                )
+                    g.add((ref_uri, SCHEMA.identifier, doi_uri))
 
-            if row.get("reference_doi"):
-                # URL-encode the DOI to handle special characters like <, >, etc.
-                encoded_doi = url_quote(row["reference_doi"], safe="")
-                doi_uri = URIRef(f"https://doi.org/{encoded_doi}")
-                g.add((ref_uri, SCHEMA.identifier, doi_uri))
-
-            if row.get("reference_date"):
-                g.add(
-                    (
-                        ref_uri,
-                        DCTERMS.date,
-                        Literal(str(row["reference_date"]), datatype=XSD.date),
+                if row.get("reference_date"):
+                    add_optional_literal(
+                        ref_uri, DCTERMS.date, str(row["reference_date"]), XSD.date
                     )
-                )
 
-    # Add taxon information
-    if qid:
-        taxon_uri = WD[qid]
-        g.add((taxon_uri, RDF.type, SCHEMA.Taxon))
-        g.add((taxon_uri, RDFS.label, Literal(taxon_input, datatype=XSD.string)))
+                processed_refs.add(ref_qid)
 
     # Serialize to Turtle format
     return g.serialize(format="turtle")
@@ -1860,7 +1868,7 @@ def export_to_rdf_turtle(df: pl.DataFrame, taxon_input: str, qid: str) -> str:
 @app.cell
 def _():
     mo.md("""
-    # 🌿 LOTUS Wikidata Explorer
+    # 🌐 LOTUS Wikidata Explorer
     """)
     return
 
@@ -3050,7 +3058,9 @@ def _(
             )
 
             # Generate and compress RDF
-            _rdf_raw = export_to_rdf_turtle(export_df, taxon_input.value, qid)
+            _rdf_raw = export_to_rdf_turtle(
+                export_df, taxon_input.value, qid, active_filters
+            )
             _rdf_data, _rdf_fname, _rdf_mime = compress_if_large(
                 _rdf_raw,
                 generate_filename(taxon_input.value, "ttl", filters=active_filters),
@@ -3207,6 +3217,7 @@ def _(
                 rdf_generation_data["export_df"],
                 rdf_generation_data["taxon_input"],
                 rdf_generation_data["qid"],
+                rdf_generation_data["active_filters"],
             )
             _rdf_data, _rdf_filename, _rdf_mimetype = compress_if_large(
                 _rdf_data_raw,
@@ -3727,7 +3738,9 @@ def main():
             elif args.format == "ttl":
                 # Use REAL export functions from app.setup
                 export_df = prepare_export_dataframe(df)
-                data = export_to_rdf_turtle(export_df, args.taxon, qid).encode("utf-8")
+                data = export_to_rdf_turtle(export_df, args.taxon, qid, None).encode(
+                    "utf-8"
+                )
             else:
                 print(f"❌ Unknown format: {args.format}", file=sys.stderr)
                 sys.exit(1)
