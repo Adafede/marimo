@@ -1785,9 +1785,7 @@ def create_dataset_uri(
     if filters:
         query_components.append(json.dumps(filters, sort_keys=True))
 
-    query_hash = hashlib.sha256("|".join(query_components).encode("utf-8")).hexdigest()[
-        :16
-    ]
+    query_hash = hashlib.sha256("|".join(query_components).encode("utf-8")).hexdigest()
 
     # Result hash - based on actual compound identifiers (what was found)
     compound_ids = sorted(
@@ -1797,15 +1795,14 @@ def create_dataset_uri(
             if row.get("compound_qid")
         ]
     )
-    result_hash = hashlib.sha256("|".join(compound_ids).encode("utf-8")).hexdigest()[
-        :16
-    ]
+    result_hash = hashlib.sha256("|".join(compound_ids).encode("utf-8")).hexdigest()
 
-    # Create a custom dataset URI pattern within Wikidata namespace
-    # This represents a virtual dataset extracted from Wikidata/LOTUS
-    dataset_uri = URIRef(
-        f"http://www.wikidata.org/entity/lotus-dataset-{query_hash}-{result_hash}"
-    )
+    # Create a content-addressable URI using URN scheme with combined hash
+    # This follows RFC 6920 for naming things with hashes - standard approach
+    combined_hash = hashlib.sha256(
+        f"{query_hash}:{result_hash}".encode("utf-8")
+    ).hexdigest()
+    dataset_uri = URIRef(f"urn:hash:sha256:{combined_hash}")
 
     return dataset_uri, query_hash, result_hash
 
@@ -1916,12 +1913,14 @@ def add_compound_triples(
     processed_taxa: set,
     processed_refs: set,
 ) -> None:
-    """Add all triples for a single compound (separation of concerns)."""
+    """Add all triples for a single compound using Wikidata's full RDF structure."""
     WD = Namespace("http://www.wikidata.org/entity/")
-    CHEMINF = Namespace("http://semanticscience.org/resource/CHEMINF_")
-    SIO = Namespace("http://semanticscience.org/resource/SIO_")
+    WDT = Namespace("http://www.wikidata.org/prop/direct/")
+    P = Namespace("http://www.wikidata.org/prop/")
+    PS = Namespace("http://www.wikidata.org/prop/statement/")
+    PR = Namespace("http://www.wikidata.org/prop/reference/")
+    PROV = Namespace("http://www.w3.org/ns/prov#")
     SCHEMA = Namespace("http://schema.org/")
-    BIBO = Namespace("http://purl.org/ontology/bibo/")
 
     compound_qid = row.get("compound_qid", "")
     if not compound_qid:
@@ -1931,58 +1930,87 @@ def add_compound_triples(
 
     # Link compound to dataset
     g.add((dataset_uri, SCHEMA.hasPart, compound_uri))
-    g.add((compound_uri, RDF.type, SCHEMA.MolecularEntity))
 
-    # Add compound properties
-    add_optional_literal(g, compound_uri, RDFS.label, row.get("compound_name"))
+    # Compound identifiers using Wikidata properties (direct properties)
     add_optional_literal(
-        g, compound_uri, CHEMINF["000059"], row.get("compound_inchikey")
-    )
-    add_optional_literal(g, compound_uri, CHEMINF["000018"], row.get("compound_smiles"))
+        g, compound_uri, WDT.P235, row.get("compound_inchikey")
+    )  # InChIKey
     add_optional_literal(
-        g, compound_uri, CHEMINF["000042"], row.get("molecular_formula")
-    )
+        g, compound_uri, WDT.P233, row.get("compound_smiles")
+    )  # Canonical SMILES
+    add_optional_literal(
+        g, compound_uri, WDT.P274, row.get("molecular_formula")
+    )  # Molecular formula
 
+    # Mass (P2067)
     if row.get("compound_mass") is not None:
         add_optional_literal(
-            g, compound_uri, SIO["000218"], row["compound_mass"], XSD.float
+            g, compound_uri, WDT.P2067, row["compound_mass"], XSD.float
         )
 
-    # Taxonomic association
+    # Compound label
+    add_optional_literal(g, compound_uri, RDFS.label, row.get("compound_name"))
+
+    # Taxonomic association using P703 (found in taxon) with FULL STATEMENT STRUCTURE
+    # This mirrors the SPARQL query pattern:
+    #   ?compound p:P703 ?statement.
+    #   ?statement ps:P703 ?taxon;
+    #              prov:wasDerivedFrom ?ref.
+    #   ?ref pr:P248 ?ref_qid.
     taxon_qid = row.get("taxon_qid")
+    ref_qid = row.get("reference_qid")
+
     if taxon_qid:
         taxon_uri = WD[taxon_qid]
-        g.add((compound_uri, SIO["000255"], taxon_uri))
+
+        # Create a unique blank node for the statement (reified statement)
+        # In real Wikidata, this would be a specific statement URI, but we use blank nodes
+        statement_node = BNode()
+
+        # Full statement pattern (following Wikidata RDF structure)
+        g.add((compound_uri, P.P703, statement_node))  # compound has a P703 statement
+        g.add((statement_node, PS.P703, taxon_uri))     # statement value is the taxon
+
+        # Add provenance if reference exists
+        if ref_qid:
+            ref_uri = WD[ref_qid]
+
+            # Create reference node (blank node for the reference)
+            ref_node = BNode()
+
+            # Link statement to reference via provenance
+            g.add((statement_node, PROV.wasDerivedFrom, ref_node))
+
+            # Reference stated in (pr:P248)
+            g.add((ref_node, PR.P248, ref_uri))
+
+            # Add reference metadata once per unique reference
+            if ref_qid not in processed_refs:
+                # P1476: title
+                add_optional_literal(g, ref_uri, WDT.P1476, row.get("reference_title"))
+                add_optional_literal(g, ref_uri, RDFS.label, row.get("reference_title"))
+
+                # P356: DOI
+                if row.get("reference_doi"):
+                    add_optional_literal(g, ref_uri, WDT.P356, row.get("reference_doi"))
+
+                # P577: publication date
+                if row.get("reference_date"):
+                    add_optional_literal(
+                        g, ref_uri, WDT.P577, str(row["reference_date"]), XSD.date
+                    )
+
+                processed_refs.add(ref_qid)
+
+        # Also add the simplified direct triple for convenience (wdt: namespace)
+        g.add((compound_uri, WDT.P703, taxon_uri))
 
         # Add taxon metadata once per unique taxon
         if taxon_qid not in processed_taxa:
-            g.add((taxon_uri, RDF.type, SCHEMA.Taxon))
+            # P225: taxon name
+            add_optional_literal(g, taxon_uri, WDT.P225, row.get("taxon_name"))
             add_optional_literal(g, taxon_uri, RDFS.label, row.get("taxon_name"))
             processed_taxa.add(taxon_qid)
-
-    # Reference metadata
-    ref_qid = row.get("reference_qid")
-    if ref_qid:
-        ref_uri = WD[ref_qid]
-        g.add((compound_uri, DCTERMS.source, ref_uri))
-
-        # Add reference metadata once per unique reference
-        if ref_qid not in processed_refs:
-            g.add((ref_uri, RDF.type, BIBO.Article))
-            add_optional_literal(g, ref_uri, DCTERMS.title, row.get("reference_title"))
-
-            if row.get("reference_doi"):
-                doi_uri = URIRef(
-                    f"https://doi.org/{url_quote(row['reference_doi'], safe='')}"
-                )
-                g.add((ref_uri, SCHEMA.identifier, doi_uri))
-
-            if row.get("reference_date"):
-                add_optional_literal(
-                    g, ref_uri, DCTERMS.date, str(row["reference_date"]), XSD.date
-                )
-
-            processed_refs.add(ref_qid)
 
 
 @app.function
@@ -1992,28 +2020,32 @@ def export_to_rdf_turtle(
     qid: str,
     filters: Optional[Dict[str, Any]] = None,
 ) -> str:
-    """Export data to RDF Turtle format."""
+    """Export data to RDF Turtle format using Wikidata's full RDF structure."""
     # Initialize graph
     g = Graph()
 
-    # Define and bind namespaces
+    # Define and bind namespaces - full Wikidata RDF structure
     WD = Namespace("http://www.wikidata.org/entity/")
     WDT = Namespace("http://www.wikidata.org/prop/direct/")
+    P = Namespace("http://www.wikidata.org/prop/")
+    PS = Namespace("http://www.wikidata.org/prop/statement/")
+    PR = Namespace("http://www.wikidata.org/prop/reference/")
     WDQ = Namespace("http://www.wikidata.org/prop/qualifier/")
-    CHEMINF = Namespace("http://semanticscience.org/resource/CHEMINF_")
-    SIO = Namespace("http://semanticscience.org/resource/SIO_")
+    PROV = Namespace("http://www.w3.org/ns/prov#")
     SCHEMA = Namespace("http://schema.org/")
-    BIBO = Namespace("http://purl.org/ontology/bibo/")
 
-    # Bind namespaces with clear prefixes
+    # Bind namespaces
     g.bind("wd", WD)
     g.bind("wdt", WDT)
+    g.bind("p", P)
+    g.bind("ps", PS)
+    g.bind("pr", PR)
     g.bind("wdq", WDQ)
-    g.bind("cheminf", CHEMINF)
-    g.bind("sio", SIO)
+    g.bind("prov", PROV)
     g.bind("schema", SCHEMA)
+    g.bind("rdfs", RDFS)
+    g.bind("xsd", XSD)
     g.bind("dcterms", DCTERMS)
-    g.bind("bibo", BIBO)
 
     # Create dataset URI with provenance hashes
     dataset_uri, query_hash, result_hash = create_dataset_uri(
