@@ -55,6 +55,20 @@ with app.setup:
     from urllib.parse import quote as url_quote
 
     # ====================================================================
+    # CENTRALIZED RDF NAMESPACES
+    # ====================================================================
+
+    # Wikidata namespaces (used throughout for RDF export)
+    WD = Namespace("http://www.wikidata.org/entity/")
+    WDS = Namespace("http://www.wikidata.org/entity/statement/")
+    WDT = Namespace("http://www.wikidata.org/prop/direct/")
+    P = Namespace("http://www.wikidata.org/prop/")
+    PS = Namespace("http://www.wikidata.org/prop/statement/")
+    PR = Namespace("http://www.wikidata.org/prop/reference/")
+    PROV = Namespace("http://www.w3.org/ns/prov#")
+    SCHEMA = Namespace("http://schema.org/")
+
+    # ====================================================================
     # CONFIGURATION
     # ====================================================================
 
@@ -197,7 +211,7 @@ with app.setup:
     COMPOUND_INTERIM_VARS = (
         COMPOUND_MINIMAL_VARS
         + """
-    ?taxon ?taxon_name ?ref_qid
+    ?taxon ?taxon_name ?ref_qid ?statement ?ref
     """
     )
 
@@ -1585,7 +1599,7 @@ def create_display_row(row: Dict[str, str]) -> Dict[str, Any]:
 
 
 @app.function
-def prepare_export_dataframe(df: pl.DataFrame) -> pl.DataFrame:
+def prepare_export_dataframe(df: pl.DataFrame, include_rdf_fields: bool = False) -> pl.DataFrame:
     """Prepare dataframe for export with cleaned QIDs and selected columns."""
     # Extract QIDs for all entity columns
     df_with_qids = df.with_columns(
@@ -1602,7 +1616,7 @@ def prepare_export_dataframe(df: pl.DataFrame) -> pl.DataFrame:
         ]
     )
 
-    # Select and rename columns for export (including statement and ref URIs for RDF)
+    # Select and rename columns for export
     select_cols = [
         pl.col("name").alias("compound_name"),
         pl.col("smiles").alias("compound_smiles"),
@@ -1618,11 +1632,12 @@ def prepare_export_dataframe(df: pl.DataFrame) -> pl.DataFrame:
         "reference_qid",
     ]
 
-    # Add statement and ref if they exist (for RDF export)
     if "statement" in df_with_qids.columns:
-        select_cols.append("statement")
-    if "ref" in df_with_qids.columns:
-        select_cols.append("ref")
+      select_cols.append("statement")
+    # Add ref ONLY for RDF export (not for CSV/JSON)
+    if include_rdf_fields:
+        if "ref" in df_with_qids.columns:
+            select_cols.append("ref")
 
     return df_with_qids.select(select_cols)
 
@@ -1868,9 +1883,6 @@ def add_dataset_metadata(
     result_hash: str,
 ) -> None:
     """Add core dataset metadata to RDF graph (mutates graph in-place)."""
-    WD = Namespace("http://www.wikidata.org/entity/")
-    SCHEMA = Namespace("http://schema.org/")
-
     # Dataset type and basic metadata
     g.add((dataset_uri, RDF.type, SCHEMA.Dataset))
     g.add((dataset_uri, SCHEMA.name, Literal(dataset_name, datatype=XSD.string)))
@@ -1941,15 +1953,6 @@ def add_compound_triples(
     processed_refs: set,
 ) -> None:
     """Add all triples for a single compound using Wikidata's full RDF structure."""
-    WD = Namespace("http://www.wikidata.org/entity/")
-    WDS = Namespace("http://www.wikidata.org/entity/statement/")
-    WDT = Namespace("http://www.wikidata.org/prop/direct/")
-    P = Namespace("http://www.wikidata.org/prop/")
-    PS = Namespace("http://www.wikidata.org/prop/statement/")
-    PR = Namespace("http://www.wikidata.org/prop/reference/")
-    PROV = Namespace("http://www.w3.org/ns/prov#")
-    SCHEMA = Namespace("http://schema.org/")
-
     compound_qid = row.get("compound_qid", "")
     if not compound_qid:
         return
@@ -2058,16 +2061,6 @@ def export_to_rdf_turtle(
     """Export data to RDF Turtle format using Wikidata's full RDF structure."""
     # Initialize graph
     g = Graph()
-
-    # Define and bind namespaces - full Wikidata RDF structure
-    WD = Namespace("http://www.wikidata.org/entity/")
-    WDS = Namespace("http://www.wikidata.org/entity/statement/")
-    WDT = Namespace("http://www.wikidata.org/prop/direct/")
-    P = Namespace("http://www.wikidata.org/prop/")
-    PS = Namespace("http://www.wikidata.org/prop/statement/")
-    PR = Namespace("http://www.wikidata.org/prop/reference/")
-    PROV = Namespace("http://www.w3.org/ns/prov#")
-    SCHEMA = Namespace("http://schema.org/")
 
     # Bind namespaces
     g.bind("wd", WD)
@@ -3151,7 +3144,8 @@ def _(
         json_generation_data = None
         rdf_generation_data = None
     else:
-        export_df = prepare_export_dataframe(results_df)
+        export_df = prepare_export_dataframe(results_df, include_rdf_fields=False)
+        export_df_rdf = prepare_export_dataframe(results_df, include_rdf_fields=True)
         taxon_name = taxon_input.value
         ui_is_large_dataset = len(export_df) > CONFIG["lazy_generation_threshold"]
 
@@ -3261,7 +3255,7 @@ def _(
                 "active_filters": active_filters,
             }
             rdf_generation_data = {
-                "export_df": export_df,
+                "export_df": export_df_rdf,  # Use RDF version with statement/ref
                 "taxon_input": taxon_input.value,
                 "qid": qid,
                 "active_filters": active_filters,
@@ -3298,7 +3292,7 @@ def _(
             buttons.append(
                 create_download_button(
                     export_to_rdf_turtle(
-                        export_df, taxon_input.value, qid, active_filters
+                        export_df_rdf, taxon_input.value, qid, active_filters
                     ),
                     generate_filename(taxon_input.value, "ttl", filters=active_filters),
                     "📥 RDF/Turtle",
@@ -3957,12 +3951,13 @@ def main():
 
             # Export data using REAL functions
             if args.format == "csv":
-                data = df.write_csv().encode("utf-8")
+                export_df = prepare_export_dataframe(df, include_rdf_fields=False)
+                data = export_df.write_csv().encode("utf-8")
             elif args.format == "json":
-                data = df.write_json().encode("utf-8")
+                export_df = prepare_export_dataframe(df, include_rdf_fields=False)
+                data = export_df.write_json().encode("utf-8")
             elif args.format == "ttl":
-                # Use REAL export functions from app.setup
-                export_df = prepare_export_dataframe(df)
+                export_df = prepare_export_dataframe(df, include_rdf_fields=True)
                 data = export_to_rdf_turtle(export_df, args.taxon, qid, None).encode(
                     "utf-8"
                 )
