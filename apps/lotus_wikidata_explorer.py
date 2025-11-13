@@ -1796,7 +1796,7 @@ def create_export_metadata(
             f"(Wikidata QID: {qid}). " if qid else ". "
         )
 
-    description += "Retrieved via LOTUS Wikidata Explorer with professional-grade chemical search capabilities (SACHEM/IDSM)."
+    description += "Retrieved via LOTUS Wikidata Explorer with chemical search capabilities (SACHEM/IDSM)."
 
     metadata = {
         "@context": "https://schema.org/",
@@ -2383,7 +2383,6 @@ def _():
             - Helpful suggestions for ambiguous or misspelled names
 
             **Chemical Structure Search** 🧪 (Powered by SACHEM/IDSM)
-            - **Professional-grade** chemical search using SACHEM technology
             - **Substructure search**:
               - Graph-based matching (not text search)
               - Stereochemistry-aware
