@@ -133,6 +133,31 @@ with app.setup:
         ("I", "iodine"),
     ]
 
+    # Export format configurations
+    EXPORT_FORMATS = {
+        "csv": {
+            "extension": "csv",
+            "mimetype": "text/csv",
+            "label": "📥 CSV",
+            "icon": "📄",
+            "generator": lambda df: df.write_csv(),
+        },
+        "json": {
+            "extension": "json",
+            "mimetype": "application/json",
+            "label": "📥 JSON",
+            "icon": "📖",
+            "generator": lambda df: df.write_json(),
+        },
+        "ttl": {
+            "extension": "ttl",
+            "mimetype": "text/turtle",
+            "label": "📥 RDF/Turtle",
+            "icon": "🐢",
+            "generator": None,  # Needs special handling (extra params)
+        },
+    }
+
     # ====================================================================
     # SPARQL QUERY FRAGMENTS
     # ====================================================================
@@ -292,21 +317,49 @@ with app.setup:
 
 
 @app.function
+def validate_smiles(smiles: str) -> Tuple[bool, Optional[str]]:
+    """Validate SMILES string for common issues."""
+    if not smiles or not smiles.strip():
+        return True, None  # Empty is valid (means no SMILES search)
+
+    smiles = smiles.strip()
+
+    # Check for obviously invalid patterns
+    if len(smiles) < 1:
+        return False, "SMILES string is too short"
+
+    if len(smiles) > 10000:
+        return False, "SMILES string is too long (max 10,000 characters)"
+
+    # Check for null bytes or control characters
+    if "\x00" in smiles or any(ord(c) < 32 and c not in "\t\n\r" for c in smiles):
+        return False, "SMILES contains invalid control characters"
+
+    # Basic sanity check: should contain at least one atom symbol
+    # Common atom symbols in SMILES: C, N, O, S, P, F, Cl, Br, I, etc.
+    has_atom = any(c in smiles for c in "CNOSPFIBcnops")
+    if not has_atom:
+        return False, "SMILES appears to be missing atom symbols"
+
+    return True, None
+
+
+@app.function
 def escape_smiles_for_sparql(smiles: str) -> str:
     """
     Escape SMILES string for safe use in SPARQL queries.
 
     SMILES strings can contain backslashes (e.g., /C=C\3/) which are escape
     characters in SPARQL string literals and must be escaped.
-
-    Args:
-        smiles: Raw SMILES string
-
-    Returns:
-        Escaped SMILES string safe for use in SPARQL queries
     """
     if not smiles:
         return smiles
+
+    # Validate SMILES
+    is_valid, error_msg = validate_smiles(smiles)
+    if not is_valid:
+        raise ValueError(f"Invalid SMILES: {error_msg}")
+
     # Escape backslashes by doubling them
     return smiles.replace("\\", "\\\\")
 
@@ -465,24 +518,32 @@ def build_all_compounds_query() -> str:
 def execute_sparql(
     query: str, max_retries: int = CONFIG["max_retries"]
 ) -> Dict[str, Any]:
-    """Execute SPARQL query using sparqlx with retry logic."""
+    """Execute SPARQL query using sparqlx with comprehensive error handling."""
+    if not query or not query.strip():
+        raise ValueError("SPARQL query cannot be empty")
+
     for attempt in range(max_retries):
         try:
             # sparqlx handles the POST request with proper headers automatically
-            # response_format="json" for SELECT/ASK queries (default for SELECT)
             response = SPARQL_WRAPPER.query(query, response_format="json")
 
-            # sparqlx returns httpx.Response, get JSON data
-            return response.json()
+            # Validate response structure
+            result = response.json()
+            if not isinstance(result, dict):
+                raise ValueError(
+                    f"Invalid SPARQL response: expected dict, got {type(result)}"
+                )
+
+            return result
 
         except httpx.TimeoutException as e:
             # Handle timeout exceptions specifically
             if attempt == max_retries - 1:
-                raise Exception(
+                raise TimeoutError(
                     f"❌ Query timed out after {max_retries} attempts "
                     f"({CONFIG['query_timeout']}s timeout).\n"
                     f"💡 Try: Add filters to reduce result size or simplify the query."
-                )
+                ) from e
             time.sleep(CONFIG["retry_backoff"] * (2**attempt))
 
         except httpx.HTTPStatusError as e:
@@ -490,10 +551,10 @@ def execute_sparql(
             status_code = e.response.status_code
             if attempt == max_retries - 1:
                 error_detail = f" - {e.response.text[:200]}" if e.response.text else ""
-                raise Exception(
+                raise ConnectionError(
                     f"🌐 HTTP {status_code} error after {max_retries} attempts{error_detail}\n"
                     f"💡 Try: Check your internet connection or try again later."
-                )
+                ) from e
             # Retry on server errors (5xx), but not client errors (4xx)
             if 500 <= status_code < 600:
                 time.sleep(CONFIG["retry_backoff"] * (2**attempt))
@@ -503,23 +564,32 @@ def execute_sparql(
         except (httpx.NetworkError, httpx.ConnectError) as e:
             # Handle network/connection errors
             if attempt == max_retries - 1:
-                raise Exception(
+                raise ConnectionError(
                     f"🌐 Network error after {max_retries} attempts: {str(e)}\n"
                     f"💡 Try: Check your internet connection."
-                )
+                ) from e
+            time.sleep(CONFIG["retry_backoff"] * (2**attempt))
+
+        except json.JSONDecodeError as e:
+            # Handle malformed JSON responses
+            if attempt == max_retries - 1:
+                raise ValueError(
+                    f"❌ Invalid JSON response from SPARQL endpoint: {str(e)}\n"
+                    f"💡 The endpoint may be experiencing issues. Try again later."
+                ) from e
             time.sleep(CONFIG["retry_backoff"] * (2**attempt))
 
         except Exception as e:
-            # Handle any other errors
+            # Handle any other unexpected errors
             if attempt == max_retries - 1:
                 query_snippet = query[:200] + "..." if len(query) > 200 else query
-                raise Exception(
+                raise RuntimeError(
                     f"❌ Query failed: {type(e).__name__}: {e}\n"
                     f"Query snippet: {query_snippet}"
-                )
+                ) from e
             time.sleep(CONFIG["retry_backoff"] * (2**attempt))
 
-    raise Exception("Unexpected error in execute_sparql")
+    raise RuntimeError("Unexpected error in execute_sparql: max retries exceeded")
 
 
 @app.function
@@ -1215,6 +1285,26 @@ def compress_if_large(
 
 
 @app.function
+def create_download_button(
+    data: str, filename: str, label: str, base_mimetype: str
+) -> mo.download:
+    """Create a download button with automatic compression for large files."""
+    compressed_data, final_filename, final_mimetype = compress_if_large(data, filename)
+
+    # Add compression indicator to label
+    display_label = label + (
+        " (gzipped)" if final_mimetype == "application/gzip" else ""
+    )
+
+    return mo.download(
+        data=compressed_data,
+        filename=final_filename,
+        label=display_label,
+        mimetype=final_mimetype if final_mimetype else base_mimetype,
+    )
+
+
+@app.function
 def apply_range_filter(
     df: pl.DataFrame,
     column: str,
@@ -1671,42 +1761,16 @@ DOI: [10.7554/eLife.70780](https://doi.org/10.7554/eLife.70780)
 
 
 @app.function
-def export_to_rdf_turtle(
-    df: pl.DataFrame,
-    taxon_input: str,
-    qid: str,
-    filters: Optional[Dict[str, Any]] = None,
-) -> str:
-    """Export data to RDF Turtle format using rdflib following W3C standards."""
-    # Initialize graph
-    g = Graph()
+def create_dataset_uri(
+    qid: str, taxon_input: str, filters: Optional[Dict[str, Any]], df: pl.DataFrame
+) -> Tuple[URIRef, str, str]:
+    """
+    Create dataset URI with dual hash system for reproducibility.
 
-    # Define namespaces
-    WD = Namespace("http://www.wikidata.org/entity/")
-    WDT = Namespace("http://www.wikidata.org/prop/direct/")
-    CHEMINF = Namespace("http://semanticscience.org/resource/CHEMINF_")
-    SIO = Namespace("http://semanticscience.org/resource/SIO_")
-    SCHEMA = Namespace("http://schema.org/")
-    BIBO = Namespace("http://purl.org/ontology/bibo/")
-
-    # Bind prefixes for cleaner output
-    g.bind("wd", WD)
-    g.bind("wdt", WDT)
-    g.bind("cheminf", CHEMINF)
-    g.bind("sio", SIO)
-    g.bind("schema", SCHEMA)
-    g.bind("dcterms", DCTERMS)
-    g.bind("bibo", BIBO)
-
-    # Dual hash system for reproducible dataset identification:
-    # 1. Query hash: Based on search parameters (what was asked)
-    # 2. Result hash: Based on actual data content (what was found)
-
-    # Query hash - includes all search parameters
-    query_components = [
-        qid or "",
-        taxon_input or "",
-    ]
+    Uses Wikidata namespace since LOTUS data is hosted on Wikidata.
+    """
+    # Query hash - based on search parameters (what was asked)
+    query_components = [qid or "", taxon_input or ""]
     if filters:
         query_components.append(json.dumps(filters, sort_keys=True))
 
@@ -1714,8 +1778,7 @@ def export_to_rdf_turtle(
         :16
     ]
 
-    # Result hash - based on actual compound identifiers in results
-    # Sort for deterministic ordering
+    # Result hash - based on actual compound identifiers (what was found)
     compound_ids = sorted(
         [
             row.get("compound_qid", "")
@@ -1727,10 +1790,20 @@ def export_to_rdf_turtle(
         :16
     ]
 
-    # Use urn:lotus: namespace with dual identifier
-    dataset_uri = URIRef(f"urn:lotus:dataset:query-{query_hash}:result-{result_hash}")
+    # Use Wikidata namespace with LOTUS-specific pattern
+    # LOTUS data is hosted on Wikidata, so we use wd: namespace with dataset identifier
+    dataset_uri = URIRef(
+        f"http://www.wikidata.org/entity/lotus-dataset-{query_hash}-{result_hash}"
+    )
 
-    # Build descriptive dataset name and description
+    return dataset_uri, query_hash, result_hash
+
+
+@app.function
+def build_dataset_description(
+    taxon_input: str, filters: Optional[Dict[str, Any]]
+) -> Tuple[str, str]:
+    """Build descriptive dataset name and description. Returns (name, description)."""
     dataset_name = f"LOTUS Data for {taxon_input}"
     dataset_desc = f"Chemical compounds found in taxon {taxon_input} from Wikidata"
 
@@ -1740,16 +1813,33 @@ def export_to_rdf_turtle(
             search_type = smiles_info.get("search_type", "substructure")
             dataset_desc += f" using {search_type} search"
 
-        if filters.get("mass_range"):
-            mass = filters["mass_range"]
+        if filters.get("mass"):
+            mass = filters["mass"]
             dataset_desc += (
                 f", mass filter: {mass.get('min', 'N/A')}-{mass.get('max', 'N/A')} Da"
             )
 
-        if filters.get("formula"):
+        if filters.get("molecular_formula"):
             dataset_desc += ", molecular formula constraints applied"
 
-    # Dataset metadata
+    return dataset_name, dataset_desc
+
+
+@app.function
+def add_dataset_metadata(
+    g: Graph,
+    dataset_uri: URIRef,
+    dataset_name: str,
+    dataset_desc: str,
+    qid: str,
+    df_len: int,
+    query_hash: str,
+    result_hash: str,
+) -> None:
+    """Add core dataset metadata to RDF graph (mutates graph in-place)."""
+    WD = Namespace("http://www.wikidata.org/entity/")
+    SCHEMA = Namespace("http://schema.org/")
+
     g.add((dataset_uri, RDF.type, SCHEMA.Dataset))
     g.add((dataset_uri, SCHEMA.name, Literal(dataset_name, datatype=XSD.string)))
     g.add((dataset_uri, SCHEMA.description, Literal(dataset_desc, datatype=XSD.string)))
@@ -1761,14 +1851,8 @@ def export_to_rdf_turtle(
         )
     )
     g.add((dataset_uri, SCHEMA.provider, URIRef(WIKIDATA_URL)))
-
-    if qid:
-        g.add((dataset_uri, SCHEMA.about, WD[qid]))
-
     g.add((dataset_uri, DCTERMS.source, URIRef(WIKIDATA_URL)))
-    g.add((dataset_uri, SCHEMA.numberOfRecords, Literal(len(df), datatype=XSD.integer)))
-
-    # Add version and generator information
+    g.add((dataset_uri, SCHEMA.numberOfRecords, Literal(df_len, datatype=XSD.integer)))
     g.add(
         (
             dataset_uri,
@@ -1780,86 +1864,167 @@ def export_to_rdf_turtle(
         (dataset_uri, SCHEMA.isBasedOn, URIRef(WIKIDATA_WIKI_URL + "Q104225190"))
     )  # LOTUS Initiative
 
-    # Add hash identifiers for reproducibility and provenance
-    # Query hash = what was searched, Result hash = what was found
-    LOTUS_NS = Namespace("http://lotus.nprod.net/")
-    g.bind("lotus", LOTUS_NS)
-    g.add((dataset_uri, LOTUS_NS.queryHash, Literal(query_hash, datatype=XSD.string)))
-    g.add((dataset_uri, LOTUS_NS.resultHash, Literal(result_hash, datatype=XSD.string)))
+    if qid:
+        g.add((dataset_uri, SCHEMA.about, WD[qid]))
 
-    # Helper function to add optional literal triples (DRY principle)
-    def add_optional_literal(subject, predicate, value, datatype=XSD.string):
-        if value is not None and value != "":
-            g.add((subject, predicate, Literal(value, datatype=datatype)))
+    # Add provenance hashes as Wikidata properties
+    # Using custom qualifiers under Wikidata namespace for consistency
+    WDQ = Namespace("http://www.wikidata.org/prop/qualifier/")
+    g.bind("wdq", WDQ)
+    g.add(
+        (dataset_uri, WDQ["lotus-query-hash"], Literal(query_hash, datatype=XSD.string))
+    )
+    g.add(
+        (
+            dataset_uri,
+            WDQ["lotus-result-hash"],
+            Literal(result_hash, datatype=XSD.string),
+        )
+    )
 
-    # Track unique entities to avoid redundant triples
+
+@app.function
+def add_optional_literal(
+    g: Graph, subject: URIRef, predicate: URIRef, value: Any, datatype=XSD.string
+) -> None:
+    """Add optional literal triple to graph if value exists (DRY helper)."""
+    if value is not None and value != "":
+        g.add((subject, predicate, Literal(value, datatype=datatype)))
+
+
+@app.function
+def add_compound_triples(
+    g: Graph,
+    row: Dict[str, Any],
+    dataset_uri: URIRef,
+    processed_taxa: set,
+    processed_refs: set,
+) -> None:
+    """Add all triples for a single compound (separation of concerns)."""
+    WD = Namespace("http://www.wikidata.org/entity/")
+    CHEMINF = Namespace("http://semanticscience.org/resource/CHEMINF_")
+    SIO = Namespace("http://semanticscience.org/resource/SIO_")
+    SCHEMA = Namespace("http://schema.org/")
+    BIBO = Namespace("http://purl.org/ontology/bibo/")
+
+    compound_qid = row.get("compound_qid", "")
+    if not compound_qid:
+        return
+
+    compound_uri = WD[compound_qid]
+
+    # Link compound to dataset
+    g.add((dataset_uri, SCHEMA.hasPart, compound_uri))
+    g.add((compound_uri, RDF.type, SCHEMA.MolecularEntity))
+
+    # Add compound properties
+    add_optional_literal(g, compound_uri, RDFS.label, row.get("compound_name"))
+    add_optional_literal(
+        g, compound_uri, CHEMINF["000059"], row.get("compound_inchikey")
+    )
+    add_optional_literal(g, compound_uri, CHEMINF["000018"], row.get("compound_smiles"))
+    add_optional_literal(
+        g, compound_uri, CHEMINF["000042"], row.get("molecular_formula")
+    )
+
+    if row.get("compound_mass") is not None:
+        add_optional_literal(
+            g, compound_uri, SIO["000218"], row["compound_mass"], XSD.float
+        )
+
+    # Taxonomic association
+    taxon_qid = row.get("taxon_qid")
+    if taxon_qid:
+        taxon_uri = WD[taxon_qid]
+        g.add((compound_uri, SIO["000255"], taxon_uri))
+
+        # Add taxon metadata once per unique taxon
+        if taxon_qid not in processed_taxa:
+            g.add((taxon_uri, RDF.type, SCHEMA.Taxon))
+            add_optional_literal(g, taxon_uri, RDFS.label, row.get("taxon_name"))
+            processed_taxa.add(taxon_qid)
+
+    # Reference metadata
+    ref_qid = row.get("reference_qid")
+    if ref_qid:
+        ref_uri = WD[ref_qid]
+        g.add((compound_uri, DCTERMS.source, ref_uri))
+
+        # Add reference metadata once per unique reference
+        if ref_qid not in processed_refs:
+            g.add((ref_uri, RDF.type, BIBO.Article))
+            add_optional_literal(g, ref_uri, DCTERMS.title, row.get("reference_title"))
+
+            if row.get("reference_doi"):
+                doi_uri = URIRef(
+                    f"https://doi.org/{url_quote(row['reference_doi'], safe='')}"
+                )
+                g.add((ref_uri, SCHEMA.identifier, doi_uri))
+
+            if row.get("reference_date"):
+                add_optional_literal(
+                    g, ref_uri, DCTERMS.date, str(row["reference_date"]), XSD.date
+                )
+
+            processed_refs.add(ref_qid)
+
+
+@app.function
+def export_to_rdf_turtle(
+    df: pl.DataFrame,
+    taxon_input: str,
+    qid: str,
+    filters: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Export data to RDF Turtle format."""
+    # Initialize graph
+    g = Graph()
+
+    # Define and bind namespaces
+    WD = Namespace("http://www.wikidata.org/entity/")
+    WDT = Namespace("http://www.wikidata.org/prop/direct/")
+    WDQ = Namespace("http://www.wikidata.org/prop/qualifier/")
+    CHEMINF = Namespace("http://semanticscience.org/resource/CHEMINF_")
+    SIO = Namespace("http://semanticscience.org/resource/SIO_")
+    SCHEMA = Namespace("http://schema.org/")
+    BIBO = Namespace("http://purl.org/ontology/bibo/")
+
+    g.bind("wd", WD)
+    g.bind("wdt", WDT)
+    g.bind("wdq", WDQ)
+    g.bind("cheminf", CHEMINF)
+    g.bind("sio", SIO)
+    g.bind("schema", SCHEMA)
+    g.bind("dcterms", DCTERMS)
+    g.bind("bibo", BIBO)
+
+    # Create dataset URI with provenance hashes
+    dataset_uri, query_hash, result_hash = create_dataset_uri(
+        qid, taxon_input, filters, df
+    )
+
+    # Build dataset description
+    dataset_name, dataset_desc = build_dataset_description(taxon_input, filters)
+
+    # Add dataset metadata
+    add_dataset_metadata(
+        g,
+        dataset_uri,
+        dataset_name,
+        dataset_desc,
+        qid,
+        len(df),
+        query_hash,
+        result_hash,
+    )
+
+    # Track unique entities to avoid redundant triples (efficiency)
     processed_taxa = set()
     processed_refs = set()
 
     # Add compound data
     for row in df.iter_rows(named=True):
-        compound_qid = row.get("compound_qid", "")
-        if not compound_qid:
-            continue
-
-        compound_uri = WD[compound_qid]
-
-        # Link compound to dataset and set type
-        g.add((dataset_uri, SCHEMA.hasPart, compound_uri))
-        g.add((compound_uri, RDF.type, SCHEMA.MolecularEntity))
-
-        # Add compound properties (optimized with helper)
-        add_optional_literal(compound_uri, RDFS.label, row.get("compound_name"))
-        add_optional_literal(
-            compound_uri, CHEMINF["000059"], row.get("compound_inchikey")
-        )
-        add_optional_literal(
-            compound_uri, CHEMINF["000018"], row.get("compound_smiles")
-        )
-        add_optional_literal(
-            compound_uri, CHEMINF["000042"], row.get("molecular_formula")
-        )
-
-        if row.get("compound_mass") is not None:
-            add_optional_literal(
-                compound_uri, SIO["000218"], row["compound_mass"], XSD.float
-            )
-
-        # Taxonomic association
-        taxon_qid = row.get("taxon_qid")
-        if taxon_qid:
-            taxon_uri = WD[taxon_qid]
-            g.add((compound_uri, SIO["000255"], taxon_uri))
-
-            # Add taxon metadata once per unique taxon
-            if taxon_qid not in processed_taxa:
-                g.add((taxon_uri, RDF.type, SCHEMA.Taxon))
-                add_optional_literal(taxon_uri, RDFS.label, row.get("taxon_name"))
-                processed_taxa.add(taxon_qid)
-
-        # Reference metadata
-        ref_qid = row.get("reference_qid")
-        if ref_qid:
-            ref_uri = WD[ref_qid]
-            g.add((compound_uri, DCTERMS.source, ref_uri))
-
-            # Add reference metadata once per unique reference
-            if ref_qid not in processed_refs:
-                g.add((ref_uri, RDF.type, BIBO.Article))
-                add_optional_literal(ref_uri, DCTERMS.title, row.get("reference_title"))
-
-                if row.get("reference_doi"):
-                    doi_uri = URIRef(
-                        f"https://doi.org/{url_quote(row['reference_doi'], safe='')}"
-                    )
-                    g.add((ref_uri, SCHEMA.identifier, doi_uri))
-
-                if row.get("reference_date"):
-                    add_optional_literal(
-                        ref_uri, DCTERMS.date, str(row["reference_date"]), XSD.date
-                    )
-
-                processed_refs.add(ref_qid)
+        add_compound_triples(g, row, dataset_uri, processed_taxa, processed_refs)
 
     # Serialize to Turtle format
     return g.serialize(format="turtle")
@@ -3025,53 +3190,35 @@ def _(
             json_generation_data = None
             rdf_generation_data = None
 
-            # Generate and compress CSV
-            _csv_raw = export_df.write_csv()
-            _csv_data, _csv_fname, _csv_mime = compress_if_large(
-                _csv_raw,
-                generate_filename(taxon_input.value, "csv", filters=active_filters),
-            )
+            # Generate downloads using DRY helper
             buttons.append(
-                mo.download(
-                    data=_csv_data,
-                    filename=_csv_fname,
-                    label="📥 CSV"
-                    + (" (gzipped)" if _csv_mime == "application/gzip" else ""),
-                    mimetype=_csv_mime if _csv_mime else "text/csv",
+                create_download_button(
+                    export_df.write_csv(),
+                    generate_filename(taxon_input.value, "csv", filters=active_filters),
+                    "📥 CSV",
+                    "text/csv",
                 )
             )
 
-            # Generate and compress JSON
-            _json_raw = export_df.write_json()
-            _json_data, _json_fname, _json_mime = compress_if_large(
-                _json_raw,
-                generate_filename(taxon_input.value, "json", filters=active_filters),
-            )
             buttons.append(
-                mo.download(
-                    data=_json_data,
-                    filename=_json_fname,
-                    label="📥 JSON"
-                    + (" (gzipped)" if _json_mime == "application/gzip" else ""),
-                    mimetype=_json_mime if _json_mime else "application/json",
+                create_download_button(
+                    export_df.write_json(),
+                    generate_filename(
+                        taxon_input.value, "json", filters=active_filters
+                    ),
+                    "📥 JSON",
+                    "application/json",
                 )
             )
 
-            # Generate and compress RDF
-            _rdf_raw = export_to_rdf_turtle(
-                export_df, taxon_input.value, qid, active_filters
-            )
-            _rdf_data, _rdf_fname, _rdf_mime = compress_if_large(
-                _rdf_raw,
-                generate_filename(taxon_input.value, "ttl", filters=active_filters),
-            )
             buttons.append(
-                mo.download(
-                    data=_rdf_data,
-                    filename=_rdf_fname,
-                    label="📥 RDF/Turtle"
-                    + (" (gzipped)" if _rdf_mime == "application/gzip" else ""),
-                    mimetype=_rdf_mime if _rdf_mime else "text/turtle",
+                create_download_button(
+                    export_to_rdf_turtle(
+                        export_df, taxon_input.value, qid, active_filters
+                    ),
+                    generate_filename(taxon_input.value, "ttl", filters=active_filters),
+                    "📥 RDF/Turtle",
+                    "text/turtle",
                 )
             )
         # Metadata download
@@ -3130,101 +3277,95 @@ def _(
     taxon_name,
     ui_is_large_dataset,
 ):
-    # Handle CSV generation
-    if (
-        ui_is_large_dataset
-        and csv_generate_button is not None
-        and csv_generate_button.value
+    """Handle lazy generation of downloads for large datasets."""
+
+    def create_lazy_download_ui(
+        generate_button,
+        generation_data,
+        format_name: str,
+        format_ext: str,
+        data_generator_fn,
+        base_mimetype: str,
     ):
-        with mo.status.spinner(title="📄 Generating CSV format..."):
-            _csv_data_raw = csv_generation_data["export_df"].write_csv()
-            _csv_data, _csv_filename, _csv_mimetype = compress_if_large(
-                _csv_data_raw,
+        """Generic lazy download UI generator."""
+        if (
+            not ui_is_large_dataset
+            or generate_button is None
+            or not generate_button.value
+        ):
+            return mo.Html("")
+
+        with mo.status.spinner(title=f"Generating {format_name} format..."):
+            raw_data = data_generator_fn(generation_data)
+            compressed_data, final_filename, final_mimetype = compress_if_large(
+                raw_data,
                 generate_filename(
-                    taxon_name, "csv", filters=csv_generation_data["active_filters"]
+                    taxon_name, format_ext, filters=generation_data["active_filters"]
                 ),
             )
-        csv_download_ui = mo.vstack(
+
+        return mo.vstack(
             [
                 mo.callout(
                     mo.md(
-                        f"✅ **CSV Ready** - {len(csv_generation_data['export_df']):,} entries"
+                        f"✅ **{format_name} Ready** - {len(generation_data['export_df']):,} entries"
                         + (
                             " (compressed)"
-                            if _csv_mimetype == "application/gzip"
+                            if final_mimetype == "application/gzip"
                             else ""
                         )
                     ),
                     kind="success",
                 ),
                 mo.download(
-                    data=_csv_data,
-                    filename=_csv_filename,
-                    label="📥 Download CSV",
-                    mimetype=_csv_mimetype if _csv_mimetype else "text/csv",
+                    data=compressed_data,
+                    filename=final_filename,
+                    label=f"📥 Download {format_name}",
+                    mimetype=final_mimetype if final_mimetype else base_mimetype,
                 ),
             ]
         )
-    else:
-        csv_download_ui = mo.Html("")
 
-    # Handle JSON generation
-    if (
-        ui_is_large_dataset
-        and json_generate_button is not None
-        and json_generate_button.value
-    ):
-        with mo.status.spinner(title="📖 Generating JSON format..."):
-            _json_data_raw = json_generation_data["export_df"].write_json()
-            _json_data, _json_filename, _json_mimetype = compress_if_large(
-                _json_data_raw,
-                generate_filename(
-                    taxon_name, "json", filters=json_generation_data["active_filters"]
-                ),
-            )
-        json_download_ui = mo.vstack(
-            [
-                mo.callout(
-                    mo.md(
-                        f"✅ **JSON Ready** - {len(json_generation_data['export_df']):,} entries"
-                        + (
-                            " (compressed)"
-                            if _json_mimetype == "application/gzip"
-                            else ""
-                        )
-                    ),
-                    kind="success",
-                ),
-                mo.download(
-                    data=_json_data,
-                    filename=_json_filename,
-                    label="📥 Download JSON",
-                    mimetype=_json_mimetype if _json_mimetype else "application/json",
-                ),
-            ]
-        )
-    else:
-        json_download_ui = mo.Html("")
+    # CSV generation
+    csv_download_ui = create_lazy_download_ui(
+        csv_generate_button,
+        csv_generation_data,
+        "CSV",
+        "csv",
+        lambda d: d["export_df"].write_csv(),
+        "text/csv",
+    )
 
-    # Handle RDF generation
+    # JSON generation
+    json_download_ui = create_lazy_download_ui(
+        json_generate_button,
+        json_generation_data,
+        "JSON",
+        "json",
+        lambda d: d["export_df"].write_json(),
+        "application/json",
+    )
+
+    # RDF generation (needs extra params)
     if (
         ui_is_large_dataset
         and rdf_generate_button is not None
         and rdf_generate_button.value
     ):
         with mo.status.spinner(title="🐢 Generating RDF/Turtle format..."):
-            _rdf_data_raw = export_to_rdf_turtle(
+            _rdf_raw = export_to_rdf_turtle(
                 rdf_generation_data["export_df"],
                 rdf_generation_data["taxon_input"],
                 rdf_generation_data["qid"],
                 rdf_generation_data["active_filters"],
             )
             _rdf_data, _rdf_filename, _rdf_mimetype = compress_if_large(
-                _rdf_data_raw,
+                _rdf_raw,
                 generate_filename(
                     taxon_name, "ttl", filters=rdf_generation_data["active_filters"]
                 ),
             )
+
         rdf_download_ui = mo.vstack(
             [
                 mo.callout(
