@@ -55,21 +55,7 @@ with app.setup:
     from urllib.parse import quote as url_quote
 
     # ====================================================================
-    # CENTRALIZED RDF NAMESPACES
-    # ====================================================================
-
-    # Wikidata namespaces (used throughout for RDF export)
-    WD = Namespace("http://www.wikidata.org/entity/")
-    WDS = Namespace("http://www.wikidata.org/entity/statement/")
-    WDT = Namespace("http://www.wikidata.org/prop/direct/")
-    P = Namespace("http://www.wikidata.org/prop/")
-    PS = Namespace("http://www.wikidata.org/prop/statement/")
-    PR = Namespace("http://www.wikidata.org/prop/reference/")
-    PROV = Namespace("http://www.w3.org/ns/prov#")
-    SCHEMA = Namespace("http://schema.org/")
-
-    # ====================================================================
-    # CONFIGURATION
+    # MARIMO RELATED
     # ====================================================================
 
     # Set output max bytes safely (deployment environments may have limits)
@@ -80,6 +66,32 @@ with app.setup:
     except Exception:
         # Silently fail if runtime config cannot be set
         pass
+
+    # ====================================================================
+    # CENTRALIZED RDF NAMESPACES AND URLS
+    # ====================================================================
+
+    # Namespaces (used throughout for RDF export)
+    WD = Namespace("http://www.wikidata.org/entity/")
+    WDREF = Namespace("http://www.wikidata.org/reference/")
+    WDS = Namespace("http://www.wikidata.org/entity/statement/")
+    WDT = Namespace("http://www.wikidata.org/prop/direct/")
+    P = Namespace("http://www.wikidata.org/prop/")
+    PS = Namespace("http://www.wikidata.org/prop/statement/")
+    PR = Namespace("http://www.wikidata.org/prop/reference/")
+    PROV = Namespace("http://www.w3.org/ns/prov#")
+    SCHEMA = Namespace("http://schema.org/")
+
+    # URLs (constants)
+    SCHOLIA_URL = "https://scholia.toolforge.org/"
+    WIKIDATA_URL = "https://www.wikidata.org/"
+    WIKIDATA_HTTP_URL = WIKIDATA_URL.replace("https://", "http://")
+    WIKIDATA_ENTITY_URL = WIKIDATA_HTTP_URL + "entity/"
+    WIKIDATA_WIKI_URL = WIKIDATA_URL + "wiki/"
+
+    # ====================================================================
+    # CONFIGURATION
+    # ====================================================================
 
     CONFIG = {
         # Application Metadata
@@ -119,13 +131,6 @@ with app.setup:
         "default_similarity_threshold": 0.8,  # Tanimoto coefficient threshold
     }
 
-    # URLs (constants)
-    SCHOLIA_URL = "https://scholia.toolforge.org/"
-    WIKIDATA_URL = "https://www.wikidata.org/"
-    WIKIDATA_HTTP_URL = WIKIDATA_URL.replace("https://", "http://")
-    WIKIDATA_ENTITY_URL = WIKIDATA_HTTP_URL + "entity/"
-    WIKIDATA_WIKI_URL = WIKIDATA_URL + "wiki/"
-
     # ====================================================================
     # ELEMENT CONFIGURATION
     # ====================================================================
@@ -146,6 +151,10 @@ with app.setup:
         ("Br", "bromine"),
         ("I", "iodine"),
     ]
+
+    # ====================================================================
+    # EXPORT CONFIGURATION
+    # ====================================================================
 
     # Export format configurations
     EXPORT_FORMATS = {
@@ -344,6 +353,10 @@ with app.setup:
             ):
                 return True
             return False
+
+# ========================================================================
+# FUNCTIONS
+# ========================================================================
 
 
 @app.function
@@ -1582,6 +1595,10 @@ def create_display_row(row: Dict[str, str]) -> Dict[str, Any]:
     ref_qid = extract_qid(row["reference"])
     doi = row["ref_doi"]
 
+    # Extract statement ID if available (for provenance transparency)
+    statement_uri = row.get("statement", "")
+    statement_id = statement_uri.split("/")[-1] if statement_uri else ""
+
     return {
         "2D Depiction": mo.image(src=img_url),
         "Compound": row["name"],
@@ -1595,12 +1612,25 @@ def create_display_row(row: Dict[str, str]) -> Dict[str, Any]:
         "Compound QID": create_wikidata_link(compound_qid),
         "Taxon QID": create_wikidata_link(taxon_qid),
         "Reference QID": create_wikidata_link(ref_qid),
+        "Statement": create_link(statement_uri, statement_id)
+        if statement_id
+        else mo.Html("-"),
     }
 
 
 @app.function
-def prepare_export_dataframe(df: pl.DataFrame, include_rdf_fields: bool = False) -> pl.DataFrame:
-    """Prepare dataframe for export with cleaned QIDs and selected columns."""
+def prepare_export_dataframe(
+    df: pl.DataFrame, include_rdf_ref: bool = False
+) -> pl.DataFrame:
+    """
+    Prepare dataframe for export with cleaned QIDs and selected columns.
+
+    Args:
+        df: Input dataframe
+        include_rdf_ref: If True, include ref URI for RDF export.
+                        Statement is always included (for display and RDF).
+                        Ref is only for RDF export (not needed in CSV/JSON/display).
+    """
     # Extract QIDs for all entity columns
     df_with_qids = df.with_columns(
         [
@@ -1632,12 +1662,13 @@ def prepare_export_dataframe(df: pl.DataFrame, include_rdf_fields: bool = False)
         "reference_qid",
     ]
 
+    # Always include statement (for display table and RDF)
     if "statement" in df_with_qids.columns:
-      select_cols.append("statement")
-    # Add ref ONLY for RDF export (not for CSV/JSON)
-    if include_rdf_fields:
-        if "ref" in df_with_qids.columns:
-            select_cols.append("ref")
+        select_cols.append("statement")
+
+    # Only include ref for RDF export (not needed for CSV/JSON/display)
+    if include_rdf_ref and "ref" in df_with_qids.columns:
+        select_cols.append("ref")
 
     return df_with_qids.select(select_cols)
 
@@ -1896,7 +1927,7 @@ def add_dataset_metadata(
             URIRef("https://creativecommons.org/publicdomain/zero/1.0/"),
         )
     )
-    g.add((dataset_uri, SCHEMA.provider, URIRef(WIKIDATA_URL)))
+    g.add((dataset_uri, SCHEMA.provider, URIRef(CONFIG["app_url"])))
     g.add((dataset_uri, DCTERMS.source, URIRef(WIKIDATA_URL)))
 
     # Dataset statistics and versioning
@@ -2064,6 +2095,7 @@ def export_to_rdf_turtle(
 
     # Bind namespaces
     g.bind("wd", WD)
+    g.bind("wdref", WDREF)
     g.bind("wds", WDS)
     g.bind("wdt", WDT)
     g.bind("p", P)
@@ -3144,8 +3176,10 @@ def _(
         json_generation_data = None
         rdf_generation_data = None
     else:
-        export_df = prepare_export_dataframe(results_df, include_rdf_fields=False)
-        export_df_rdf = prepare_export_dataframe(results_df, include_rdf_fields=True)
+        # Prepare export dataframe (includes statement for display, excludes ref for CSV/JSON)
+        export_df = prepare_export_dataframe(results_df, include_rdf_ref=False)
+        # For RDF, we need the ref column too
+        export_df_rdf = prepare_export_dataframe(results_df, include_rdf_ref=True)
         taxon_name = taxon_input.value
         ui_is_large_dataset = len(export_df) > CONFIG["lazy_generation_threshold"]
 
@@ -3207,6 +3241,9 @@ def _(
                     "Reference QID": create_wikidata_link(
                         extract_qid(row["reference"])
                     ),
+                    "Statement": create_link(stmt_uri, stmt_uri.split("/")[-1])
+                    if (stmt_uri := row.get("statement", ""))
+                    else mo.Html("-"),
                 }
                 for row in limited_df.iter_rows(named=True)
             ]
@@ -3951,13 +3988,16 @@ def main():
 
             # Export data using REAL functions
             if args.format == "csv":
-                export_df = prepare_export_dataframe(df, include_rdf_fields=False)
+                # CSV export: exclude ref column (statement included for transparency)
+                export_df = prepare_export_dataframe(df, include_rdf_ref=False)
                 data = export_df.write_csv().encode("utf-8")
             elif args.format == "json":
-                export_df = prepare_export_dataframe(df, include_rdf_fields=False)
+                # JSON export: exclude ref column (statement included for transparency)
+                export_df = prepare_export_dataframe(df, include_rdf_ref=False)
                 data = export_df.write_json().encode("utf-8")
             elif args.format == "ttl":
-                export_df = prepare_export_dataframe(df, include_rdf_fields=True)
+                # RDF export: include ref column for full provenance
+                export_df = prepare_export_dataframe(df, include_rdf_ref=True)
                 data = export_to_rdf_turtle(export_df, args.taxon, qid, None).encode(
                     "utf-8"
                 )
