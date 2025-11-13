@@ -3998,15 +3998,7 @@ def main():
                         args.smiles_threshold
                     )
 
-            # Show metadata mode - use the REAL create_export_metadata function
-            if args.show_metadata:
-                # Use the REAL metadata function from app.setup
-                metadata = create_export_metadata(
-                    df, args.taxon, qid, filters if filters else None
-                )
-                print(json.dumps(metadata, indent=2))
-
-            # Compute hashes for provenance (before exporting)
+            # Compute hashes for provenance (before showing metadata or exporting)
             # Query hash - based on search parameters (what was asked)
             query_components = [qid or "", args.taxon or ""]
             if filters:
@@ -4026,6 +4018,15 @@ def main():
             result_hash = hashlib.sha256(
                 "|".join(compound_qids).encode("utf-8")
             ).hexdigest()
+
+            # Show metadata mode - use the REAL create_export_metadata function
+            if args.show_metadata:
+                # Use the REAL metadata function from app.setup with provenance hashes
+                metadata = create_export_metadata(
+                    df, args.taxon, qid, filters if filters else None,
+                    query_hash=query_hash, result_hash=result_hash
+                )
+                print(json.dumps(metadata, indent=2))
 
             # Export data using REAL functions
             if args.format == "csv":
