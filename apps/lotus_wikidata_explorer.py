@@ -1624,8 +1624,6 @@ def create_display_row(row: Dict[str, str]) -> Dict[str, Any]:
 def prepare_export_dataframe(
     df: pl.DataFrame,
     include_rdf_ref: bool = False,
-    query_hash: Optional[str] = None,
-    result_hash: Optional[str] = None,
 ) -> pl.DataFrame:
     """
     Prepare dataframe for export with cleaned QIDs and selected columns.
@@ -1635,8 +1633,6 @@ def prepare_export_dataframe(
         include_rdf_ref: If True, include ref URI for RDF export.
                         Statement is always included (for display and RDF).
                         Ref is only for RDF export (not needed in CSV/JSON/display).
-        query_hash: SHA256 hash of query parameters (what was asked)
-        result_hash: SHA256 hash of result compound IDs (what was found)
     """
     # Extract QIDs for all entity columns
     df_with_qids = df.with_columns(
@@ -1677,29 +1673,19 @@ def prepare_export_dataframe(
     if include_rdf_ref and "ref" in df_with_qids.columns:
         select_cols.append("ref")
 
-    result_df = df_with_qids.select(select_cols)
-
-    # Add hash columns if provided (for provenance and reproducibility)
-    if query_hash is not None:
-        result_df = result_df.with_columns(pl.lit(query_hash).alias("query_hash"))
-    if result_hash is not None:
-        result_df = result_df.with_columns(pl.lit(result_hash).alias("result_hash"))
-
-    return result_df
+    return df_with_qids.select(select_cols)
 
 
 @app.function
 def create_export_metadata(
-    df: pl.DataFrame, taxon_input: str, qid: str, filters: Dict[str, Any]
+    df: pl.DataFrame,
+    taxon_input: str,
+    qid: str,
+    filters: Dict[str, Any],
+    query_hash: Optional[str] = None,
+    result_hash: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Create FAIR-compliant metadata for exported datasets."""
-    # Extract hashes from dataframe if present (for provenance)
-    query_hash = None
-    result_hash = None
-    if "query_hash" in df.columns:
-        query_hash = df.select("query_hash").row(0)[0] if len(df) > 0 else None
-    if "result_hash" in df.columns:
-        result_hash = df.select("result_hash").row(0)[0] if len(df) > 0 else None
 
     # Build descriptive name and description based on search type
     smiles_info = filters.get("chemical_structure", {}) if filters else {}
@@ -2723,32 +2709,47 @@ def _(
     year_filter,
     year_start,
 ):
-    filters_ui = [
-        mo.md("## 🔍 Search Parameters"),
-        taxon_input,
-        smiles_input,
-        smiles_search_type,
-    ]
-
-    # Show threshold slider only when similarity is selected
+    # Build structure search section (right column)
+    structure_fields = [smiles_input, smiles_search_type]
     if smiles_search_type.value == "similarity":
-        filters_ui.append(smiles_threshold)
+        structure_fields.append(smiles_threshold)
 
-    filters_ui.extend(
+    structure_section = mo.vstack(structure_fields)
+
+    # Main search parameters: taxon on left, structure on right
+    main_search = mo.hstack(
         [
-            mo.md("### Optional Filters"),
-            mo.hstack([mass_filter], justify="start"),
-            mo.hstack([mass_min, mass_max], gap=2, widths="equal")
-            if mass_filter.value
-            else mo.Html(""),
-            mo.hstack([year_filter], justify="start"),
-            mo.hstack([year_start, year_end], gap=2, widths="equal")
-            if year_filter.value
-            else mo.Html(""),
-            mo.hstack([formula_filter], justify="start"),
-        ]
+            mo.vstack([taxon_input]),
+            structure_section,
+        ],
+        gap=3,
+        widths="equal",
     )
 
+    # Optional filter buttons arranged horizontally
+    filter_buttons = mo.hstack(
+        [mass_filter, year_filter, formula_filter],
+        gap=3,
+        justify="start",
+    )
+
+    # Build filters UI
+    filters_ui = [
+        mo.md("## 🔍 Search Parameters"),
+        main_search,
+        mo.md("### Optional Filters"),
+        filter_buttons,
+    ]
+
+    # Mass filter fields
+    if mass_filter.value:
+        filters_ui.append(mo.hstack([mass_min, mass_max], gap=2, widths="equal"))
+
+    # Year filter fields
+    if year_filter.value:
+        filters_ui.append(mo.hstack([year_start, year_end], gap=2, widths="equal"))
+
+    # Formula filter fields
     if formula_filter.value:
         filters_ui.extend(
             [
@@ -3011,44 +3012,30 @@ def _(
 
         # Taxon info
         if qid == "*":
-            taxon_info = mo.md("**Search scope:** All taxa in LOTUS")
+            taxon_info = "All taxa"
         else:
-            taxon_info = mo.md(
-                f"**Taxon:** {taxon_input.value} {create_wikidata_link(qid)}"
-            )
+            taxon_info = f"{taxon_input.value} {create_wikidata_link(qid)}"
 
         # Add SMILES search info if present
-        search_info_parts = [taxon_info]
         if smiles_input.value and smiles_input.value.strip():
             _smiles_str = smiles_input.value.strip()
             search_type = smiles_search_type.value
 
             if search_type == "similarity":
                 threshold_val = smiles_threshold.value
-                smiles_info = mo.md(
-                    f"**Chemical search:** `{_smiles_str}`<br>"
-                    f"*{search_type.title()} search*<br>"
-                    f"Tanimoto threshold: **{threshold_val}**"
-                )
+                smiles_info = f"SMILES: `{_smiles_str}` ({search_type}, threshold: {threshold_val})"
             else:
-                smiles_info = mo.md(
-                    f"**Chemical search:** `{_smiles_str}`<br>"
-                    f"*{search_type.title()} search*"
-                )
-            search_info_parts.append(smiles_info)
+                smiles_info = f"SMILES: `{_smiles_str}...` ({search_type})"
 
-        # Combine search info
-        if len(search_info_parts) > 1:
-            combined_search_info = mo.vstack(search_info_parts, gap=1)
+            combined_info = f"{taxon_info} • {smiles_info}"
         else:
-            combined_search_info = search_info_parts[0]
+            combined_info = taxon_info
 
-        # Hash display for provenance
-        hash_display = mo.md(
-            f"**Provenance Hashes**<br>"
-            f"Query: `{query_hash}`<br>"
-            f"Results: `{result_hash}`"
-        )
+        # Search info
+        search_info_display = mo.md(f"**{combined_info}**")
+
+        # Provenance hash
+        hash_info = mo.md(f"*Hashes:* Query: `{query_hash}` • Results: `{result_hash}`")
 
         # Stats cards
         stats_cards = mo.hstack(
@@ -3079,26 +3066,15 @@ def _(
             wrap=False,
         )
 
-        # Search info and stats layout
-        if len(search_info_parts) > 1:
-            # Stack vertically when SMILES is present for better readability
-            search_and_stats = mo.vstack(
-                [combined_search_info, hash_display, stats_cards],
-                gap=2,
-            )
-        else:
-            # Single line when no SMILES
-            search_and_stats = mo.vstack(
-                [
-                    mo.hstack(
-                        [combined_search_info, stats_cards],
-                        justify="space-between",
-                        align="start",
-                    ),
-                    hash_display,
-                ],
-                gap=2,
-            )
+        search_and_stats = mo.hstack(
+            [
+                mo.vstack([search_info_display, hash_info], gap=0.5),
+                stats_cards,
+            ],
+            justify="space-between",
+            align="center",
+            gap=3,
+        )
 
         # Build API URL for sharing
         api_url = build_api_url(
@@ -3160,14 +3136,10 @@ def _(
         if taxon_warning:
             summary_parts.append(mo.callout(taxon_warning, kind="warn"))
 
-        summary_section = mo.vstack(summary_parts)
-
-        # Combine summary (left) and downloads (right) side by side
-        summary_and_downloads = mo.hstack(
-            [summary_section, download_ui],
-            justify="space-between",
-            align="start",
-            gap=4,
+        # Stack summary and downloads vertically
+        summary_and_downloads = mo.vstack(
+            [mo.vstack(summary_parts), download_ui],
+            gap=3,
         )
 
     summary_and_downloads
@@ -3298,26 +3270,16 @@ def _(
             "|".join(compound_qids).encode("utf-8")
         ).hexdigest()
 
-        # Prepare export dataframes with hashes (includes statement for display, excludes ref for CSV/JSON)
-        export_df = prepare_export_dataframe(
-            results_df,
-            include_rdf_ref=False,
-            query_hash=query_hash,
-            result_hash=result_hash,
-        )
+        # Prepare export dataframes (excludes ref for CSV/JSON, includes it for RDF)
+        export_df = prepare_export_dataframe(results_df, include_rdf_ref=False)
         # For RDF, we need the ref column too
-        export_df_rdf = prepare_export_dataframe(
-            results_df,
-            include_rdf_ref=True,
-            query_hash=query_hash,
-            result_hash=result_hash,
-        )
+        export_df_rdf = prepare_export_dataframe(results_df, include_rdf_ref=True)
         taxon_name = taxon_input.value
         ui_is_large_dataset = len(export_df) > CONFIG["lazy_generation_threshold"]
 
         # Create metadata using already-built active_filters
         metadata = create_export_metadata(
-            export_df, taxon_input.value, qid, active_filters
+            export_df, taxon_input.value, qid, active_filters, query_hash, result_hash
         )
         metadata_json = json.dumps(metadata, indent=2)
         citation_text = create_citation_text(taxon_input.value)
