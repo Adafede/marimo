@@ -3838,7 +3838,7 @@ def main():
         args = parser.parse_args()
 
         try:
-            with open(__file__, "r") as f:
+            with open(__file__, "r", encoding="utf-8") as f:
                 file_content = f.read()
 
             # Strategy: Extract app.setup block AND all @app.function decorated functions
