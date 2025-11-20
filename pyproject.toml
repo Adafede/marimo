@@ -6,6 +6,8 @@ requires-python = ">=3.13"
 dependencies = [
     "httpx==0.28.1",
     "marimo",
+    "mcp==1.21.2",
+    "openai==2.8.1",
     "polars==1.35.2",
     "pyarrow==22.0.0",
     "rdflib==7.4.0",
