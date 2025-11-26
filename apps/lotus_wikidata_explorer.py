@@ -33,7 +33,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import marimo
 
-__generated_with = "0.17.7"
+__generated_with = "0.18.1"
 app = marimo.App(width="full", app_title="LOTUS Wikidata Explorer")
 
 with app.setup:
@@ -356,10 +356,6 @@ with app.setup:
             ):
                 return True
             return False
-
-# ========================================================================
-# FUNCTIONS
-# ========================================================================
 
 
 @app.function
@@ -3391,13 +3387,13 @@ def _(
         download_ui,
         json_generate_button,
         json_generation_data,
+        query_hash,
         rdf_generate_button,
         rdf_generation_data,
+        result_hash,
         tables_ui,
         taxon_name,
         ui_is_large_dataset,
-        query_hash,
-        result_hash,
     )
 
 
