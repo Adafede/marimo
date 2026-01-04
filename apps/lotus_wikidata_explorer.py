@@ -113,7 +113,10 @@ with app.setup:
         "lazy_generation_threshold": 5000,  # Defer download generation for datasets > this size (improves UX)
         "download_embed_threshold_bytes": 8_000_000,  # Auto-compress downloads > 8MB (reduces bandwidth)
         # UI Styling & Display
-        "color_hyperlink": "#006699",  # Hyperlink color (WCAG AA compliant blue)
+        "color_hyperlink": "#3377c4",  # Hyperlink color (WCAG AA compliant blue)
+        "color_wikidata_blue": "#006699",
+        "color_wikidata_green": "#339966",
+        "color_wikidata_red": "#990000",
         "page_size_default": 10,  # Rows per page in display table (balances usability and performance)
         "page_size_export": 25,  # Rows per page in export preview table (larger for review)
         # Filter Defaults (Scientific domain knowledge)
@@ -1021,9 +1024,8 @@ def get_binding_value(binding: Dict[str, Any], key: str, default: str = "") -> s
 
 
 @app.function
-def create_link(url: str, text: str) -> mo.Html:
+def create_link(url: str, text: str, color: str = "#3377c4") -> mo.Html:
     """Create a styled hyperlink."""
-    color = CONFIG["color_hyperlink"]
     safe_text = text or url or ""
     safe_url = url or "#"
     return mo.Html(
@@ -1036,9 +1038,9 @@ def create_link(url: str, text: str) -> mo.Html:
 
 
 @app.function
-def create_wikidata_link(qid: str) -> mo.Html:
+def create_wikidata_link(qid: str, color: str = "#3377c4") -> mo.Html:
     """Create a Wikidata link for a QID."""
-    return create_link(f"{SCHOLIA_URL}{qid}", qid) if qid else mo.Html("-")
+    return create_link(f"{SCHOLIA_URL}{qid}", qid, color=color) if qid else mo.Html("-")
 
 
 @app.function
@@ -1684,9 +1686,15 @@ def create_display_row(row: Dict[str, str]) -> Dict[str, Any]:
         "Reference DOI": create_link(f"https://doi.org/{doi}", doi)
         if doi
         else mo.Html("-"),
-        "Compound QID": create_wikidata_link(compound_qid),
-        "Taxon QID": create_wikidata_link(taxon_qid),
-        "Reference QID": create_wikidata_link(ref_qid),
+        "Compound QID": create_wikidata_link(
+            compound_qid, color=CONFIG["color_wikidata_red"]
+        ),
+        "Taxon QID": create_wikidata_link(
+            taxon_qid, color=CONFIG["color_wikidata_green"]
+        ),
+        "Reference QID": create_wikidata_link(
+            ref_qid, color=CONFIG["color_wikidata_blue"]
+        ),
         "Statement": create_link(statement_uri, statement_id)
         if statement_id
         else mo.Html("-"),
