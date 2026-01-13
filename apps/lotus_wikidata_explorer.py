@@ -375,6 +375,109 @@ class FormulaFilters:
         return False
 
 
+@app.class_definition
+@dataclass
+class SearchParams:
+    """Consolidated search parameters - replaces 30+ individual state variables."""
+
+    # Core search
+    taxon: str = "Gentiana lutea"
+    smiles: str = ""
+    smiles_search_type: str = "substructure"
+    smiles_threshold: float = 0.8
+
+    # Mass filter
+    mass_filter: bool = False
+    mass_min: float = field(default_factory=lambda: CONFIG["mass_default_min"])
+    mass_max: float = field(default_factory=lambda: CONFIG["mass_default_max"])
+
+    # Year filter
+    year_filter: bool = False
+    year_start: int = field(default_factory=lambda: CONFIG["year_default_start"])
+    year_end: int = field(default_factory=lambda: datetime.now().year)
+
+    # Formula filter
+    formula_filter: bool = False
+    exact_formula: str = ""
+    c_min: Optional[int] = None
+    c_max: Optional[int] = None
+    h_min: Optional[int] = None
+    h_max: Optional[int] = None
+    n_min: Optional[int] = None
+    n_max: Optional[int] = None
+    o_min: Optional[int] = None
+    o_max: Optional[int] = None
+    p_min: Optional[int] = None
+    p_max: Optional[int] = None
+    s_min: Optional[int] = None
+    s_max: Optional[int] = None
+    f_state: str = "allowed"
+    cl_state: str = "allowed"
+    br_state: str = "allowed"
+    i_state: str = "allowed"
+
+    # Auto-run flag
+    auto_run: bool = False
+
+    @classmethod
+    def from_url_params(cls, params: dict) -> "SearchParams":
+        """Create SearchParams from URL query parameters."""
+        if not params or ("taxon" not in params and "smiles" not in params):
+            return cls()
+
+        ff = params.get("formula_filter") == "true"
+        # Parse element ranges with loop
+        elem_vals = {}
+        for e in ("c", "h", "n", "o", "p", "s"):
+            elem_vals[f"{e}_min"] = (
+                int(params[f"{e}_min"]) if f"{e}_min" in params else None
+            )
+            elem_vals[f"{e}_max"] = (
+                int(params.get(f"{e}_max", CONFIG[f"element_{e}_max"])) if ff else None
+            )
+
+        return cls(
+            taxon=params.get("taxon", "Gentiana lutea"),
+            smiles=params.get("smiles", ""),
+            smiles_search_type=params.get("smiles_search_type", "substructure"),
+            smiles_threshold=float(params.get("smiles_threshold", "0.8")),
+            mass_filter=params.get("mass_filter") == "true",
+            mass_min=float(params.get("mass_min", CONFIG["mass_default_min"])),
+            mass_max=float(params.get("mass_max", CONFIG["mass_default_max"])),
+            year_filter=params.get("year_filter") == "true",
+            year_start=int(params.get("year_start", CONFIG["year_default_start"])),
+            year_end=int(params.get("year_end", datetime.now().year)),
+            formula_filter=ff,
+            exact_formula=params.get("exact_formula", ""),
+            **elem_vals,
+            f_state=params.get("f_state", "allowed"),
+            cl_state=params.get("cl_state", "allowed"),
+            br_state=params.get("br_state", "allowed"),
+            i_state=params.get("i_state", "allowed"),
+            auto_run=True,
+        )
+
+    def to_formula_filters(self) -> Optional[FormulaFilters]:
+        """Convert to FormulaFilters if formula filter is active."""
+        if not self.formula_filter:
+            return None
+        elem_args = {}
+        for e in ("c", "h", "n", "o", "p", "s"):
+            min_v, max_v = getattr(self, f"{e}_min"), getattr(self, f"{e}_max")
+            elem_args[f"{e}_min"] = min_v or 0
+            elem_args[f"{e}_max"] = (
+                max_v if max_v is not None else CONFIG[f"element_{e}_max"]
+            )
+        return create_formula_filters(
+            exact_formula=self.exact_formula,
+            **elem_args,
+            f_state=self.f_state,
+            cl_state=self.cl_state,
+            br_state=self.br_state,
+            i_state=self.i_state,
+        )
+
+
 @app.function
 def validate_smiles(smiles: str) -> Tuple[bool, Optional[str]]:
     """Validate SMILES string for common issues."""
@@ -706,19 +809,6 @@ def extract_qid(url: str) -> str:
 
 
 @app.function
-def extract_qids_from_dataframe(df: pl.DataFrame, column: str) -> pl.DataFrame:
-    """Extract QIDs from a DataFrame column containing Wikidata URLs. DRY helper."""
-    if column not in df.columns:
-        return df
-
-    return df.with_columns(
-        pl.col(column)
-        .str.replace(WIKIDATA_ENTITY_URL, "", literal=True)
-        .alias(f"{column}_qid")
-    )
-
-
-@app.function
 @lru_cache(maxsize=1024)
 def create_structure_image_url(smiles: str) -> str:
     if not smiles:
@@ -809,6 +899,56 @@ def build_taxon_connectivity_query(qids: List[str]) -> str:
     GROUP BY ?taxon
     ORDER BY DESC(?compound_count)
     """
+
+
+@app.function
+def _resolve_ambiguous_matches(
+    matches: List[Tuple[str, str]], is_exact: bool
+) -> Tuple[str, mo.Html]:
+    """Helper to resolve ambiguous taxon matches by connectivity. Returns (selected_qid, warning_html)."""
+    qids = [qid for qid, _ in matches[:5]]  # Limit to 5 for performance
+
+    # Query connectivity to find the most connected taxon
+    connectivity_results = execute_sparql(build_taxon_connectivity_query(qids))
+    connectivity_map = {
+        extract_qid(get_binding_value(b, "taxon")): int(
+            get_binding_value(b, "compound_count", "0")
+        )
+        for b in connectivity_results.get("results", {}).get("bindings", [])
+    }
+
+    # Sort by connectivity (descending)
+    sorted_matches = sorted(
+        matches[:5], key=lambda x: connectivity_map.get(x[0], 0), reverse=True
+    )
+
+    # Get details for display
+    details_results = execute_sparql(build_taxon_details_query(qids))
+    details_map = {
+        extract_qid(get_binding_value(b, "taxon")): (
+            get_binding_value(b, "taxonLabel"),
+            get_binding_value(b, "taxonDescription"),
+            get_binding_value(b, "taxon_parentLabel"),
+        )
+        for b in details_results.get("results", {}).get("bindings", [])
+    }
+
+    # Create matches with details including connectivity
+    matches_with_details = [
+        (
+            qid,
+            name,
+            details_map.get(qid, ("", "", ""))[1],
+            details_map.get(qid, ("", "", ""))[2],
+            connectivity_map.get(qid, 0),
+        )
+        for qid, name in sorted_matches
+    ]
+
+    selected_qid = sorted_matches[0][0]
+    return selected_qid, create_taxon_warning_html(
+        matches_with_details, selected_qid, is_exact=is_exact
+    )
 
 
 @app.function
@@ -918,125 +1058,13 @@ def resolve_taxon_to_qid(
         if len(exact_matches) == 1:
             return exact_matches[0][0], None
 
-        # Multiple exact matches or similar matches - need to fetch details
+        # Multiple exact matches - need to disambiguate
         if len(exact_matches) > 1:
-            # Get details for exact matches
-            qids = [qid for qid, _ in exact_matches]
+            return _resolve_ambiguous_matches(exact_matches, is_exact=True)
 
-            # Query connectivity to find the most connected taxon
-            connectivity_query = build_taxon_connectivity_query(qids)
-            connectivity_results = execute_sparql(connectivity_query)
-            connectivity_bindings = connectivity_results.get("results", {}).get(
-                "bindings", []
-            )
-
-            # Build connectivity map
-            connectivity_map = {}
-            for b in connectivity_bindings:
-                qid = extract_qid(get_binding_value(b, "taxon"))
-                count = int(get_binding_value(b, "compound_count", "0"))
-                connectivity_map[qid] = count
-
-            # Sort exact matches by connectivity (descending)
-            sorted_matches = sorted(
-                exact_matches,
-                key=lambda x: connectivity_map.get(x[0], 0),
-                reverse=True,
-            )
-
-            # Get details for display
-            details_query = build_taxon_details_query(qids)
-            details_results = execute_sparql(details_query)
-            details_bindings = details_results.get("results", {}).get("bindings", [])
-
-            # Build a map of QID to details
-            details_map = {}
-            for b in details_bindings:
-                qid = extract_qid(get_binding_value(b, "taxon"))
-                details_map[qid] = (
-                    get_binding_value(b, "taxonLabel"),
-                    get_binding_value(b, "taxonDescription"),
-                    get_binding_value(b, "taxon_parentLabel"),
-                )
-
-            # Create matches with details including connectivity
-            matches_with_details = [
-                (
-                    qid,
-                    name,
-                    details_map.get(qid, ("", "", ""))[1],
-                    details_map.get(qid, ("", "", ""))[2],
-                    connectivity_map.get(qid, 0),
-                )
-                for qid, name in sorted_matches
-            ]
-
-            # Use the most connected taxon (first in sorted list)
-            selected_qid = sorted_matches[0][0]
-            warning_html = create_taxon_warning_html(
-                matches_with_details, selected_qid, is_exact=True
-            )
-            return selected_qid, warning_html
-
-        # No exact match - use first result with warning
+        # No exact match but multiple similar matches - use best one with warning
         if len(matches) > 1:
-            # Get details for similar matches (limit to 5)
-            qids = [qid for qid, _ in matches[:5]]
-
-            # Query connectivity to find the most connected taxon
-            connectivity_query = build_taxon_connectivity_query(qids)
-            connectivity_results = execute_sparql(connectivity_query)
-            connectivity_bindings = connectivity_results.get("results", {}).get(
-                "bindings", []
-            )
-
-            # Build connectivity map
-            connectivity_map = {}
-            for b in connectivity_bindings:
-                qid = extract_qid(get_binding_value(b, "taxon"))
-                count = int(get_binding_value(b, "compound_count", "0"))
-                connectivity_map[qid] = count
-
-            # Sort matches by connectivity (descending)
-            sorted_matches = sorted(
-                matches[:5],
-                key=lambda x: connectivity_map.get(x[0], 0),
-                reverse=True,
-            )
-
-            # Get details for display
-            details_query = build_taxon_details_query(qids)
-            details_results = execute_sparql(details_query)
-            details_bindings = details_results.get("results", {}).get("bindings", [])
-
-            # Build a map of QID to details
-            details_map = {}
-            for b in details_bindings:
-                qid = extract_qid(get_binding_value(b, "taxon"))
-                details_map[qid] = (
-                    get_binding_value(b, "taxonLabel"),
-                    get_binding_value(b, "taxonDescription"),
-                    get_binding_value(b, "taxon_parentLabel"),
-                )
-
-            # Create matches with details including connectivity
-            matches_with_details = [
-                (
-                    qid,
-                    name,
-                    details_map.get(qid, ("", "", ""))[1],
-                    details_map.get(qid, ("", "", ""))[2],
-                    connectivity_map.get(qid, 0),
-                )
-                for qid, name in sorted_matches
-            ]
-
-            # Use the most connected taxon (first in sorted list)
-            selected_qid = sorted_matches[0][0]
-            warning_html = create_taxon_warning_html(
-                matches_with_details, selected_qid, is_exact=False
-            )
-            return selected_qid, warning_html
+            return _resolve_ambiguous_matches(matches, is_exact=False)
 
         return matches[0][0], None
 
@@ -1161,34 +1189,23 @@ def create_formula_filters(
     i_state: str,
 ) -> FormulaFilters:
     """Factory function to create FormulaFilters from UI values."""
+    elem_vals = {
+        "c": (c_min, c_max),
+        "h": (h_min, h_max),
+        "n": (n_min, n_max),
+        "o": (o_min, o_max),
+        "p": (p_min, p_max),
+        "s": (s_min, s_max),
+    }
+    ranges = {
+        k: ElementRange(mn, normalize_element_value(mx, CONFIG[f"element_{k}_max"]))
+        for k, (mn, mx) in elem_vals.items()
+    }
     return FormulaFilters(
         exact_formula=exact_formula.strip()
         if exact_formula and exact_formula.strip()
         else None,
-        c=ElementRange(
-            c_min,
-            normalize_element_value(c_max, CONFIG["element_c_max"]),
-        ),
-        h=ElementRange(
-            h_min,
-            normalize_element_value(h_max, CONFIG["element_h_max"]),
-        ),
-        n=ElementRange(
-            n_min,
-            normalize_element_value(n_max, CONFIG["element_n_max"]),
-        ),
-        o=ElementRange(
-            o_min,
-            normalize_element_value(o_max, CONFIG["element_o_max"]),
-        ),
-        p=ElementRange(
-            p_min,
-            normalize_element_value(p_max, CONFIG["element_p_max"]),
-        ),
-        s=ElementRange(
-            s_min,
-            normalize_element_value(s_max, CONFIG["element_s_max"]),
-        ),
+        **ranges,
         f_state=f_state,
         cl_state=cl_state,
         br_state=br_state,
@@ -1348,41 +1365,30 @@ def build_api_url(
         if exact_formula and exact_formula.strip():
             params["exact_formula"] = exact_formula.strip()
 
-        # Element ranges (only add non-default values)
-        if c_min > 0:
-            params["c_min"] = str(c_min)
-        if c_max != CONFIG["element_c_max"]:
-            params["c_max"] = str(c_max)
-        if h_min > 0:
-            params["h_min"] = str(h_min)
-        if h_max != CONFIG["element_h_max"]:
-            params["h_max"] = str(h_max)
-        if n_min > 0:
-            params["n_min"] = str(n_min)
-        if n_max != CONFIG["element_n_max"]:
-            params["n_max"] = str(n_max)
-        if o_min > 0:
-            params["o_min"] = str(o_min)
-        if o_max != CONFIG["element_o_max"]:
-            params["o_max"] = str(o_max)
-        if p_min > 0:
-            params["p_min"] = str(p_min)
-        if p_max != CONFIG["element_p_max"]:
-            params["p_max"] = str(p_max)
-        if s_min > 0:
-            params["s_min"] = str(s_min)
-        if s_max != CONFIG["element_s_max"]:
-            params["s_max"] = str(s_max)
+        # Element ranges (only add non-default values) - use loop to reduce repetition
+        element_vals = [
+            ("c", c_min, c_max, "element_c_max"),
+            ("h", h_min, h_max, "element_h_max"),
+            ("n", n_min, n_max, "element_n_max"),
+            ("o", o_min, o_max, "element_o_max"),
+            ("p", p_min, p_max, "element_p_max"),
+            ("s", s_min, s_max, "element_s_max"),
+        ]
+        for elem, min_val, max_val, max_key in element_vals:
+            if min_val > 0:
+                params[f"{elem}_min"] = str(min_val)
+            if max_val != CONFIG[max_key]:
+                params[f"{elem}_max"] = str(max_val)
 
         # Halogen states (only add non-default)
-        if f_state != "allowed":
-            params["f_state"] = f_state
-        if cl_state != "allowed":
-            params["cl_state"] = cl_state
-        if br_state != "allowed":
-            params["br_state"] = br_state
-        if i_state != "allowed":
-            params["i_state"] = i_state
+        for halogen, state in [
+            ("f", f_state),
+            ("cl", cl_state),
+            ("br", br_state),
+            ("i", i_state),
+        ]:
+            if state != "allowed":
+                params[f"{halogen}_state"] = state
 
     # Build URL
     if params:
@@ -1703,45 +1709,59 @@ def query_wikidata(
 
 
 @app.function
-def append_display_row(
-    row: Mapping[str, str],
-    columns: dict[str, list[object]],
-) -> None:
-    """Append a single display row into column buffers."""
-    img_url = create_structure_image_url(row["smiles"])
+def build_display_dataframe(df: pl.DataFrame) -> pl.DataFrame:
+    """Build display DataFrame from source data using vectorized operations."""
+    # Pre-compute all scalar columns efficiently
+    display_rows = []
 
-    compound_qid = extract_qid(row["compound"])
-    taxon_qid = extract_qid(row["taxon"])
-    ref_qid = extract_qid(row["reference"])
-    doi = row["ref_doi"]
+    for row in df.iter_rows(named=True):
+        smiles = row.get("smiles", "")
+        compound = row.get("compound", "")
+        taxon = row.get("taxon", "")
+        reference = row.get("reference", "")
+        ref_doi = row.get("ref_doi", "")
+        statement_uri = row.get("statement", "")
 
-    statement_uri = row.get("statement", "")
-    statement_id = statement_uri.split("/")[-1] if statement_uri else ""
+        # Extract QIDs
+        compound_qid = extract_qid(compound)
+        taxon_qid = extract_qid(taxon)
+        ref_qid = extract_qid(reference)
+        statement_id = statement_uri.split("/")[-1] if statement_uri else ""
 
-    columns["2D Depiction"].append(mo.image(src=img_url))
-    columns["Compound"].append(row["name"])
-    columns["Compound SMILES"].append(row["smiles"])
-    columns["Compound InChIKey"].append(row["inchikey"])
-    columns["Compound Mass"].append(row["mass"])
-    columns["Taxon"].append(row["taxon_name"])
-    columns["Reference Title"].append(row["ref_title"] or "-")
-    columns["Reference Date"].append(row["pub_date"] or "-")
-    columns["Reference DOI"].append(
-        create_link(f"https://doi.org/{doi}", doi) if doi else mo.Html("-")
-    )
+        display_rows.append(
+            {
+                "2D Depiction": mo.image(src=create_structure_image_url(smiles)),
+                "Compound": row.get("name", ""),
+                "Compound SMILES": smiles,
+                "Compound InChIKey": row.get("inchikey", ""),
+                "Compound Mass": row.get("mass"),
+                "Taxon": row.get("taxon_name", ""),
+                "Reference Title": row.get("ref_title") or "-",
+                "Reference Date": row.get("pub_date") or "-",
+                "Reference DOI": create_link(f"https://doi.org/{ref_doi}", ref_doi)
+                if ref_doi
+                else mo.Html("-"),
+                "Compound QID": create_wikidata_link(
+                    compound_qid, color=CONFIG["color_wikidata_red"]
+                ),
+                "Taxon QID": create_wikidata_link(
+                    taxon_qid, color=CONFIG["color_wikidata_green"]
+                ),
+                "Reference QID": create_wikidata_link(
+                    ref_qid, color=CONFIG["color_wikidata_blue"]
+                ),
+                "Statement": create_link(statement_uri, statement_id)
+                if statement_id
+                else mo.Html("-"),
+            }
+        )
 
-    columns["Compound QID"].append(
-        create_wikidata_link(compound_qid, color=CONFIG["color_wikidata_red"])
-    )
-    columns["Taxon QID"].append(
-        create_wikidata_link(taxon_qid, color=CONFIG["color_wikidata_green"])
-    )
-    columns["Reference QID"].append(
-        create_wikidata_link(ref_qid, color=CONFIG["color_wikidata_blue"])
-    )
-
-    columns["Statement"].append(
-        create_link(statement_uri, statement_id) if statement_id else mo.Html("-")
+    # Create DataFrame with proper schema
+    return pl.DataFrame(
+        {
+            name: pl.Series([r[name] for r in display_rows], dtype=dtype)
+            for name, dtype in DISPLAY_SCHEMA.items()
+        }
     )
 
 
@@ -1989,6 +2009,46 @@ DOI: [10.7554/eLife.70780](https://doi.org/10.7554/eLife.70780)
 
 
 @app.function
+def compute_provenance_hashes(
+    qid: Optional[str],
+    taxon_input: Optional[str],
+    filters: Optional[Dict[str, Any]],
+    df: pl.DataFrame,
+) -> Tuple[str, str]:
+    """
+    Compute query and result hashes for provenance tracking.
+
+    Returns:
+        Tuple of (query_hash, result_hash) where:
+        - query_hash: based on search parameters (what was asked)
+        - result_hash: based on compound identifiers (what was found)
+    """
+    # Query hash
+    query_components = [qid or "", taxon_input or ""]
+    if filters:
+        query_components.append(json.dumps(filters, sort_keys=True))
+    query_hash = hashlib.sha256("|".join(query_components).encode("utf-8")).hexdigest()
+
+    # Result hash - extract compound QIDs efficiently
+    compound_col = "compound_qid" if "compound_qid" in df.columns else "compound"
+    if compound_col in df.columns:
+        compound_ids = sorted(
+            df.select(
+                pl.col(compound_col).str.replace(WIKIDATA_ENTITY_URL, "", literal=True)
+            )
+            .to_series()
+            .drop_nulls()
+            .unique()
+            .to_list()
+        )
+    else:
+        compound_ids = []
+    result_hash = hashlib.sha256("|".join(compound_ids).encode("utf-8")).hexdigest()
+
+    return query_hash, result_hash
+
+
+@app.function
 def create_dataset_uri(
     qid: str,
     taxon_input: str,
@@ -2004,22 +2064,7 @@ def create_dataset_uri(
     content-addressable URN based ONLY on what was found (not what was asked).
     The query hash is returned separately for metadata storage.
     """
-    # Query hash - based on search parameters (what was asked) - stored separately in metadata
-    query_components = [qid or "", taxon_input or ""]
-    if filters:
-        query_components.append(json.dumps(filters, sort_keys=True))
-
-    query_hash = hashlib.sha256("|".join(query_components).encode("utf-8")).hexdigest()
-
-    # Result hash - based on actual compound identifiers (what was found)
-    compound_ids = sorted(
-        [
-            row.get("compound_qid", "")
-            for row in df.iter_rows(named=True)
-            if row.get("compound_qid")
-        ]
-    )
-    result_hash = hashlib.sha256("|".join(compound_ids).encode("utf-8")).hexdigest()
+    query_hash, result_hash = compute_provenance_hashes(qid, taxon_input, filters, df)
 
     # Create a content-addressable URI using URN scheme with ONLY result hash
     # Format: urn:hash:sha256:RESULT_HASH
@@ -2323,7 +2368,7 @@ def export_to_rdf_turtle(
 
 
 @app.cell
-def _():
+def md_title():
     mo.md("""
     # 🌐 LOTUS Wikidata Explorer
     """)
@@ -2331,7 +2376,7 @@ def _():
 
 
 @app.cell
-def _():
+def ui_disclaimer():
     mo.callout(
         mo.md("""
         **Work in progress** - May not work in all deployments.  
@@ -2343,7 +2388,7 @@ def _():
 
 
 @app.cell
-def _():
+def ui_url_api():
     # URL Query API section (left)
     url_api_section = mo.accordion(
         {
@@ -2364,7 +2409,7 @@ def _():
             **Examples:**
             ```
             ?taxon=Salix&smiles=CC(=O)Oc1ccccc1C(=O)O
-            ?smiles=c1ccccc1&smiles_search_type=similarity&smiles_threshold=0.9
+            ?smiles=c1ccccc1&smiles_search_type=similarity&smiles_threshold=0.45
             ?taxon=*&mass_filter=true&mass_min=300&mass_max=500
             ```
             """)
@@ -2399,7 +2444,7 @@ def _():
 
 
 @app.cell
-def _():
+def url_params_check():
     # URL parameter detection and display
     _url_params_check = mo.query_params()
 
@@ -2458,39 +2503,10 @@ def _():
 
 
 @app.cell
-def _(
-    state_br_state,
-    state_c_max,
-    state_c_min,
-    state_cl_state,
-    state_exact_formula,
-    state_f_state,
-    state_formula_filter,
-    state_h_max,
-    state_h_min,
-    state_i_state,
-    state_mass_filter,
-    state_mass_max,
-    state_mass_min,
-    state_n_max,
-    state_n_min,
-    state_o_max,
-    state_o_min,
-    state_p_max,
-    state_p_min,
-    state_s_max,
-    state_s_min,
-    state_smiles,
-    state_smiles_search_type,
-    state_smiles_threshold,
-    state_taxon,
-    state_year_end,
-    state_year_filter,
-    state_year_start,
-):
+def ui_search_params(search_params):
     ## TAXON INPUT
     taxon_input = mo.ui.text(
-        value=state_taxon,
+        value=search_params.taxon,
         label="🔬 Taxon Name or Wikidata QID - Optional",
         placeholder="e.g., Artemisia annua, Cinchona, Q157115, or * for all taxa",
         full_width=True,
@@ -2498,7 +2514,7 @@ def _(
 
     ## SMILES INPUT
     smiles_input = mo.ui.text(
-        value=state_smiles,
+        value=search_params.smiles,
         label="🧪 Chemical Structure (SMILES) - Optional",
         placeholder="e.g., c1ccccc1 (benzene), CC(=O)Oc1ccccc1C(=O)O (aspirin)",
         full_width=True,
@@ -2506,7 +2522,7 @@ def _(
 
     smiles_search_type = mo.ui.dropdown(
         options=["substructure", "similarity"],
-        value=state_smiles_search_type,
+        value=search_params.smiles_search_type,
         label="🔍 Chemical Search Type",
         full_width=True,
     )
@@ -2515,16 +2531,18 @@ def _(
         start=0.0,
         stop=1.0,
         step=0.05,
-        value=state_smiles_threshold,
+        value=search_params.smiles_threshold,
         label="🎯 Similarity Threshold",
         full_width=True,
     )
 
     ## MASS FILTERS
-    mass_filter = mo.ui.checkbox(label="⚖️ Filter by mass", value=state_mass_filter)
+    mass_filter = mo.ui.checkbox(
+        label="⚖️ Filter by mass", value=search_params.mass_filter
+    )
 
     mass_min = mo.ui.number(
-        value=state_mass_min,
+        value=search_params.mass_min,
         start=0,
         stop=CONFIG["mass_ui_max"],
         step=0.001,
@@ -2533,7 +2551,7 @@ def _(
     )
 
     mass_max = mo.ui.number(
-        value=state_mass_max,
+        value=search_params.mass_max,
         start=0,
         stop=CONFIG["mass_ui_max"],
         step=0.001,
@@ -2543,124 +2561,83 @@ def _(
 
     ## FORMULA FILTERS
     formula_filter = mo.ui.checkbox(
-        label="⚛️ Filter by molecular formula", value=state_formula_filter
+        label="⚛️ Filter by molecular formula", value=search_params.formula_filter
     )
 
     exact_formula = mo.ui.text(
-        value=state_exact_formula,
+        value=search_params.exact_formula,
         label="Exact formula (e.g., C15H10O5)",
         placeholder="Leave empty to use element ranges",
         full_width=True,
     )
 
-    c_min = mo.ui.number(
-        value=state_c_min,
-        start=0,
-        stop=CONFIG["element_c_max"],
-        label="C min",
-        full_width=True,
+    # Element min/max inputs - generated via loop to reduce repetition
+    def _make_elem_inputs(elem, min_val, max_val, max_key):
+        return (
+            mo.ui.number(
+                value=min_val,
+                start=0,
+                stop=CONFIG[max_key],
+                label=f"{elem} min",
+                full_width=True,
+            ),
+            mo.ui.number(
+                value=max_val if max_val is not None else CONFIG[max_key],
+                start=0,
+                stop=CONFIG[max_key],
+                label=f"{elem} max",
+                full_width=True,
+            ),
+        )
+
+    c_min, c_max = _make_elem_inputs(
+        "C", search_params.c_min, search_params.c_max, "element_c_max"
     )
-    c_max = mo.ui.number(
-        value=state_c_max if state_c_max is not None else CONFIG["element_c_max"],
-        start=0,
-        stop=CONFIG["element_c_max"],
-        label="C max",
-        full_width=True,
+    h_min, h_max = _make_elem_inputs(
+        "H", search_params.h_min, search_params.h_max, "element_h_max"
     )
-    h_min = mo.ui.number(
-        value=state_h_min,
-        start=0,
-        stop=CONFIG["element_h_max"],
-        label="H min",
-        full_width=True,
+    n_min, n_max = _make_elem_inputs(
+        "N", search_params.n_min, search_params.n_max, "element_n_max"
     )
-    h_max = mo.ui.number(
-        value=state_h_max if state_h_max is not None else CONFIG["element_h_max"],
-        start=0,
-        stop=CONFIG["element_h_max"],
-        label="H max",
-        full_width=True,
+    o_min, o_max = _make_elem_inputs(
+        "O", search_params.o_min, search_params.o_max, "element_o_max"
     )
-    n_min = mo.ui.number(
-        value=state_n_min,
-        start=0,
-        stop=CONFIG["element_n_max"],
-        label="N min",
-        full_width=True,
+    p_min, p_max = _make_elem_inputs(
+        "P", search_params.p_min, search_params.p_max, "element_p_max"
     )
-    n_max = mo.ui.number(
-        value=state_n_max if state_n_max is not None else CONFIG["element_n_max"],
-        start=0,
-        stop=CONFIG["element_n_max"],
-        label="N max",
-        full_width=True,
-    )
-    o_min = mo.ui.number(
-        value=state_o_min,
-        start=0,
-        stop=CONFIG["element_o_max"],
-        label="O min",
-        full_width=True,
-    )
-    o_max = mo.ui.number(
-        value=state_o_max if state_o_max is not None else CONFIG["element_o_max"],
-        start=0,
-        stop=CONFIG["element_o_max"],
-        label="O max",
-        full_width=True,
-    )
-    p_min = mo.ui.number(
-        value=state_p_min,
-        start=0,
-        stop=CONFIG["element_p_max"],
-        label="P min",
-        full_width=True,
-    )
-    p_max = mo.ui.number(
-        value=state_p_max if state_p_max is not None else CONFIG["element_p_max"],
-        start=0,
-        stop=CONFIG["element_p_max"],
-        label="P max",
-        full_width=True,
-    )
-    s_min = mo.ui.number(
-        value=state_s_min,
-        start=0,
-        stop=CONFIG["element_s_max"],
-        label="S min",
-        full_width=True,
-    )
-    s_max = mo.ui.number(
-        value=state_s_max if state_s_max is not None else CONFIG["element_s_max"],
-        start=0,
-        stop=CONFIG["element_s_max"],
-        label="S max",
-        full_width=True,
+    s_min, s_max = _make_elem_inputs(
+        "S", search_params.s_min, search_params.s_max, "element_s_max"
     )
 
     # Halogen selectors (allowed/required/excluded)
     halogen_options = ["allowed", "required", "excluded"]
     f_state = mo.ui.dropdown(
-        options=halogen_options, value=state_f_state, label="F", full_width=True
+        options=halogen_options, value=search_params.f_state, label="F", full_width=True
     )
     cl_state = mo.ui.dropdown(
-        options=halogen_options, value=state_cl_state, label="Cl", full_width=True
+        options=halogen_options,
+        value=search_params.cl_state,
+        label="Cl",
+        full_width=True,
     )
     br_state = mo.ui.dropdown(
-        options=halogen_options, value=state_br_state, label="Br", full_width=True
+        options=halogen_options,
+        value=search_params.br_state,
+        label="Br",
+        full_width=True,
     )
     i_state = mo.ui.dropdown(
-        options=halogen_options, value=state_i_state, label="I", full_width=True
+        options=halogen_options, value=search_params.i_state, label="I", full_width=True
     )
 
     ## DATE FILTERS
     current_year = datetime.now().year
     year_filter = mo.ui.checkbox(
-        label="🗓️ Filter by publication year", value=state_year_filter
+        label="🗓️ Filter by publication year", value=search_params.year_filter
     )
 
     year_start = mo.ui.number(
-        value=state_year_start,
+        value=search_params.year_start,
         start=CONFIG["year_range_start"],
         stop=current_year,
         label="Start year",
@@ -2668,7 +2645,7 @@ def _(
     )
 
     year_end = mo.ui.number(
-        value=state_year_end,
+        value=search_params.year_end,
         start=CONFIG["year_range_start"],
         stop=current_year,
         label="End year",
@@ -2710,7 +2687,7 @@ def _(
 
 
 @app.cell
-def _(
+def ui_filters(
     br_state,
     c_max,
     c_min,
@@ -2807,7 +2784,7 @@ def _(
 
 
 @app.cell
-def _(
+def launch_query(
     br_state,
     c_max,
     c_min,
@@ -2830,17 +2807,17 @@ def _(
     run_button,
     s_max,
     s_min,
+    search_params,
     smiles_input,
     smiles_search_type,
     smiles_threshold,
-    state_auto_run,
     taxon_input,
     year_end,
     year_filter,
     year_start,
 ):
     # Auto-run if URL parameters were detected, or if run button was clicked
-    if not run_button.value and not state_auto_run:
+    if not run_button.value and not search_params.auto_run:
         results_df = None
         qid = None
         taxon_warning = None
@@ -2962,12 +2939,12 @@ def _(
                     mo.callout(mo.md(f"**Query Error:** {str(e)}"), kind="danger"),
                 )
         elapsed = round(time.time() - start_time, 2)
-        mo.md(f"⏱️ Query completed in **{elapsed}s**.")
+        _ = mo.md(f"⏱️ Query completed in **{elapsed}s**.")
     return qid, results_df, taxon_warning
 
 
 @app.cell
-def _(
+def display_summary(
     br_state,
     c_max,
     c_min,
@@ -2995,10 +2972,10 @@ def _(
     run_button,
     s_max,
     s_min,
+    search_params,
     smiles_input,
     smiles_search_type,
     smiles_threshold,
-    state_auto_run,
     taxon_input,
     taxon_warning,
     year_end,
@@ -3006,7 +2983,7 @@ def _(
     year_start,
 ):
     # Display summary if either button was clicked or auto-run from URL
-    if (not run_button.value and not state_auto_run) or results_df is None:
+    if (not run_button.value and not search_params.auto_run) or results_df is None:
         summary_and_downloads = mo.Html("")
     elif len(results_df) == 0:
         # Show no compounds message, and taxon warning if present
@@ -3070,29 +3047,19 @@ def _(
         # Provenance hash
         hash_info = mo.md(f"*Hashes:* Query: `{query_hash}` • Results: `{result_hash}`")
 
-        # Stats cards
+        # Stats cards - use list comprehension for DRY
+        stats_data = [
+            (n_compounds, "🧪", "Compound"),
+            (n_taxa, "🌱", "Taxon"),
+            (n_refs, "📚", "Reference"),
+            (n_entries, "📝", "Entry"),
+        ]
         stats_cards = mo.hstack(
             [
                 mo.stat(
-                    value=f"{n_compounds:,}",
-                    label=f"🧪 {pluralize('Compound', n_compounds)}",
-                    bordered=True,
-                ),
-                mo.stat(
-                    value=f"{n_taxa:,}",
-                    label=f"🌱 {pluralize('Taxon', n_taxa)}",
-                    bordered=True,
-                ),
-                mo.stat(
-                    value=f"{n_refs:,}",
-                    label=f"📚 {pluralize('Reference', n_refs)}",
-                    bordered=True,
-                ),
-                mo.stat(
-                    value=f"{n_entries:,}",
-                    label=f"📝 {pluralize('Entry', n_entries)}",
-                    bordered=True,
-                ),
+                    value=f"{n:,}", label=f"{icon} {pluralize(name, n)}", bordered=True
+                )
+                for n, icon, name in stats_data
             ],
             gap=2,
             justify="start",
@@ -3180,7 +3147,7 @@ def _(
 
 
 @app.cell
-def _(
+def generate_results(
     br_state,
     c_max,
     c_min,
@@ -3205,17 +3172,17 @@ def _(
     run_button,
     s_max,
     s_min,
+    search_params,
     smiles_input,
     smiles_search_type,
     smiles_threshold,
-    state_auto_run,
     taxon_input,
     year_end,
     year_filter,
     year_start,
 ):
     # Replace previous generation logic: build UI but DO NOT display inline
-    if (not run_button.value and not state_auto_run) or results_df is None:
+    if (not run_button.value and not search_params.auto_run) or results_df is None:
         download_ui = mo.Html("")
         tables_ui = mo.Html("")
         ui_is_large_dataset = False
@@ -3281,27 +3248,10 @@ def _(
             smiles_threshold=smiles_threshold.value,
         )
 
-        # Compute hashes for provenance (before preparing export dataframes)
-        # Query hash - based on search parameters (what was asked)
-        query_components = [qid or "", taxon_input.value or ""]
-        if active_filters:
-            query_components.append(json.dumps(active_filters, sort_keys=True))
-        query_hash = hashlib.sha256(
-            "|".join(query_components).encode("utf-8")
-        ).hexdigest()
-
-        # Result hash - based on actual compound identifiers (what was found)
-        # Extract QIDs first for hash computation
-        compound_qids = sorted(
-            [
-                extract_qid(row["compound"])
-                for row in results_df.iter_rows(named=True)
-                if row.get("compound")
-            ]
+        # Compute hashes for provenance using centralized helper
+        query_hash, result_hash = compute_provenance_hashes(
+            qid, taxon_input.value, active_filters, results_df
         )
-        result_hash = hashlib.sha256(
-            "|".join(compound_qids).encode("utf-8")
-        ).hexdigest()
 
         # Prepare export dataframes (excludes ref for CSV/JSON, includes it for RDF)
         export_df = prepare_export_dataframe(results_df, include_rdf_ref=False)
@@ -3338,19 +3288,9 @@ def _(
         else:
             display_note = mo.Html("")
             limited_df = results_df
-        columns: dict[str, list[object]] = {name: [] for name in DISPLAY_SCHEMA}
 
-        # Single pass over Polars rows
-        for row in limited_df.iter_rows(named=True):
-            append_display_row(row, columns)
-
-        # Construct typed Polars DataFrame
-        display_data = pl.DataFrame(
-            {
-                name: pl.Series(columns[name], dtype=dtype)
-                for name, dtype in DISPLAY_SCHEMA.items()
-            }
-        )
+        # Build display DataFrame using vectorized function
+        display_data = build_display_dataframe(limited_df)
         display_table = mo.ui.table(
             display_data,
             selection=None,
@@ -3471,7 +3411,7 @@ def _(
 
 
 @app.cell
-def _(
+def generate_downloads(
     csv_generate_button,
     csv_generation_data,
     json_generate_button,
@@ -3552,51 +3492,20 @@ def _(
         "application/json",
     )
 
-    # RDF generation (needs extra params)
-    if (
-        ui_is_large_dataset
-        and rdf_generate_button is not None
-        and rdf_generate_button.value
-    ):
-        with mo.status.spinner(title="🐢 Generating RDF/Turtle format..."):
-            _rdf_raw = export_to_rdf_turtle(
-                rdf_generation_data["export_df"],
-                rdf_generation_data["taxon_input"],
-                rdf_generation_data["qid"],
-                rdf_generation_data["active_filters"],
-            )
-            _rdf_data, _rdf_filename, _rdf_mimetype = compress_if_large(
-                _rdf_raw,
-                generate_filename(
-                    taxon_name,
-                    "ttl",
-                    filters=rdf_generation_data["active_filters"],
-                ),
-            )
-
-        rdf_download_ui = mo.vstack(
-            [
-                mo.callout(
-                    mo.md(
-                        f"✅ **RDF/Turtle Ready** - {len(rdf_generation_data['export_df']):,} entries"
-                        + (
-                            " (compressed)"
-                            if _rdf_mimetype == "application/gzip"
-                            else ""
-                        )
-                    ),
-                    kind="success",
-                ),
-                mo.download(
-                    data=_rdf_data,
-                    filename=_rdf_filename,
-                    label="📥 Download RDF/Turtle",
-                    mimetype=_rdf_mimetype if _rdf_mimetype else "text/turtle",
-                ),
-            ]
+    # RDF generation (use same pattern with custom generator)
+    def _rdf_generator(d):
+        return export_to_rdf_turtle(
+            d["export_df"], d["taxon_input"], d["qid"], d["active_filters"]
         )
-    else:
-        rdf_download_ui = mo.Html("")
+
+    rdf_download_ui = create_lazy_download_ui(
+        rdf_generate_button,
+        rdf_generation_data,
+        "RDF/Turtle",
+        "ttl",
+        _rdf_generator,
+        "text/turtle",
+    )
 
     # Show all generated downloads
     mo.vstack([csv_download_ui, json_download_ui, rdf_download_ui], gap=2)
@@ -3604,235 +3513,27 @@ def _(
 
 
 @app.cell
-def _(tables_ui):
+def ui_tables(tables_ui):
     tables_ui
     return
 
 
 @app.cell
-def _():
-    # URL parameter detection
-    url_params = mo.query_params()
+def ui_params():
+    # URL parameter detection and state initialization using SearchParams dataclass
+    _url_params = mo.query_params()
+    search_params = SearchParams.from_url_params(_url_params)
 
-    # Detect if we should auto-execute search
-    url_auto_search = "taxon" in url_params or "smiles" in url_params
-
-    # Get URL parameter values with defaults
-    url_taxon = url_params.get("taxon", "Gentiana lutea")
-
-    # SMILES search parameters
-    url_smiles = url_params.get("smiles", "")
-    url_smiles_search_type = url_params.get("smiles_search_type", "substructure")
-    url_smiles_threshold = float(url_params.get("smiles_threshold", "0.8"))
-
-    # Mass filter
-    url_mass_filter = url_params.get("mass_filter") == "true"
-    url_mass_min = float(url_params.get("mass_min", CONFIG["mass_default_min"]))
-    url_mass_max = float(url_params.get("mass_max", CONFIG["mass_default_max"]))
-
-    # Year filter
-    url_year_filter = url_params.get("year_filter") == "true"
-    url_year_start = int(url_params.get("year_start", CONFIG["year_default_start"]))
-    url_year_end = int(url_params.get("year_end", datetime.now().year))
-
-    # Formula filter
-    url_formula_filter = url_params.get("formula_filter") == "true"
-    url_exact_formula = url_params.get("exact_formula", "")
-    url_c_min = int(url_params["c_min"]) if "c_min" in url_params else None
-    url_c_max = int(url_params.get("c_max", CONFIG["element_c_max"]))
-    url_h_min = int(url_params["h_min"]) if "h_min" in url_params else None
-    url_h_max = int(url_params.get("h_max", CONFIG["element_h_max"]))
-    url_n_min = int(url_params["n_min"]) if "n_min" in url_params else None
-    url_n_max = int(url_params.get("n_max", CONFIG["element_n_max"]))
-    url_o_min = int(url_params["o_min"]) if "o_min" in url_params else None
-    url_o_max = int(url_params.get("o_max", CONFIG["element_o_max"]))
-    url_p_min = int(url_params["p_min"]) if "p_min" in url_params else None
-    url_p_max = int(url_params.get("p_max", CONFIG["element_p_max"]))
-    url_s_min = int(url_params["s_min"]) if "s_min" in url_params else None
-    url_s_max = int(url_params.get("s_max", CONFIG["element_s_max"]))
-    url_f_state = url_params.get("f_state", "allowed")
-    url_cl_state = url_params.get("cl_state", "allowed")
-    url_br_state = url_params.get("br_state", "allowed")
-    url_i_state = url_params.get("i_state", "allowed")
-    return (
-        url_auto_search,
-        url_br_state,
-        url_c_max,
-        url_c_min,
-        url_cl_state,
-        url_exact_formula,
-        url_f_state,
-        url_formula_filter,
-        url_h_max,
-        url_h_min,
-        url_i_state,
-        url_mass_filter,
-        url_mass_max,
-        url_mass_min,
-        url_n_max,
-        url_n_min,
-        url_o_max,
-        url_o_min,
-        url_p_max,
-        url_p_min,
-        url_s_max,
-        url_s_min,
-        url_smiles,
-        url_smiles_search_type,
-        url_smiles_threshold,
-        url_taxon,
-        url_year_end,
-        url_year_filter,
-        url_year_start,
-    )
+    # Display auto-search message if URL parameters detected
+    if search_params.auto_run:
+        _ = mo.md(
+            f"**Auto-executing search for:** {search_params.taxon if search_params.taxon else search_params.smiles}"
+        )
+    return (search_params,)
 
 
 @app.cell
-def _(
-    url_auto_search,
-    url_br_state,
-    url_c_max,
-    url_c_min,
-    url_cl_state,
-    url_exact_formula,
-    url_f_state,
-    url_formula_filter,
-    url_h_max,
-    url_h_min,
-    url_i_state,
-    url_mass_filter,
-    url_mass_max,
-    url_mass_min,
-    url_n_max,
-    url_n_min,
-    url_o_max,
-    url_o_min,
-    url_p_max,
-    url_p_min,
-    url_s_max,
-    url_s_min,
-    url_smiles,
-    url_smiles_search_type,
-    url_smiles_threshold,
-    url_taxon,
-    url_year_end,
-    url_year_filter,
-    url_year_start,
-):
-    # Create state variables that will be used to populate the UI
-    # These are only set when URL parameters are present
-    if url_auto_search:
-        # Taxon state
-        state_taxon = url_taxon or "Gentiana lutea"
-
-        # SMILES search state
-        state_smiles = url_smiles
-        state_smiles_search_type = url_smiles_search_type
-        state_smiles_threshold = url_smiles_threshold
-
-        # Mass filter state
-        state_mass_filter = url_mass_filter
-        state_mass_min = url_mass_min if url_mass_filter else CONFIG["mass_default_min"]
-        state_mass_max = url_mass_max if url_mass_filter else CONFIG["mass_default_max"]
-
-        # Year filter state
-        state_year_filter = url_year_filter
-        state_year_start = (
-            url_year_start if url_year_filter else CONFIG["year_default_start"]
-        )
-        state_year_end = url_year_end if url_year_filter else datetime.now().year
-
-        # Formula filter state
-        state_formula_filter = url_formula_filter
-        state_exact_formula = url_exact_formula if url_formula_filter else ""
-        state_c_min = url_c_min if url_formula_filter else None
-        state_c_max = url_c_max if url_formula_filter else None
-        state_h_min = url_h_min if url_formula_filter else None
-        state_h_max = url_h_max if url_formula_filter else None
-        state_n_min = url_n_min if url_formula_filter else None
-        state_n_max = url_n_max if url_formula_filter else None
-        state_o_min = url_o_min if url_formula_filter else None
-        state_o_max = url_o_max if url_formula_filter else None
-        state_p_min = url_p_min if url_formula_filter else None
-        state_p_max = url_p_max if url_formula_filter else None
-        state_s_min = url_s_min if url_formula_filter else None
-        state_s_max = url_s_max if url_formula_filter else None
-        state_f_state = url_f_state if url_formula_filter else "allowed"
-        state_cl_state = url_cl_state if url_formula_filter else "allowed"
-        state_br_state = url_br_state if url_formula_filter else "allowed"
-        state_i_state = url_i_state if url_formula_filter else "allowed"
-
-        state_auto_run = True
-
-        mo.md(
-            f"**Auto-executing search for:** {url_taxon if url_taxon else url_smiles}"
-        )
-    else:
-        # Default states when no URL parameters
-        state_taxon = "Gentiana lutea"
-        state_smiles = ""
-        state_smiles_search_type = "substructure"
-        state_smiles_threshold = 0.8
-        state_mass_filter = False
-        state_mass_min = CONFIG["mass_default_min"]
-        state_mass_max = CONFIG["mass_default_max"]
-        state_year_filter = False
-        state_year_start = CONFIG["year_default_start"]
-        state_year_end = datetime.now().year
-        state_formula_filter = False
-        state_exact_formula = ""
-        state_c_min = None
-        state_c_max = None
-        state_h_min = None
-        state_h_max = None
-        state_n_min = None
-        state_n_max = None
-        state_o_min = None
-        state_o_max = None
-        state_p_min = None
-        state_p_max = None
-        state_s_min = None
-        state_s_max = None
-        state_f_state = "allowed"
-        state_cl_state = "allowed"
-        state_br_state = "allowed"
-        state_i_state = "allowed"
-        state_auto_run = False
-    return (
-        state_auto_run,
-        state_br_state,
-        state_c_max,
-        state_c_min,
-        state_cl_state,
-        state_exact_formula,
-        state_f_state,
-        state_formula_filter,
-        state_h_max,
-        state_h_min,
-        state_i_state,
-        state_mass_filter,
-        state_mass_max,
-        state_mass_min,
-        state_n_max,
-        state_n_min,
-        state_o_max,
-        state_o_min,
-        state_p_max,
-        state_p_min,
-        state_s_max,
-        state_s_min,
-        state_smiles,
-        state_smiles_search_type,
-        state_smiles_threshold,
-        state_taxon,
-        state_year_end,
-        state_year_filter,
-        state_year_start,
-    )
-
-
-@app.cell
-def _():
+def footer():
     mo.md("""
     ---
     **Data:** <a href="https://www.wikidata.org/wiki/Q104225190" style="color:#990000;">LOTUS Initiative</a> & <a href="https://www.wikidata.org/" style="color:#990000;">Wikidata</a>  |
@@ -3842,6 +3543,7 @@ def _():
     return
 
 
+@app.function
 def main():
     import sys
 
@@ -3938,9 +3640,32 @@ def main():
                 else:
                     break
 
-            # Extract all @app.function blocks (they contain the actual functions)
+            # Extract all @app.class_definition blocks (dataclasses like ElementRange, FormulaFilters, SearchParams)
             import re
 
+            class_pattern = r"@app\.class_definition\s*\n@dataclass"
+            class_blocks = []
+
+            for match in re.finditer(class_pattern, file_content):
+                class_start = match.start()
+
+                # Find where this class ends (next @app. or def main)
+                next_decorator = file_content.find("\n@app.", class_start + 1)
+                next_main = file_content.find("\ndef main", class_start)
+
+                if next_decorator != -1:
+                    class_end = next_decorator
+                elif next_main != -1:
+                    class_end = next_main
+                else:
+                    class_end = len(file_content)
+
+                # Extract class definition (skip the @app.class_definition decorator)
+                dataclass_start = file_content.find("@dataclass", class_start)
+                class_block = file_content[dataclass_start:class_end].strip()
+                class_blocks.append(class_block)
+
+            # Extract all @app.function blocks (they contain the actual functions)
             function_pattern = r"@app\.function\s*\ndef\s+(\w+)"
             function_blocks = []
 
@@ -3965,9 +3690,13 @@ def main():
                 func_block = file_content[func_def_start:func_end].strip()
                 function_blocks.append(func_block)
 
-            # Combine setup and functions into executable code
+            # Combine setup, classes, and functions into executable code
             combined_code = (
-                "\n".join(setup_lines) + "\n\n" + "\n\n".join(function_blocks)
+                "\n".join(setup_lines)
+                + "\n\n"
+                + "\n\n".join(class_blocks)
+                + "\n\n"
+                + "\n\n".join(function_blocks)
             )
 
             # Execute in isolated namespace
@@ -4020,30 +3749,7 @@ def main():
                     filters_applied.append(f"mass ≤ {args.mass_max}")
                 if args.formula:
                     filters_applied.append(f"formula = {args.formula}")
-                if any(
-                    [
-                        args.c_min,
-                        args.c_max,
-                        args.h_min,
-                        args.h_max,
-                        args.n_min,
-                        args.n_max,
-                        args.o_min,
-                        args.o_max,
-                    ]
-                ):
-                    filters_applied.append("element ranges")
-
-                if filters_applied:
-                    print(f"   Filters: {', '.join(filters_applied)}", file=sys.stderr)
-
-                print(file=sys.stderr)  # Empty line for readability
-
-            # Build formula filters if any formula arguments provided
-            formula_filt = None
-            if any(
-                [
-                    args.formula,
+                elem_args = [
                     args.c_min,
                     args.c_max,
                     args.h_min,
@@ -4053,7 +3759,25 @@ def main():
                     args.o_min,
                     args.o_max,
                 ]
-            ):
+                if any(elem_args):
+                    filters_applied.append("element ranges")
+                if filters_applied:
+                    print(f"   Filters: {', '.join(filters_applied)}", file=sys.stderr)
+                print(file=sys.stderr)
+
+            # Build formula filters if any formula arguments provided
+            formula_filt = None
+            elem_args = [
+                args.c_min,
+                args.c_max,
+                args.h_min,
+                args.h_max,
+                args.n_min,
+                args.n_max,
+                args.o_min,
+                args.o_max,
+            ]
+            if args.formula or any(elem_args):
                 formula_filt = create_formula_filters(
                     exact_formula=args.formula or "",
                     c_min=args.c_min or 0,
