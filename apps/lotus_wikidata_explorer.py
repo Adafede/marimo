@@ -100,7 +100,7 @@ with app.setup:
         "app_name": "LOTUS Wikidata Explorer",
         "app_url": "https://github.com/Adafede/marimo/blob/main/apps/lotus_wikidata_explorer.py",
         # External Services
-        "cdk_base": "https://www.simolecule.com/cdkdepict/depict/cot/svg",  # CDK Depict for structure images
+        "cdk_base": "https://www.simolecule.com/cdkdepict/depict/cow/svg",  # CDK Depict for structure images
         "sparql_endpoint": "https://qlever.dev/api/wikidata",  # QLever: Optimized Wikidata SPARQL endpoint (faster than official)
         # Alternative endpoint (legacy, slower but more stable):
         # "sparql_endpoint": "https://query-legacy-full.wikidata.org/sparql",
