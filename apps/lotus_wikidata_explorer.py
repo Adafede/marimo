@@ -680,18 +680,18 @@ def execute_sparql(
 
 @app.function
 @lru_cache(maxsize=512)
-def extract_qid(url: str) -> str:
+def extract_qid(url: Optional[str]) -> Optional[str]:
     """Extract QID from Wikidata entity URL. Cached for performance."""
-    if not url:
-        return ""
+    if url is None:
+        return None
     return url.replace(WIKIDATA_ENTITY_URL, "")
 
 
 @app.function
 @lru_cache(maxsize=1024)
-def create_structure_image_url(smiles: str) -> str:
-    if not smiles:
-        return "https://via.placeholder.com/120x120?text=No+SMILES"
+def create_structure_image_url(smiles: Optional[str]) -> Optional[str]:
+    if smiles is None:
+        return None
     encoded_smiles = url_quote(smiles)
     return f"{CONFIG['cdk_base']}?smi={encoded_smiles}&annotate=cip"
 
@@ -973,7 +973,7 @@ def create_link(url: str, text: str, color: str = "#3377c4") -> mo.Html:
 @app.function
 def create_wikidata_link(qid: str, color: str = "#3377c4") -> mo.Html:
     """Create a Wikidata link for a QID."""
-    return create_link(f"{SCHOLIA_URL}{qid}", qid, color=color) if qid else mo.Html("-")
+    return create_link(f"{SCHOLIA_URL}{qid}", qid, color=color)
 
 
 @app.function
@@ -1594,14 +1594,16 @@ def build_display_dataframe(df: pl.DataFrame) -> pl.DataFrame:
         compound = row.get("compound") or None
         taxon = row.get("taxon") or None
         reference = row.get("reference") or None
-        ref_doi = row.get("ref_doi") or ""
-        statement_uri = row.get("statement") or ""
+        ref_doi = row.get("ref_doi") or None
+        statement_uri = row.get("statement") or None
 
         # Extract QIDs
         compound_qid = extract_qid(compound)
         taxon_qid = extract_qid(taxon)
         ref_qid = extract_qid(reference)
-        statement_id = statement_uri.split("/")[-1] if statement_uri is not "" else None
+        statement_id = (
+            statement_uri.split("/")[-1] if statement_uri is not None else None
+        )
 
         display_rows.append(
             {
@@ -1615,7 +1617,7 @@ def build_display_dataframe(df: pl.DataFrame) -> pl.DataFrame:
                 "Reference Date": row.get("pub_date") or None,
                 "Reference DOI": create_link(f"https://doi.org/{ref_doi}", ref_doi)
                 if ref_doi is not None
-                else mo.Html(None),
+                else mo.Html(""),
                 "Compound QID": create_wikidata_link(
                     compound_qid, color=CONFIG["color_wikidata_red"]
                 ),
@@ -1627,7 +1629,7 @@ def build_display_dataframe(df: pl.DataFrame) -> pl.DataFrame:
                 ),
                 "Statement": create_link(statement_uri, statement_id)
                 if statement_id is not None
-                else mo.Html(None),
+                else mo.Html(""),
             }
         )
 
