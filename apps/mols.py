@@ -1,8 +1,8 @@
 # /// script
-# requires-python = "<3.13,>=3.12"
+# requires-python = "==3.13.*"
 # dependencies = [
 #     "marimo",
-#     "rdkit==2025.3.3",
+#     "rdkit==2025.9.3",
 # ]
 # [tool.marimo.display]
 # theme = "system"
@@ -10,8 +10,10 @@
 
 import marimo
 
-__generated_with = "0.14.12"
-app = marimo.App(app_title="Automated substructure depiction and verification")
+__generated_with = "0.19.2"
+app = marimo.App(
+    app_title="Automated substructure depiction and verification", width="medium"
+)
 
 with app.setup:
     import marimo as mo
