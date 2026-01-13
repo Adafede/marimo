@@ -1,12 +1,12 @@
 # /// script
-# requires-python = ">=3.13"
+# requires-python = "==3.13.*"
 # dependencies = [
 #     "httpx==0.28.1",
 #     "marimo",
-#     "polars==1.35.2",
+#     "polars==1.37.1",
 #     "pyarrow==22.0.0",
-#     "rdflib==7.4.0",
-#     "sparqlx==0.3.0",
+#     "rdflib==7.5.0",
+#     "sparqlx==0.5.0",
 # ]
 # [tool.marimo.display]
 # theme = "system"
@@ -33,8 +33,8 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import marimo
 
-__generated_with = "0.18.1"
-app = marimo.App(width="full", app_title="LOTUS Wikidata Explorer")
+__generated_with = "0.19.2"
+app = marimo.App(app_title="LOTUS Wikidata Explorer", width="full")
 
 with app.setup:
     import marimo as mo
