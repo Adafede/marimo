@@ -51,7 +51,7 @@ with app.setup:
     from rdflib import Graph, Namespace, Literal, URIRef, BNode
     from rdflib.namespace import RDF, RDFS, XSD, DCTERMS
     from sparqlx import SPARQLWrapper
-    from typing import Optional, Dict, Any, Tuple, List
+    from typing import Optional, Dict, Any, Tuple, List, Mapping
     from urllib.parse import quote as url_quote
 
     # ====================================================================
@@ -135,6 +135,22 @@ with app.setup:
         "element_s_max": 20,  # Max sulfur atoms (sulfated metabolites)
         # Chemical Search
         "default_similarity_threshold": 0.8,  # Default Tanimoto coefficient (0.8 = good balance of recall/precision)
+    }
+
+    DISPLAY_SCHEMA: dict[str, pl.DataType] = {
+        "2D Depiction": pl.Object,
+        "Compound": pl.String,
+        "Compound SMILES": pl.String,
+        "Compound InChIKey": pl.String,
+        "Compound Mass": pl.Float64,
+        "Taxon": pl.String,
+        "Reference Title": pl.String,
+        "Reference Date": pl.Date,
+        "Reference DOI": pl.Object,
+        "Compound QID": pl.Object,
+        "Taxon QID": pl.Object,
+        "Reference QID": pl.Object,
+        "Statement": pl.Object,
     }
 
     # ====================================================================
@@ -349,9 +365,7 @@ class FormulaFilters:
         """Check if any filter is active."""
         if self.exact_formula and self.exact_formula.strip():
             return True
-        if any(
-            r.is_active() for r in [self.c, self.h, self.n, self.o, self.p, self.s]
-        ):
+        if any(r.is_active() for r in [self.c, self.h, self.n, self.o, self.p, self.s]):
             return True
         if any(
             s != "allowed"
@@ -382,7 +396,10 @@ def validate_smiles(smiles: str) -> Tuple[bool, Optional[str]]:
 
     # Check for null bytes or dangerous control characters
     if "\x00" in smiles:
-        return False, "SMILES contains null bytes (\\x00) which are not allowed"
+        return (
+            False,
+            "SMILES contains null bytes (\\x00) which are not allowed",
+        )
 
     invalid_chars = [c for c in smiles if ord(c) < 32 and c not in "\t\n\r"]
     if invalid_chars:
@@ -515,7 +532,10 @@ def build_smiles_similarity_query(smiles: str, threshold: float = 0.8) -> str:
 
 @app.function
 def build_smiles_taxon_query(
-    smiles: str, qid: str, search_type: str = "substructure", threshold: float = 0.8
+    smiles: str,
+    qid: str,
+    search_type: str = "substructure",
+    threshold: float = 0.8,
 ) -> str:
     """Build SPARQL query to find compounds by SMILES within a specific taxon."""
     return build_base_sachem_query(
@@ -852,7 +872,9 @@ def create_taxon_warning_html(
 
 
 @app.function
-def resolve_taxon_to_qid(taxon_input: str) -> Tuple[Optional[str], Optional[mo.Html]]:
+def resolve_taxon_to_qid(
+    taxon_input: str,
+) -> Tuple[Optional[str], Optional[mo.Html]]:
     """Resolve taxon name or QID to a valid QID."""
     taxon_input = taxon_input.strip()
 
@@ -917,7 +939,9 @@ def resolve_taxon_to_qid(taxon_input: str) -> Tuple[Optional[str], Optional[mo.H
 
             # Sort exact matches by connectivity (descending)
             sorted_matches = sorted(
-                exact_matches, key=lambda x: connectivity_map.get(x[0], 0), reverse=True
+                exact_matches,
+                key=lambda x: connectivity_map.get(x[0], 0),
+                reverse=True,
             )
 
             # Get details for display
@@ -975,7 +999,9 @@ def resolve_taxon_to_qid(taxon_input: str) -> Tuple[Optional[str], Optional[mo.H
 
             # Sort matches by connectivity (descending)
             sorted_matches = sorted(
-                matches[:5], key=lambda x: connectivity_map.get(x[0], 0), reverse=True
+                matches[:5],
+                key=lambda x: connectivity_map.get(x[0], 0),
+                reverse=True,
             )
 
             # Get details for display
@@ -1050,7 +1076,9 @@ def pluralize(singular: str, count: int) -> str:
 
 
 @app.function
-def serialize_element_range(element_range: ElementRange) -> Optional[Dict[str, int]]:
+def serialize_element_range(
+    element_range: ElementRange,
+) -> Optional[Dict[str, int]]:
     """Convert ElementRange to dictionary for export, returns None if not active."""
     if not element_range.is_active():
         return None
@@ -1075,7 +1103,14 @@ def serialize_formula_filters(
         result["exact_formula"] = filters.exact_formula.strip()
 
     # Element ranges
-    element_attrs = [filters.c, filters.h, filters.n, filters.o, filters.p, filters.s]
+    element_attrs = [
+        filters.c,
+        filters.h,
+        filters.n,
+        filters.o,
+        filters.p,
+        filters.s,
+    ]
     for (_, element_name, _), element_range in zip(ELEMENT_CONFIGS, element_attrs):
         range_dict = serialize_element_range(element_range)
         if range_dict:
@@ -1432,7 +1467,11 @@ def apply_year_filter(
 ) -> pl.DataFrame:
     """Apply year range filter to publication dates."""
     return apply_range_filter(
-        df, "pub_date", year_start, year_end, extract_func=lambda col: col.dt.year()
+        df,
+        "pub_date",
+        year_start,
+        year_end,
+        extract_func=lambda col: col.dt.year(),
     )
 
 
@@ -1664,43 +1703,46 @@ def query_wikidata(
 
 
 @app.function
-def create_display_row(row: Dict[str, str]) -> Dict[str, Any]:
-    """Create a display row for the table with images and links."""
+def append_display_row(
+    row: Mapping[str, str],
+    columns: dict[str, list[object]],
+) -> None:
+    """Append a single display row into column buffers."""
     img_url = create_structure_image_url(row["smiles"])
+
     compound_qid = extract_qid(row["compound"])
     taxon_qid = extract_qid(row["taxon"])
     ref_qid = extract_qid(row["reference"])
     doi = row["ref_doi"]
 
-    # Extract statement ID if available (for provenance transparency)
     statement_uri = row.get("statement", "")
     statement_id = statement_uri.split("/")[-1] if statement_uri else ""
 
-    result = {
-        "2D Depiction": mo.image(src=img_url),
-        "Compound": row["name"],
-        "Compound SMILES": row["smiles"],
-        "Compound InChIKey": row["inchikey"],
-        "Taxon": row["taxon_name"],
-        "Reference title": row["ref_title"] or "-",
-        "Reference DOI": create_link(f"https://doi.org/{doi}", doi)
-        if doi
-        else mo.Html("-"),
-        "Compound QID": create_wikidata_link(
-            compound_qid, color=CONFIG["color_wikidata_red"]
-        ),
-        "Taxon QID": create_wikidata_link(
-            taxon_qid, color=CONFIG["color_wikidata_green"]
-        ),
-        "Reference QID": create_wikidata_link(
-            ref_qid, color=CONFIG["color_wikidata_blue"]
-        ),
-        "Statement": create_link(statement_uri, statement_id)
-        if statement_id
-        else mo.Html("-"),
-    }
+    columns["2D Depiction"].append(mo.image(src=img_url))
+    columns["Compound"].append(row["name"])
+    columns["Compound SMILES"].append(row["smiles"])
+    columns["Compound InChIKey"].append(row["inchikey"])
+    columns["Compound Mass"].append(row["mass"])
+    columns["Taxon"].append(row["taxon_name"])
+    columns["Reference Title"].append(row["ref_title"] or "-")
+    columns["Reference Date"].append(row["pub_date"] or "-")
+    columns["Reference DOI"].append(
+        create_link(f"https://doi.org/{doi}", doi) if doi else mo.Html("-")
+    )
 
-    return result
+    columns["Compound QID"].append(
+        create_wikidata_link(compound_qid, color=CONFIG["color_wikidata_red"])
+    )
+    columns["Taxon QID"].append(
+        create_wikidata_link(taxon_qid, color=CONFIG["color_wikidata_green"])
+    )
+    columns["Reference QID"].append(
+        create_wikidata_link(ref_qid, color=CONFIG["color_wikidata_blue"])
+    )
+
+    columns["Statement"].append(
+        create_link(statement_uri, statement_id) if statement_id else mo.Html("-")
+    )
 
 
 @app.function
@@ -1712,13 +1754,11 @@ def prepare_export_dataframe(
     Prepare dataframe for export with cleaned QIDs and selected columns.
 
     Args:
-        df: Input dataframe
+        df: Input dataframe (not mutated).
         include_rdf_ref: If True, include ref URI for RDF export.
-                        Statement is always included (for display and RDF).
-                        Ref is only for RDF export (not needed in CSV/JSON/display).
+                         Statement is always included if present.
     """
-    # Extract QIDs for all entity columns
-    df_with_qids = df.with_columns(
+    df_with_qids: pl.DataFrame = df.with_columns(
         [
             pl.col("compound")
             .str.replace(WIKIDATA_ENTITY_URL, "", literal=True)
@@ -1732,8 +1772,7 @@ def prepare_export_dataframe(
         ]
     )
 
-    # Select and rename columns for export
-    select_cols = [
+    select_cols: list[pl.Expr | str] = [
         pl.col("name").alias("compound_name"),
         pl.col("smiles").alias("compound_smiles"),
         pl.col("inchikey").alias("compound_inchikey"),
@@ -1748,11 +1787,11 @@ def prepare_export_dataframe(
         "reference_qid",
     ]
 
-    # Always include statement (for display table and RDF)
+    # Always include statement (for display + RDF)
     if "statement" in df_with_qids.columns:
         select_cols.append("statement")
 
-    # Only include ref for RDF export (not needed for CSV/JSON/display)
+    # Only include ref URI for RDF export
     if include_rdf_ref and "ref" in df_with_qids.columns:
         select_cols.append("ref")
 
@@ -1951,7 +1990,10 @@ DOI: [10.7554/eLife.70780](https://doi.org/10.7554/eLife.70780)
 
 @app.function
 def create_dataset_uri(
-    qid: str, taxon_input: str, filters: Optional[Dict[str, Any]], df: pl.DataFrame
+    qid: str,
+    taxon_input: str,
+    filters: Optional[Dict[str, Any]],
+    df: pl.DataFrame,
 ) -> Tuple[URIRef, str, str]:
     """
     Create dataset URI based on result content for reproducibility.
@@ -2028,7 +2070,13 @@ def add_dataset_metadata(
     # Dataset type and basic metadata
     g.add((dataset_uri, RDF.type, SCHEMA.Dataset))
     g.add((dataset_uri, SCHEMA.name, Literal(dataset_name, datatype=XSD.string)))
-    g.add((dataset_uri, SCHEMA.description, Literal(dataset_desc, datatype=XSD.string)))
+    g.add(
+        (
+            dataset_uri,
+            SCHEMA.description,
+            Literal(dataset_desc, datatype=XSD.string),
+        )
+    )
 
     # License and provenance - CC0 from Wikidata/LOTUS
     g.add(
@@ -2042,7 +2090,13 @@ def add_dataset_metadata(
     g.add((dataset_uri, DCTERMS.source, URIRef(WIKIDATA_URL)))
 
     # Dataset statistics and versioning
-    g.add((dataset_uri, SCHEMA.numberOfRecords, Literal(df_len, datatype=XSD.integer)))
+    g.add(
+        (
+            dataset_uri,
+            SCHEMA.numberOfRecords,
+            Literal(df_len, datatype=XSD.integer),
+        )
+    )
     g.add(
         (
             dataset_uri,
@@ -2052,7 +2106,13 @@ def add_dataset_metadata(
     )
 
     # Reference to LOTUS Initiative (Q104225190) as the source project
-    g.add((dataset_uri, SCHEMA.isBasedOn, URIRef(WIKIDATA_WIKI_URL + "Q104225190")))
+    g.add(
+        (
+            dataset_uri,
+            SCHEMA.isBasedOn,
+            URIRef(WIKIDATA_WIKI_URL + "Q104225190"),
+        )
+    )
 
     # Link to the taxon being queried (if specific)
     if qid and qid != "*":
@@ -2064,7 +2124,10 @@ def add_dataset_metadata(
         (
             dataset_uri,
             DCTERMS.provenance,
-            Literal(f"Generated by query with hash: {query_hash}", datatype=XSD.string),
+            Literal(
+                f"Generated by query with hash: {query_hash}",
+                datatype=XSD.string,
+            ),
         )
     )
     # Result hash is implicit in the dataset URI itself (urn:hash:sha256:RESULT_HASH)
@@ -2080,7 +2143,11 @@ def add_dataset_metadata(
 
 @app.function
 def add_optional_literal(
-    g: Graph, subject: URIRef, predicate: URIRef, value: Any, datatype=XSD.string
+    g: Graph,
+    subject: URIRef,
+    predicate: URIRef,
+    value: Any,
+    datatype=XSD.string,
 ) -> None:
     """Add optional literal triple to graph if value exists (DRY helper)."""
     if value is not None and value != "":
@@ -2178,7 +2245,11 @@ def add_compound_triples(
                 # P577: publication date
                 if row.get("reference_date"):
                     add_optional_literal(
-                        g, ref_uri, WDT.P577, str(row["reference_date"]), XSD.date
+                        g,
+                        ref_uri,
+                        WDT.P577,
+                        str(row["reference_date"]),
+                        XSD.date,
                     )
 
                 processed_refs.add(ref_qid)
@@ -2887,7 +2958,8 @@ def _(
                     )
             except Exception as e:
                 mo.stop(
-                    True, mo.callout(mo.md(f"**Query Error:** {str(e)}"), kind="danger")
+                    True,
+                    mo.callout(mo.md(f"**Query Error:** {str(e)}"), kind="danger"),
                 )
         elapsed = round(time.time() - start_time, 2)
         mo.md(f"⏱️ Query completed in **{elapsed}s**.")
@@ -3240,7 +3312,12 @@ def _(
 
         # Create metadata using already-built active_filters
         metadata = create_export_metadata(
-            export_df, taxon_input.value, qid, active_filters, query_hash, result_hash
+            export_df,
+            taxon_input.value,
+            qid,
+            active_filters,
+            query_hash,
+            result_hash,
         )
         metadata_json = json.dumps(metadata, indent=2)
         citation_text = create_citation_text(taxon_input.value)
@@ -3248,27 +3325,6 @@ def _(
         total_rows = len(results_df)
         if total_rows > CONFIG["table_row_limit"]:
             limited_df = results_df.head(CONFIG["table_row_limit"])
-            display_data = [
-                {
-                    "Compound": row["name"],
-                    "Compound SMILES": row["smiles"],
-                    "Compound InChIKey": row["inchikey"],
-                    "Taxon": row["taxon_name"],
-                    "Reference title": row["ref_title"] or "-",
-                    "Reference DOI": create_link(f"https://doi.org/{doi}", doi)
-                    if (doi := row["ref_doi"])
-                    else mo.Html("-"),
-                    "Compound QID": create_wikidata_link(extract_qid(row["compound"])),
-                    "Taxon QID": create_wikidata_link(extract_qid(row["taxon"])),
-                    "Reference QID": create_wikidata_link(
-                        extract_qid(row["reference"])
-                    ),
-                    "Statement": create_link(stmt_uri, stmt_uri.split("/")[-1])
-                    if (stmt_uri := row.get("statement", ""))
-                    else mo.Html("-"),
-                }
-                for row in limited_df.iter_rows(named=True)
-            ]
             display_note = mo.callout(
                 mo.md(
                     f"⚡ **Large Dataset Optimization**\n\n"
@@ -3280,21 +3336,30 @@ def _(
                 kind="info",
             )
         else:
-            display_data = [
-                create_display_row(row) for row in results_df.iter_rows(named=True)
-            ]
             display_note = mo.Html("")
+            limited_df = results_df
+        columns: dict[str, list[object]] = {name: [] for name in DISPLAY_SCHEMA}
+
+        # Single pass over Polars rows
+        for row in limited_df.iter_rows(named=True):
+            append_display_row(row, columns)
+
+        # Construct typed Polars DataFrame
+        display_data = pl.DataFrame(
+            {
+                name: pl.Series(columns[name], dtype=dtype)
+                for name, dtype in DISPLAY_SCHEMA.items()
+            }
+        )
         display_table = mo.ui.table(
             display_data,
             selection=None,
             page_size=CONFIG["page_size_default"],
-            show_column_summaries=False,
         )
         export_table = mo.ui.table(
-            export_df.to_dicts(),
+            export_df,
             selection=None,
             page_size=CONFIG["page_size_export"],
-            show_column_summaries=False,
         )
         # Immediate or lazy downloads
         buttons = []
@@ -3439,7 +3504,9 @@ def _(
             compressed_data, final_filename, final_mimetype = compress_if_large(
                 raw_data,
                 generate_filename(
-                    taxon_name, format_ext, filters=generation_data["active_filters"]
+                    taxon_name,
+                    format_ext,
+                    filters=generation_data["active_filters"],
                 ),
             )
 
@@ -3501,7 +3568,9 @@ def _(
             _rdf_data, _rdf_filename, _rdf_mimetype = compress_if_large(
                 _rdf_raw,
                 generate_filename(
-                    taxon_name, "ttl", filters=rdf_generation_data["active_filters"]
+                    taxon_name,
+                    "ttl",
+                    filters=rdf_generation_data["active_filters"],
                 ),
             )
 
