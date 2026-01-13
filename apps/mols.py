@@ -12,7 +12,8 @@ import marimo
 
 __generated_with = "0.19.2"
 app = marimo.App(
-    app_title="Automated substructure depiction and verification", width="medium"
+    width="medium",
+    app_title="Automated substructure depiction and verification",
 )
 
 with app.setup:
