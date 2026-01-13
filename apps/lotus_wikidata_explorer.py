@@ -128,7 +128,7 @@ with app.setup:
     }
 
     DISPLAY_SCHEMA: dict[str, pl.DataType] = {
-        "2D Depiction": pl.Object,
+        "2D Depiction": pl.Binary,
         "Compound": pl.String,
         "Compound SMILES": pl.String,
         "Compound InChIKey": pl.String,
@@ -136,11 +136,11 @@ with app.setup:
         "Taxon": pl.String,
         "Reference Title": pl.String,
         "Reference Date": pl.Date,
-        "Reference DOI": pl.Object,
-        "Compound QID": pl.Object,
-        "Taxon QID": pl.Object,
-        "Reference QID": pl.Object,
-        "Statement": pl.Object,
+        "Reference DOI": pl.String,
+        "Compound QID": pl.String,
+        "Taxon QID": pl.String,
+        "Reference QID": pl.String,
+        "Statement": pl.String,
     }
 
     ELEMENT_CONFIGS = [
@@ -1537,8 +1537,9 @@ def query_wikidata(
             "ref_title": get_binding_value(b, "ref_title"),
             "ref_doi": (
                 doi.split("doi.org/")[-1]
-                if (doi := get_binding_value(b, "ref_doi")) and doi.startswith("http")
-                else get_binding_value(b, "ref_doi")
+                if isinstance(doi := get_binding_value(b, "ref_doi"), str)
+                and doi.startswith("http")
+                else doi
             ),
             "reference": get_binding_value(b, "ref_qid"),
             "pub_date": get_binding_value(b, "ref_date", None),
@@ -1589,32 +1590,32 @@ def build_display_dataframe(df: pl.DataFrame) -> pl.DataFrame:
     display_rows = []
 
     for row in df.iter_rows(named=True):
-        smiles = row.get("smiles", "")
-        compound = row.get("compound", "")
-        taxon = row.get("taxon", "")
-        reference = row.get("reference", "")
-        ref_doi = row.get("ref_doi", "")
-        statement_uri = row.get("statement", "")
+        smiles = row.get("smiles") or None
+        compound = row.get("compound") or None
+        taxon = row.get("taxon") or None
+        reference = row.get("reference") or None
+        ref_doi = row.get("ref_doi") or ""
+        statement_uri = row.get("statement") or ""
 
         # Extract QIDs
         compound_qid = extract_qid(compound)
         taxon_qid = extract_qid(taxon)
         ref_qid = extract_qid(reference)
-        statement_id = statement_uri.split("/")[-1] if statement_uri else ""
+        statement_id = statement_uri.split("/")[-1] if statement_uri is not "" else None
 
         display_rows.append(
             {
                 "2D Depiction": mo.image(src=create_structure_image_url(smiles)),
-                "Compound": row.get("name", ""),
+                "Compound": row.get("name") or None,
                 "Compound SMILES": smiles,
-                "Compound InChIKey": row.get("inchikey", ""),
+                "Compound InChIKey": row.get("inchikey") or None,
                 "Compound Mass": row.get("mass"),
-                "Taxon": row.get("taxon_name", ""),
-                "Reference Title": row.get("ref_title") or "-",
-                "Reference Date": row.get("pub_date") or "-",
+                "Taxon": row.get("taxon_name") or None,
+                "Reference Title": row.get("ref_title") or None,
+                "Reference Date": row.get("pub_date") or None,
                 "Reference DOI": create_link(f"https://doi.org/{ref_doi}", ref_doi)
-                if ref_doi
-                else mo.Html("-"),
+                if ref_doi is not None
+                else mo.Html(None),
                 "Compound QID": create_wikidata_link(
                     compound_qid, color=CONFIG["color_wikidata_red"]
                 ),
@@ -1625,8 +1626,8 @@ def build_display_dataframe(df: pl.DataFrame) -> pl.DataFrame:
                     ref_qid, color=CONFIG["color_wikidata_blue"]
                 ),
                 "Statement": create_link(statement_uri, statement_id)
-                if statement_id
-                else mo.Html("-"),
+                if statement_id is not None
+                else mo.Html(None),
             }
         )
 
