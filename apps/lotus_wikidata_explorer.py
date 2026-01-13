@@ -95,37 +95,91 @@ with app.setup:
     # ====================================================================
 
     CONFIG = {
-        "app_version": "0.0.1", "app_name": "LOTUS Wikidata Explorer",
+        "app_version": "0.0.1",
+        "app_name": "LOTUS Wikidata Explorer",
         "app_url": "https://github.com/Adafede/marimo/blob/main/apps/lotus_wikidata_explorer.py",
         "cdk_base": "https://www.simolecule.com/cdkdepict/depict/cow/svg",
         "sparql_endpoint": "https://qlever.dev/api/wikidata",
         "idsm_endpoint": "https://idsm.elixir-czech.cz/sparql/endpoint/",
-        "max_retries": 3, "retry_backoff": 2, "query_timeout": 300,
-        "table_row_limit": 10000, "lazy_generation_threshold": 5000, "download_embed_threshold_bytes": 8_000_000,
-        "color_hyperlink": "#3377c4", "color_wikidata_blue": "#006699", "color_wikidata_green": "#339966", "color_wikidata_red": "#990000",
-        "page_size_default": 10, "page_size_export": 25,
-        "year_range_start": 1700, "year_default_start": 1900,
-        "mass_default_min": 0, "mass_default_max": 2000, "mass_ui_max": 10000,
-        "element_c_max": 100, "element_h_max": 200, "element_n_max": 50, "element_o_max": 50, "element_p_max": 20, "element_s_max": 20,
+        "max_retries": 3,
+        "retry_backoff": 2,
+        "query_timeout": 300,
+        "table_row_limit": 10000,
+        "lazy_generation_threshold": 5000,
+        "download_embed_threshold_bytes": 8_000_000,
+        "color_hyperlink": "#3377c4",
+        "color_wikidata_blue": "#006699",
+        "color_wikidata_green": "#339966",
+        "color_wikidata_red": "#990000",
+        "page_size_default": 10,
+        "page_size_export": 25,
+        "year_range_start": 1700,
+        "year_default_start": 1900,
+        "mass_default_min": 0,
+        "mass_default_max": 2000,
+        "mass_ui_max": 10000,
+        "element_c_max": 100,
+        "element_h_max": 200,
+        "element_n_max": 50,
+        "element_o_max": 50,
+        "element_p_max": 20,
+        "element_s_max": 20,
         "default_similarity_threshold": 0.8,
     }
 
     DISPLAY_SCHEMA: dict[str, pl.DataType] = {
-        "2D Depiction": pl.Object, "Compound": pl.String, "Compound SMILES": pl.String,
-        "Compound InChIKey": pl.String, "Compound Mass": pl.Float64, "Taxon": pl.String,
-        "Reference Title": pl.String, "Reference Date": pl.Date, "Reference DOI": pl.Object,
-        "Compound QID": pl.Object, "Taxon QID": pl.Object, "Reference QID": pl.Object, "Statement": pl.Object,
+        "2D Depiction": pl.Object,
+        "Compound": pl.String,
+        "Compound SMILES": pl.String,
+        "Compound InChIKey": pl.String,
+        "Compound Mass": pl.Float64,
+        "Taxon": pl.String,
+        "Reference Title": pl.String,
+        "Reference Date": pl.Date,
+        "Reference DOI": pl.Object,
+        "Compound QID": pl.Object,
+        "Taxon QID": pl.Object,
+        "Reference QID": pl.Object,
+        "Statement": pl.Object,
     }
 
-    ELEMENT_CONFIGS = [("C", "carbon", "element_c_max"), ("H", "hydrogen", "element_h_max"),
-                       ("N", "nitrogen", "element_n_max"), ("O", "oxygen", "element_o_max"),
-                       ("P", "phosphorus", "element_p_max"), ("S", "sulfur", "element_s_max")]
-    HALOGEN_CONFIGS = [("F", "fluorine"), ("Cl", "chlorine"), ("Br", "bromine"), ("I", "iodine")]
+    ELEMENT_CONFIGS = [
+        ("C", "carbon", "element_c_max"),
+        ("H", "hydrogen", "element_h_max"),
+        ("N", "nitrogen", "element_n_max"),
+        ("O", "oxygen", "element_o_max"),
+        ("P", "phosphorus", "element_p_max"),
+        ("S", "sulfur", "element_s_max"),
+    ]
+    HALOGEN_CONFIGS = [
+        ("F", "fluorine"),
+        ("Cl", "chlorine"),
+        ("Br", "bromine"),
+        ("I", "iodine"),
+    ]
 
     EXPORT_FORMATS = {
-        "csv": {"extension": "csv", "mimetype": "text/csv", "label": "📥 CSV", "icon": "📄", "generator": lambda df: df.write_csv()},
-        "json": {"extension": "json", "mimetype": "application/json", "label": "📥 JSON", "icon": "📖", "generator": lambda df: df.write_json()},
-        "ttl": {"extension": "ttl", "mimetype": "text/turtle", "label": "📥 RDF/Turtle", "icon": "🐢", "generator": None},
+        "csv": {
+            "extension": "csv",
+            "mimetype": "text/csv",
+            "label": "📥 CSV",
+            "icon": "📄",
+            "generator": lambda df: df.write_csv(),
+        },
+        "json": {
+            "extension": "json",
+            "mimetype": "application/json",
+            "label": "📥 JSON",
+            "icon": "📖",
+            "generator": lambda df: df.write_json(),
+        },
+        "ttl": {
+            "extension": "ttl",
+            "mimetype": "text/turtle",
+            "label": "📥 RDF/Turtle",
+            "icon": "🐢",
+            "generator": None,
+        },
     }
 
     SPARQL_PREFIXES = """
@@ -539,7 +593,6 @@ def build_base_sachem_query(
     """
 
 
-
 @app.function
 def build_compounds_query(qid: str) -> str:
     """Build SPARQL query to find compounds in a specific taxon and its descendants."""
@@ -579,11 +632,16 @@ def build_all_compounds_query() -> str:
 
 @app.function
 @lru_cache(maxsize=128)
-def execute_sparql(query: str, max_retries: int = CONFIG["max_retries"]) -> Dict[str, Any]:
+def execute_sparql(
+    query: str, max_retries: int = CONFIG["max_retries"]
+) -> Dict[str, Any]:
     """Execute SPARQL query with retry logic."""
     if not query or not query.strip():
         raise ValueError("SPARQL query cannot be empty")
-    def _wait(a): time.sleep(CONFIG["retry_backoff"] * (2**a))
+
+    def _wait(a):
+        time.sleep(CONFIG["retry_backoff"] * (2**a))
+
     for attempt in range(max_retries):
         try:
             result = SPARQL_WRAPPER.query(query, response_format="json").json()
@@ -592,13 +650,19 @@ def execute_sparql(query: str, max_retries: int = CONFIG["max_retries"]) -> Dict
             return result
         except httpx.TimeoutException as e:
             if attempt == max_retries - 1:
-                raise TimeoutError(f"⏱️ Query timed out after {max_retries} attempts. Try adding filters.") from e
+                raise TimeoutError(
+                    f"⏱️ Query timed out after {max_retries} attempts. Try adding filters."
+                ) from e
             _wait(attempt)
         except httpx.HTTPStatusError as e:
             if attempt == max_retries - 1:
-                raise ConnectionError(f"🌐 HTTP {e.response.status_code}: {e.response.text[:200]}") from e
-            if e.response.status_code >= 500: _wait(attempt)
-            else: raise
+                raise ConnectionError(
+                    f"🌐 HTTP {e.response.status_code}: {e.response.text[:200]}"
+                ) from e
+            if e.response.status_code >= 500:
+                _wait(attempt)
+            else:
+                raise
         except (httpx.NetworkError, httpx.ConnectError) as e:
             if attempt == max_retries - 1:
                 raise ConnectionError(f"🌐 Network error: {e}") from e
@@ -717,7 +781,7 @@ def build_taxon_connectivity_query(qids: List[str]) -> str:
 
 
 @app.function
-def _resolve_ambiguous_matches(
+def resolve_ambiguous_matches(
     matches: List[Tuple[str, str]], is_exact: bool
 ) -> Tuple[str, mo.Html]:
     """Helper to resolve ambiguous taxon matches by connectivity. Returns (selected_qid, warning_html)."""
@@ -875,11 +939,11 @@ def resolve_taxon_to_qid(
 
         # Multiple exact matches - need to disambiguate
         if len(exact_matches) > 1:
-            return _resolve_ambiguous_matches(exact_matches, is_exact=True)
+            return resolve_ambiguous_matches(exact_matches, is_exact=True)
 
         # No exact match but multiple similar matches - use best one with warning
         if len(matches) > 1:
-            return _resolve_ambiguous_matches(matches, is_exact=False)
+            return resolve_ambiguous_matches(matches, is_exact=False)
 
         return matches[0][0], None
 
@@ -1443,7 +1507,9 @@ def query_wikidata(
 
     # Build query based on search mode
     if search_mode == "combined" and smiles and qid:
-        query = build_base_sachem_query(smiles, smiles_search_type, smiles_threshold, True, qid)
+        query = build_base_sachem_query(
+            smiles, smiles_search_type, smiles_threshold, True, qid
+        )
     elif search_mode == "smiles" and smiles:
         query = build_base_sachem_query(smiles, smiles_search_type, smiles_threshold)
     elif qid == "*" or qid is None:
@@ -1673,20 +1739,64 @@ def create_export_metadata(
     description += "Retrieved via LOTUS Wikidata Explorer with chemical search capabilities (SACHEM/IDSM)."
 
     metadata = {
-        "@context": "https://schema.org/", "@type": "Dataset", "name": dataset_name,
-        "description": description, "version": CONFIG["app_version"],
-        "dateCreated": datetime.now().isoformat(), "license": "https://creativecommons.org/publicdomain/zero/1.0/",
-        "creator": {"@type": "SoftwareApplication", "name": CONFIG["app_name"], "version": CONFIG["app_version"], "url": CONFIG["app_url"]},
-        "provider": [{"@type": "Organization", "name": n, "url": u} for n, u in [
-            ("LOTUS Initiative", WIKIDATA_WIKI_URL + "Q104225190"), ("Wikidata", WIKIDATA_URL), ("IDSM", "https://idsm.elixir-czech.cz/")]],
-        "citation": [{"@type": "ScholarlyArticle", "name": "LOTUS initiative", "identifier": "https://doi.org/10.7554/eLife.70780"}],
-        "distribution": [{"@type": "DataDownload", "encodingFormat": f, "contentUrl": f"data:{f}"} for f in ["text/csv", "application/json", "text/turtle"]],
+        "@context": "https://schema.org/",
+        "@type": "Dataset",
+        "name": dataset_name,
+        "description": description,
+        "version": CONFIG["app_version"],
+        "dateCreated": datetime.now().isoformat(),
+        "license": "https://creativecommons.org/publicdomain/zero/1.0/",
+        "creator": {
+            "@type": "SoftwareApplication",
+            "name": CONFIG["app_name"],
+            "version": CONFIG["app_version"],
+            "url": CONFIG["app_url"],
+        },
+        "provider": [
+            {"@type": "Organization", "name": n, "url": u}
+            for n, u in [
+                ("LOTUS Initiative", WIKIDATA_WIKI_URL + "Q104225190"),
+                ("Wikidata", WIKIDATA_URL),
+                ("IDSM", "https://idsm.elixir-czech.cz/"),
+            ]
+        ],
+        "citation": [
+            {
+                "@type": "ScholarlyArticle",
+                "name": "LOTUS initiative",
+                "identifier": "https://doi.org/10.7554/eLife.70780",
+            }
+        ],
+        "distribution": [
+            {
+                "@type": "DataDownload",
+                "encodingFormat": f,
+                "contentUrl": f"data:{f}",
+            }
+            for f in ["text/csv", "application/json", "text/turtle"]
+        ],
         "numberOfRecords": len(df),
-        "variablesMeasured": ["compound_name", "compound_smiles", "compound_inchikey", "compound_mass", "molecular_formula",
-                              "taxon_name", "reference_title", "reference_doi", "reference_date", "compound_qid", "taxon_qid", "reference_qid"],
+        "variablesMeasured": [
+            "compound_name",
+            "compound_smiles",
+            "compound_inchikey",
+            "compound_mass",
+            "molecular_formula",
+            "taxon_name",
+            "reference_title",
+            "reference_doi",
+            "reference_date",
+            "compound_qid",
+            "taxon_qid",
+            "reference_qid",
+        ],
         "search_parameters": {"taxon": taxon_input, "taxon_qid": qid},
         "sparql_endpoint": CONFIG["sparql_endpoint"],
-        "chemical_search_service": {"name": "SACHEM", "provider": "IDSM", "endpoint": CONFIG["idsm_endpoint"]},
+        "chemical_search_service": {
+            "name": "SACHEM",
+            "provider": "IDSM",
+            "endpoint": CONFIG["idsm_endpoint"],
+        },
     }
 
     if filters:
@@ -1694,9 +1804,15 @@ def create_export_metadata(
     if query_hash or result_hash:
         metadata["provenance"] = {}
         if query_hash:
-            metadata["provenance"]["query_hash"] = {"algorithm": "SHA-256", "value": query_hash}
+            metadata["provenance"]["query_hash"] = {
+                "algorithm": "SHA-256",
+                "value": query_hash,
+            }
         if result_hash:
-            metadata["provenance"]["result_hash"] = {"algorithm": "SHA-256", "value": result_hash}
+            metadata["provenance"]["result_hash"] = {
+                "algorithm": "SHA-256",
+                "value": result_hash,
+            }
             metadata["provenance"]["dataset_uri"] = f"urn:hash:sha256:{result_hash}"
 
     return metadata
@@ -2170,12 +2286,44 @@ def url_params_check():
     _url_params_check = mo.query_params()
 
     # Display URL query info if parameters are present
-    if _url_params_check and ("taxon" in _url_params_check or "smiles" in _url_params_check):
-        known_params = ["taxon", "smiles", "smiles_search_type", "smiles_threshold", "mass_filter", "mass_min", "mass_max",
-                        "year_filter", "year_start", "year_end", "formula_filter", "exact_formula",
-                        "c_min", "c_max", "h_min", "h_max", "n_min", "n_max", "o_min", "o_max", "p_min", "p_max", "s_min", "s_max",
-                        "f_state", "cl_state", "br_state", "i_state"]
-        param_items = [f"- **{k}**: `{_url_params_check.get(k)}`" for k in known_params if k in _url_params_check]
+    if _url_params_check and (
+        "taxon" in _url_params_check or "smiles" in _url_params_check
+    ):
+        known_params = [
+            "taxon",
+            "smiles",
+            "smiles_search_type",
+            "smiles_threshold",
+            "mass_filter",
+            "mass_min",
+            "mass_max",
+            "year_filter",
+            "year_start",
+            "year_end",
+            "formula_filter",
+            "exact_formula",
+            "c_min",
+            "c_max",
+            "h_min",
+            "h_max",
+            "n_min",
+            "n_max",
+            "o_min",
+            "o_max",
+            "p_min",
+            "p_max",
+            "s_min",
+            "s_max",
+            "f_state",
+            "cl_state",
+            "br_state",
+            "i_state",
+        ]
+        param_items = [
+            f"- **{k}**: `{_url_params_check.get(k)}`"
+            for k in known_params
+            if k in _url_params_check
+        ]
         if param_items:
             mo.callout(
                 mo.md(f"""
@@ -2225,16 +2373,52 @@ def ui_search_params(search_params):
         label="⚖️ Filter by mass", value=search_params.mass_filter
     )
 
-    mass_min = mo.ui.number(value=search_params.mass_min, start=0, stop=CONFIG["mass_ui_max"], step=0.001, label="Min mass (Da)", full_width=True)
-    mass_max = mo.ui.number(value=search_params.mass_max, start=0, stop=CONFIG["mass_ui_max"], step=0.001, label="Max mass (Da)", full_width=True)
+    mass_min = mo.ui.number(
+        value=search_params.mass_min,
+        start=0,
+        stop=CONFIG["mass_ui_max"],
+        step=0.001,
+        label="Min mass (Da)",
+        full_width=True,
+    )
+    mass_max = mo.ui.number(
+        value=search_params.mass_max,
+        start=0,
+        stop=CONFIG["mass_ui_max"],
+        step=0.001,
+        label="Max mass (Da)",
+        full_width=True,
+    )
 
-    formula_filter = mo.ui.checkbox(label="⚛️ Filter by molecular formula", value=search_params.formula_filter)
-    exact_formula = mo.ui.text(value=search_params.exact_formula, label="Exact formula (e.g., C15H10O5)", placeholder="Leave empty to use element ranges", full_width=True)
+    formula_filter = mo.ui.checkbox(
+        label="⚛️ Filter by molecular formula", value=search_params.formula_filter
+    )
+    exact_formula = mo.ui.text(
+        value=search_params.exact_formula,
+        label="Exact formula (e.g., C15H10O5)",
+        placeholder="Leave empty to use element ranges",
+        full_width=True,
+    )
 
     # Element min/max inputs
     def _mk(e, mn, mx, k):
-        return (mo.ui.number(value=mn, start=0, stop=CONFIG[k], label=f"{e} min", full_width=True),
-                mo.ui.number(value=mx if mx is not None else CONFIG[k], start=0, stop=CONFIG[k], label=f"{e} max", full_width=True))
+        return (
+            mo.ui.number(
+                value=mn,
+                start=0,
+                stop=CONFIG[k],
+                label=f"{e} min",
+                full_width=True,
+            ),
+            mo.ui.number(
+                value=mx if mx is not None else CONFIG[k],
+                start=0,
+                stop=CONFIG[k],
+                label=f"{e} max",
+                full_width=True,
+            ),
+        )
+
     c_min, c_max = _mk("C", search_params.c_min, search_params.c_max, "element_c_max")
     h_min, h_max = _mk("H", search_params.h_min, search_params.h_max, "element_h_max")
     n_min, n_max = _mk("N", search_params.n_min, search_params.n_max, "element_n_max")
@@ -2244,15 +2428,34 @@ def ui_search_params(search_params):
 
     # Halogen selectors
     _ho = ["allowed", "required", "excluded"]
-    f_state = mo.ui.dropdown(options=_ho, value=search_params.f_state, label="F", full_width=True)
-    cl_state = mo.ui.dropdown(options=_ho, value=search_params.cl_state, label="Cl", full_width=True)
-    br_state = mo.ui.dropdown(options=_ho, value=search_params.br_state, label="Br", full_width=True)
-    i_state = mo.ui.dropdown(options=_ho, value=search_params.i_state, label="I", full_width=True)
+    f_state = mo.ui.dropdown(
+        options=_ho, value=search_params.f_state, label="F", full_width=True
+    )
+    cl_state = mo.ui.dropdown(
+        options=_ho, value=search_params.cl_state, label="Cl", full_width=True
+    )
+    br_state = mo.ui.dropdown(
+        options=_ho, value=search_params.br_state, label="Br", full_width=True
+    )
+    i_state = mo.ui.dropdown(
+        options=_ho, value=search_params.i_state, label="I", full_width=True
+    )
 
     current_year = datetime.now().year
-    year_filter = mo.ui.checkbox(label="🗓️ Filter by publication year", value=search_params.year_filter)
-    year_start = mo.ui.number(value=search_params.year_start, start=CONFIG["year_range_start"], stop=current_year, label="Start year", full_width=True)
-    year_end = mo.ui.number(value=search_params.year_end, start=CONFIG["year_range_start"], stop=current_year,
+    year_filter = mo.ui.checkbox(
+        label="🗓️ Filter by publication year", value=search_params.year_filter
+    )
+    year_start = mo.ui.number(
+        value=search_params.year_start,
+        start=CONFIG["year_range_start"],
+        stop=current_year,
+        label="Start year",
+        full_width=True,
+    )
+    year_end = mo.ui.number(
+        value=search_params.year_end,
+        start=CONFIG["year_range_start"],
+        stop=current_year,
         label="End year",
         full_width=True,
     )
@@ -2662,7 +2865,9 @@ def display_summary(
         stats_cards = mo.hstack(
             [
                 mo.stat(
-                    value=f"{n:,}", label=f"{icon} {pluralize(name, n)}", bordered=True
+                    value=f"{n:,}",
+                    label=f"{icon} {pluralize(name, n)}",
+                    bordered=True,
                 )
                 for n, icon, name in stats_data
             ],
