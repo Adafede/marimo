@@ -622,7 +622,7 @@ def build_all_compounds_query() -> str:
 def execute_sparql(
     query: str, max_retries: int = CONFIG["max_retries"]
 ) -> Dict[str, Any]:
-    """Execute SPARQL query with retry logic. Works in both native Python and Pyodide/WASM."""
+    """Execute SPARQL query with retry logic."""
     if not query or not query.strip():
         raise ValueError("SPARQL query cannot be empty")
 
@@ -3217,31 +3217,11 @@ def generate_results(
             display_note = mo.Html("")
             limited_df = results_df
 
-        # Use different table component based on environment
-        # mo.ui.table has issues in Pyodide/WASM, use plain HTML table instead
-        # Build display DataFrame with HTML-formatted columns (shared for both WASM and native)
+        # Build display DataFrame with HTML-formatted columns
         display_df = build_display_dataframe(limited_df)
 
-        if IS_PYODIDE:
-            # In WASM: render using polars .style that requires GT dependency
-            display_table = display_df.style
-
-            if not ui_is_large_dataset and export_df is not None:
-                export_table_ui = export_df.style
-            else:
-                export_table_ui = mo.callout(
-                    mo.md(
-                        f"**Large Dataset ({len(results_df):,} rows)**\n\n"
-                        f"Export table view is disabled for datasets over {CONFIG['table_row_limit']} rows.\n\n"
-                        f"Use the download buttons to get your data."
-                    ),
-                    kind="info",
-                ).style(
-                    style={
-                        "overflow-wrap": "anywhere",
-                    }
-                )
-        else:
+        # Try the nice mo.ui.table first, fall back to df.style if it fails
+        try:
             display_table = mo.ui.table(
                 data=display_df,
                 format_mapping={
@@ -3255,31 +3235,36 @@ def generate_results(
                 selection=None,
                 page_size=CONFIG["page_size_default"],
             )
+        except Exception:
+            display_table = display_df.style
 
-            # Export table: only show for smaller datasets
-            if not ui_is_large_dataset and export_df is not None:
+        # Export table: only show for smaller datasets
+        if not ui_is_large_dataset and export_df is not None:
+            try:
                 export_table_ui = mo.ui.table(
                     data=export_df,
                     selection=None,
                     page_size=CONFIG["page_size_export"],
                 )
-            else:
-                export_table_ui = mo.callout(
-                    mo.md(
-                        f"**Large Dataset ({len(results_df):,} rows)**\n\n"
-                        f"Export table view is disabled for datasets over {CONFIG['table_row_limit']} rows "
-                        f"to ensure smooth performance.\n\n"
-                        f"Use the download buttons above to get your data in CSV, JSON, or RDF format."
-                    ),
-                    kind="info",
-                ).style(
-                    style={
-                        "overflow-wrap": "anywhere",
-                    }
-                )
+            except Exception:
+                export_table_ui = export_df.style
+        else:
+            export_table_ui = mo.callout(
+                mo.md(
+                    f"**Large Dataset ({len(results_df):,} rows)**\n\n"
+                    f"Export table view is disabled for datasets over {CONFIG['table_row_limit']} rows "
+                    f"to ensure smooth performance.\n\n"
+                    f"Use the download buttons above to get your data in CSV, JSON, or RDF format."
+                ),
+                kind="info",
+            ).style(
+                style={
+                    "overflow-wrap": "anywhere",
+                }
+            )
 
         # Download buttons generation
-        if ui_is_large_dataset:
+        if ui_is_large_dataset and not IS_PYODIDE:
             # Lazy generation buttons
             csv_generate_button = mo.ui.run_button(label="📄 Generate CSV")
             json_generate_button = mo.ui.run_button(label="📖 Generate JSON")
