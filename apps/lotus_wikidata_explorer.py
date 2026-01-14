@@ -618,7 +618,6 @@ def build_all_compounds_query() -> str:
 
 
 @app.function
-@lru_cache(maxsize=128)
 def execute_sparql(
     query: str, max_retries: int = CONFIG["max_retries"]
 ) -> Dict[str, Any]:
@@ -1195,8 +1194,6 @@ def build_api_url(
     i_state: str,
 ) -> str:
     """Build a shareable API URL from current search parameters."""
-    from urllib.parse import urlencode
-
     params = {}
 
     # Taxon parameter
@@ -1259,7 +1256,7 @@ def build_api_url(
 
     # Build URL
     if params:
-        query_string = urlencode(params)
+        query_string = urllib.parse.urlencode(params)
         return f"?{query_string}"
     else:
         return ""
@@ -1673,8 +1670,6 @@ def wrap_image(html_str: str):
     if not html_str:
         return mo.Html("")
     # Extract src from img tag and use mo.image
-    import re
-
     match = re.search(r'src="([^"]+)"', html_str)
     if match:
         return mo.image(src=match.group(1), width=150, height=100, rounded=True)
@@ -3540,13 +3535,9 @@ def footer():
 
 @app.function
 def main():
-    import sys
-
     if len(sys.argv) > 1 and sys.argv[1] == "export":
         # CLI mode - extract and reuse app.setup functions
         import argparse
-        import gzip
-        import io
         from pathlib import Path
 
         # Parse CLI arguments
@@ -3636,7 +3627,6 @@ def main():
                     break
 
             # Extract all @app.class_definition blocks (dataclasses like ElementRange, FormulaFilters, SearchParams)
-            import re
 
             class_pattern = r"@app\.class_definition\s*\n@dataclass"
             class_blocks = []
@@ -3828,7 +3818,6 @@ def main():
                 print(file=sys.stderr)  # Empty line for readability
 
             # Build filters dict in the same format as the UI (needed for metadata and provenance)
-            import json
 
             filters = {}
 
