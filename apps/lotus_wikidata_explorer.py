@@ -1528,12 +1528,18 @@ def query_wikidata(
         compounds[i] = get_binding_value(b, "compound")
         names[i] = get_binding_value(b, "compoundLabel")
         inchikeys[i] = get_binding_value(b, "compound_inchikey")
-        smiles_list[i] = get_binding_value(b, "compound_smiles_iso") or get_binding_value(b, "compound_smiles_conn")
+        smiles_list[i] = get_binding_value(
+            b, "compound_smiles_iso"
+        ) or get_binding_value(b, "compound_smiles_conn")
         taxon_names[i] = get_binding_value(b, "taxon_name")
         taxons[i] = get_binding_value(b, "taxon")
         ref_titles[i] = get_binding_value(b, "ref_title")
         doi = get_binding_value(b, "ref_doi")
-        ref_dois[i] = doi.split("doi.org/")[-1] if isinstance(doi, str) and doi.startswith("http") else doi
+        ref_dois[i] = (
+            doi.split("doi.org/")[-1]
+            if isinstance(doi, str) and doi.startswith("http")
+            else doi
+        )
         references[i] = get_binding_value(b, "ref_qid")
         pub_dates[i] = get_binding_value(b, "ref_date", None)
         mass_raw = get_binding_value(b, "compound_mass", None)
@@ -1548,22 +1554,24 @@ def query_wikidata(
     del bindings
 
     # Create DataFrame from column-oriented data (more efficient than row-oriented)
-    df = pl.DataFrame({
-        "compound": compounds,
-        "name": names,
-        "inchikey": inchikeys,
-        "smiles": smiles_list,
-        "taxon_name": taxon_names,
-        "taxon": taxons,
-        "ref_title": ref_titles,
-        "ref_doi": ref_dois,
-        "reference": references,
-        "pub_date": pub_dates,
-        "mass": masses,
-        "mf": mfs,
-        "statement": statements,
-        "ref": refs,
-    })
+    df = pl.DataFrame(
+        {
+            "compound": compounds,
+            "name": names,
+            "inchikey": inchikeys,
+            "smiles": smiles_list,
+            "taxon_name": taxon_names,
+            "taxon": taxons,
+            "ref_title": ref_titles,
+            "ref_doi": ref_dois,
+            "reference": references,
+            "pub_date": pub_dates,
+            "mass": masses,
+            "mf": mfs,
+            "statement": statements,
+            "ref": refs,
+        }
+    )
 
     # Clear column lists to free memory
     del compounds, names, inchikeys, smiles_list, taxon_names, taxons
