@@ -12,7 +12,6 @@ dependencies = [
   "pyarrow>=22.0.0",
   "rdflib>=7.5.0",
   "rdkit>=2025.9.3",
-  "sparqlx>=0.7.0",
 ]
 
 [project.scripts]

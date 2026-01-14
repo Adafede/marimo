@@ -6,7 +6,6 @@
 #     "polars==1.37.1",
 #     "pyarrow==22.0.0",
 #     "rdflib==7.5.0",
-#     "sparqlx==0.5.0",
 # ]
 # [tool.marimo.display]
 # theme = "system"
@@ -50,7 +49,6 @@ with app.setup:
     from functools import lru_cache
     from rdflib import Graph, Namespace, Literal, URIRef, BNode
     from rdflib.namespace import RDF, RDFS, XSD, DCTERMS
-    from sparqlx import SPARQLWrapper
     from typing import Optional, Dict, Any, Tuple, List, Mapping
     from urllib.parse import quote as url_quote
 
@@ -271,15 +269,36 @@ with app.setup:
         "taxon": "taxa",
     }
 
-    # ====================================================================
-    # SPARQL WRAPPER
-    # ====================================================================
 
-    # Global SPARQL wrapper for connection reuse (significant performance improvement)
-    SPARQL_WRAPPER = SPARQLWrapper(
-        sparql_endpoint=CONFIG["sparql_endpoint"],
-        client_config={"timeout": CONFIG["query_timeout"]},
-    )
+@app.class_definition
+class SPARQLWrapper:
+    """Simple SPARQL wrapper using httpx for connection reuse."""
+
+    def __init__(
+        self,
+        sparql_endpoint: str = "https://qlever.dev/api/wikidata",
+        client_config: Dict[str, Any] = {"timeout": 120},
+    ):
+        self.endpoint = sparql_endpoint
+        self.client_config = client_config or {}
+        self._client = None
+
+    @property
+    def client(self) -> httpx.Client:
+        if self._client is None:
+            self._client = httpx.Client(timeout=self.client_config.get("timeout", 60))
+        return self._client
+
+    def query(self, query: str, response_format: str = "json") -> httpx.Response:
+        """Execute a SPARQL query."""
+        headers = {"Accept": "application/sparql-results+json"}
+        response = self.client.post(
+            self.endpoint,
+            data={"query": query},
+            headers=headers,
+        )
+        response.raise_for_status()
+        return response
 
 
 @app.class_definition
@@ -629,9 +648,12 @@ def execute_sparql(
     def _wait(a):
         time.sleep(CONFIG["retry_backoff"] * (2**a))
 
+    # Get wrapper once before retry loop
+    sparql = SPARQLWrapper()
+
     for attempt in range(max_retries):
         try:
-            result = SPARQL_WRAPPER.query(query, response_format="json").json()
+            result = sparql.query(query, response_format="json").json()
             if not isinstance(result, dict) or "results" not in result:
                 raise ValueError("Invalid SPARQL response format")
             return result
