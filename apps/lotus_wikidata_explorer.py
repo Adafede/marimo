@@ -3,7 +3,6 @@
 # dependencies = [
 #     "marimo",
 #     "polars==1.37.1",
-#     "pyarrow==22.0.0",
 #     "rdflib==7.5.0",
 # ]
 # [tool.marimo.display]
@@ -54,7 +53,8 @@ with app.setup:
     from urllib.parse import quote as url_quote
 
     # Patch urllib for Pyodide/WASM (browser) compatibility
-    if "pyodide" in sys.modules:
+    IS_PYODIDE = "pyodide" in sys.modules
+    if IS_PYODIDE:
         import pyodide_http
 
         pyodide_http.patch_all()
