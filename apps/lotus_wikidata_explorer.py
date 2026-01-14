@@ -82,6 +82,7 @@ with app.setup:
     WIKIDATA_URL = "https://www.wikidata.org/"
     WIKIDATA_HTTP_URL = WIKIDATA_URL.replace("https://", "http://")
     WIKIDATA_ENTITY_URL = WIKIDATA_HTTP_URL + "entity/"
+    WIKIDATA_STATEMENT_URL = WIKIDATA_ENTITY_URL + "statement/"
     WIKIDATA_WIKI_URL = WIKIDATA_URL + "wiki/"
 
     # ====================================================================
@@ -1571,152 +1572,108 @@ def query_wikidata(
 
 
 @app.function
-def format_structure_image(smiles: str):
-    """Format SMILES as 2D structure image using mo.image."""
+def html_structure_image(smiles: str) -> str:
+    """Return HTML img tag for 2D structure."""
     if not smiles:
-        return mo.Html("")
+        return ""
     img_url = f"{CONFIG['cdk_base']}?smi={url_quote(smiles)}&annotate=cip"
-    return mo.image(
-        src=img_url,
-        alt=f"Depiction of {smiles}",
-        width=150,
-        height=100,
-        rounded=True,
-    )
+    return f'<img src="{img_url}" loading="lazy" style="max-width:150px;max-height:100px;border-radius:8px;"/>'
 
 
 @app.function
-def format_doi_link(doi: str) -> mo.Html:
-    """Format DOI as clickable link."""
+def html_doi_link(doi: str) -> str:
+    """Return HTML link for DOI."""
     if not doi:
-        return mo.Html("")
-    return mo.Html(
-        f'<a href="https://doi.org/{doi}" target="_blank" style="color:{CONFIG["color_hyperlink"]};">{doi}</a>'
-    )
+        return ""
+    return f'<a href="https://doi.org/{doi}" target="_blank" style="color:{CONFIG["color_hyperlink"]};">{doi}</a>'
 
 
 @app.function
-def format_compound_qid(url: str) -> mo.Html:
-    """Format compound URL as Scholia link."""
+def html_qid_link(url: str, color: str) -> str:
+    """Return HTML link for Wikidata QID."""
     if not url:
-        return mo.Html("")
+        return ""
     qid = url.replace(WIKIDATA_ENTITY_URL, "")
-    return mo.Html(
-        f'<a href="{SCHOLIA_URL}{qid}" target="_blank" style="color:{CONFIG["color_wikidata_red"]};">{qid}</a>'
+    return (
+        f'<a href="{SCHOLIA_URL}{qid}" target="_blank" style="color:{color};">{qid}</a>'
     )
 
 
 @app.function
-def format_taxon_qid(url: str) -> mo.Html:
-    """Format taxon URL as Scholia link."""
+def html_statement_link(url: str) -> str:
+    """Return HTML link for statement."""
     if not url:
-        return mo.Html("")
-    qid = url.replace(WIKIDATA_ENTITY_URL, "")
-    return mo.Html(
-        f'<a href="{SCHOLIA_URL}{qid}" target="_blank" style="color:{CONFIG["color_wikidata_green"]};">{qid}</a>'
-    )
-
-
-@app.function
-def format_reference_qid(url: str) -> mo.Html:
-    """Format reference URL as Scholia link."""
-    if not url:
-        return mo.Html("")
-    qid = url.replace(WIKIDATA_ENTITY_URL, "")
-    return mo.Html(
-        f'<a href="{SCHOLIA_URL}{qid}" target="_blank" style="color:{CONFIG["color_wikidata_blue"]};">{qid}</a>'
-    )
-
-
-@app.function
-def format_statement_link(url: str) -> mo.Html:
-    """Format statement URL as clickable link."""
-    if not url:
-        return mo.Html("")
+        return ""
     statement_id = url.split("/")[-1] if url else ""
-    return mo.Html(
-        f'<a href="{url}" target="_blank" style="color:{CONFIG["color_hyperlink"]};">{statement_id}</a>'
+    return f'<a href="{url}" target="_blank" style="color:{CONFIG["color_hyperlink"]};">{statement_id}</a>'
+
+
+@app.function
+def build_display_dataframe(df: pl.DataFrame) -> pl.DataFrame:
+    """Build display DataFrame with HTML-formatted columns.
+
+    Returns a DataFrame with renamed columns and HTML strings for links/images.
+    This can be used for both WASM (plain HTML) and native (mo.ui.table).
+    """
+    return df.select(
+        [
+            pl.col("smiles")
+            .map_elements(html_structure_image, return_dtype=pl.String)
+            .alias("Compound Depiction"),
+            pl.col("name").alias("Compound Name"),
+            pl.col("smiles").alias("Compound SMILES"),
+            pl.col("inchikey").alias("Compound InChIKey"),
+            pl.col("mf").alias("Compound Molecular Formula"),
+            pl.col("mass").alias("Compound Mass"),
+            pl.col("taxon_name").alias("Taxon Name"),
+            pl.col("ref_title").alias("Reference Title"),
+            pl.col("pub_date").alias("Reference Date"),
+            pl.col("ref_doi")
+            .map_elements(html_doi_link, return_dtype=pl.String)
+            .alias("Reference DOI"),
+            pl.col("compound")
+            .map_elements(
+                lambda x: html_qid_link(x, CONFIG["color_wikidata_red"]),
+                return_dtype=pl.String,
+            )
+            .alias("Compound QID"),
+            pl.col("taxon")
+            .map_elements(
+                lambda x: html_qid_link(x, CONFIG["color_wikidata_green"]),
+                return_dtype=pl.String,
+            )
+            .alias("Taxon QID"),
+            pl.col("reference")
+            .map_elements(
+                lambda x: html_qid_link(x, CONFIG["color_wikidata_blue"]),
+                return_dtype=pl.String,
+            )
+            .alias("Reference QID"),
+            pl.col("statement")
+            .map_elements(html_statement_link, return_dtype=pl.String)
+            .alias("Statement"),
+        ]
     )
 
 
 @app.function
-def build_html_table(df: pl.DataFrame) -> str:
-    """Build a plain HTML table with images and links for WASM compatibility.
+def wrap_html(html_str: str) -> mo.Html:
+    """Wrap HTML string in mo.Html for mo.ui.table."""
+    return mo.Html(html_str) if html_str else mo.Html("")
 
-    This creates a full HTML table string that can be wrapped in mo.Html().
-    """
 
-    # Column definitions: (source_col, display_name, formatter)
-    # formatter is a function that takes the value and returns HTML string
-    def img_html(smiles):
-        if not smiles:
-            return ""
-        img_url = f"{CONFIG['cdk_base']}?smi={url_quote(smiles)}&annotate=cip"
-        return f'<img src="{img_url}" loading="lazy" style="max-width:150px;max-height:100px;border-radius:8px;"/>'
+@app.function
+def wrap_image(html_str: str):
+    """Wrap image HTML in mo.image for mo.ui.table, or return mo.Html as fallback."""
+    if not html_str:
+        return mo.Html("")
+    # Extract src from img tag and use mo.image
+    import re
 
-    def doi_html(doi):
-        if not doi:
-            return ""
-        return f'<a href="https://doi.org/{doi}" target="_blank" style="color:{CONFIG["color_hyperlink"]};">{doi}</a>'
-
-    def qid_html(url, color):
-        if not url:
-            return ""
-        qid = url.replace(WIKIDATA_ENTITY_URL, "")
-        return f'<a href="{SCHOLIA_URL}{qid}" target="_blank" style="color:{color};">{qid}</a>'
-
-    def statement_html(url):
-        if not url:
-            return ""
-        statement_id = url.split("/")[-1] if url else ""
-        return f'<a href="{url}" target="_blank" style="color:{CONFIG["color_hyperlink"]};">{statement_id}</a>'
-
-    columns = [
-        ("smiles", "Compound Depiction", img_html),
-        ("name", "Compound Name", lambda x: x or ""),
-        ("smiles", "Compound SMILES", lambda x: x or ""),
-        ("inchikey", "Compound InChIKey", lambda x: x or ""),
-        ("molecular_formula", "Compound Molecular Formula", lambda x: x or ""),
-        ("mass", "Compound Mass", lambda x: f"{x:.4f}" if x else ""),
-        ("taxon_name", "Taxon Name", lambda x: x or ""),
-        ("ref_title", "Reference Title", lambda x: x or ""),
-        ("pub_date", "Reference Date", lambda x: str(x) if x else ""),
-        ("ref_doi", "Reference DOI", doi_html),
-        (
-            "compound",
-            "Compound QID",
-            lambda x: qid_html(x, CONFIG["color_wikidata_red"]),
-        ),
-        ("taxon", "Taxon QID", lambda x: qid_html(x, CONFIG["color_wikidata_green"])),
-        (
-            "reference",
-            "Reference QID",
-            lambda x: qid_html(x, CONFIG["color_wikidata_blue"]),
-        ),
-        ("statement", "Statement", statement_html),
-    ]
-
-    # Build HTML table
-    html = ['<table style="border-collapse:collapse;width:100%;font-size:14px;">']
-
-    # Header
-    html.append('<thead><tr style="background:#f5f5f5;border-bottom:2px solid #ddd;">')
-    for _, display_name, _ in columns:
-        html.append(f'<th style="padding:8px;text-align:left;">{display_name}</th>')
-    html.append("</tr></thead>")
-
-    # Body
-    html.append("<tbody>")
-    for row in df.iter_rows(named=True):
-        html.append('<tr style="border-bottom:1px solid #eee;">')
-        for src_col, _, formatter in columns:
-            val = row.get(src_col)
-            cell_html = formatter(val) if val is not None else ""
-            html.append(f'<td style="padding:8px;">{cell_html}</td>')
-        html.append("</tr>")
-    html.append("</tbody></table>")
-
-    return "".join(html)
+    match = re.search(r'src="([^"]+)"', html_str)
+    if match:
+        return mo.image(src=match.group(1), width=150, height=100, rounded=True)
+    return mo.Html(html_str)
 
 
 @app.function
@@ -1743,6 +1700,9 @@ def prepare_export_dataframe(
             pl.col("reference")
             .str.replace(WIKIDATA_ENTITY_URL, "", literal=True)
             .alias("reference_qid"),
+            pl.col("statement")
+            .str.replace(WIKIDATA_STATEMENT_URL, "", literal=True)
+            .alias("statement_id"),
         ]
     )
 
@@ -1763,7 +1723,7 @@ def prepare_export_dataframe(
 
     # Always include statement (for display + RDF)
     if "statement" in df_with_qids.columns:
-        select_cols.append("statement")
+        select_cols.append("statement_id")
 
     # Only include ref URI for RDF export
     if include_rdf_ref and "ref" in df_with_qids.columns:
@@ -3214,13 +3174,16 @@ def generate_results(
 
         # Use different table component based on environment
         # mo.ui.table has issues in Pyodide/WASM, use plain HTML table instead
+        # Build display DataFrame with HTML-formatted columns (shared for both WASM and native)
+        display_df = build_display_dataframe(limited_df)
+
         if IS_PYODIDE:
-            # In WASM: build HTML table with images and links
-            display_table = mo.Html(build_html_table(limited_df))
+            # In WASM: render as plain HTML table (HTML content renders directly)
+            display_table = display_df._repr_html_()
 
             # Export table - use simpler _repr_html_() for raw data view
             if not ui_is_large_dataset and export_df is not None:
-                export_table_ui = mo.Html(export_df._repr_html_())
+                export_table_ui = export_df._repr_html_()
             else:
                 export_table_ui = mo.callout(
                     mo.md(
@@ -3231,35 +3194,15 @@ def generate_results(
                     kind="info",
                 )
         else:
-            # Rename and reorder columns for display
-            display_df = limited_df.select(
-                [
-                    pl.col("smiles").alias("Compound Depiction"),
-                    pl.col("name").alias("Compound Name"),
-                    pl.col("smiles").alias("Compound SMILES"),
-                    pl.col("inchikey").alias("Compound InChIKey"),
-                    pl.col("mf").alias("Compound Molecular Formula"),
-                    pl.col("mass").alias("Compound Mass"),
-                    pl.col("taxon_name").alias("Taxon Name"),
-                    pl.col("ref_title").alias("Reference Title"),
-                    pl.col("pub_date").alias("Reference Date"),
-                    pl.col("ref_doi").alias("Reference DOI"),
-                    pl.col("compound").alias("Compound QID"),
-                    pl.col("taxon").alias("Taxon QID"),
-                    pl.col("reference").alias("Reference QID"),
-                    pl.col("statement").alias("Statement"),
-                ]
-            )
-
             display_table = mo.ui.table(
                 data=display_df,
                 format_mapping={
-                    "Compound Depiction": format_structure_image,
-                    "Reference DOI": format_doi_link,
-                    "Compound QID": format_compound_qid,
-                    "Taxon QID": format_taxon_qid,
-                    "Reference QID": format_reference_qid,
-                    "Statement": format_statement_link,
+                    "Compound Depiction": wrap_image,
+                    "Reference DOI": wrap_html,
+                    "Compound QID": wrap_html,
+                    "Taxon QID": wrap_html,
+                    "Reference QID": wrap_html,
+                    "Statement": wrap_html,
                 },
                 selection=None,
                 page_size=CONFIG["page_size_default"],
