@@ -2352,6 +2352,10 @@ def ui_disclaimer():
         **Recommended:** `uvx marimo run https://raw.githubusercontent.com/Adafede/marimo/refs/heads/main/apps/lotus_wikidata_explorer.py`
         """),
         kind="info",
+    ).style(
+        style={
+            "overflow-wrap": "anywhere",
+        }
     )
     return
 
@@ -2462,6 +2466,10 @@ def url_params_check():
                 **URL Query Detected** - Auto-executing with: {chr(10).join(param_items)}
                 """),
                 kind="info",
+            ).style(
+                style={
+                    "overflow-wrap": "anywhere",
+                }
             )
     return
 
@@ -2811,6 +2819,10 @@ def launch_query(
                                 f"- Use a Wikidata QID directly (e.g., Q157115)"
                             ),
                             kind="warn",
+                        ).style(
+                            style={
+                                "overflow-wrap": "anywhere",
+                            }
                         ),
                     )
 
@@ -2876,7 +2888,13 @@ def launch_query(
             except Exception as e:
                 mo.stop(
                     True,
-                    mo.callout(mo.md(f"**Query Error:** {str(e)}"), kind="danger"),
+                    mo.callout(
+                        mo.md(f"**Query Error:** {str(e)}"), kind="danger"
+                    ).style(
+                        style={
+                            "overflow-wrap": "anywhere",
+                        }
+                    ),
                 )
         elapsed = round(time.time() - start_time, 2)
         _ = mo.md(f"⏱️ Query completed in **{elapsed}s**.")
@@ -2929,7 +2947,13 @@ def display_summary(
         # Show no compounds message, and taxon warning if present
         parts = []
         if taxon_warning:
-            parts.append(mo.callout(taxon_warning, kind="warn"))
+            parts.append(
+                mo.callout(taxon_warning, kind="warn").style(
+                    style={
+                        "overflow-wrap": "anywhere",
+                    }
+                )
+            )
 
         # Handle wildcard case
         if qid == "*":
@@ -2939,6 +2963,10 @@ def display_summary(
                         f"No natural products found for **all taxa** with the current filters."
                     ),
                     kind="warn",
+                ).style(
+                    style={
+                        "overflow-wrap": "anywhere",
+                    }
                 )
             )
         else:
@@ -2948,6 +2976,10 @@ def display_summary(
                         f"No natural products found for **{taxon_input.value}** ([{qid}]({SCHOLIA_URL}{qid})) with the current filters."
                     ),
                     kind="warn",
+                ).style(
+                    style={
+                        "overflow-wrap": "anywhere",
+                    }
                 )
             )
         summary_and_downloads = mo.vstack(parts) if len(parts) > 1 else parts[0]
@@ -3076,7 +3108,13 @@ def display_summary(
             summary_parts.append(api_url_section)
 
         if taxon_warning:
-            summary_parts.append(mo.callout(taxon_warning, kind="warn"))
+            summary_parts.append(
+                mo.callout(taxon_warning, kind="warn").style(
+                    style={
+                        "overflow-wrap": "anywhere",
+                    }
+                )
+            )
 
         # Stack summary and downloads vertically
         summary_and_downloads = mo.vstack(
@@ -3141,6 +3179,10 @@ def generate_results(
     elif len(results_df) == 0:
         download_ui = mo.callout(
             mo.md("No compounds match your search criteria."), kind="neutral"
+        ).style(
+            style={
+                "overflow-wrap": "anywhere",
+            }
         )
         tables_ui = mo.Html("")
         ui_is_large_dataset = False
@@ -3234,6 +3276,10 @@ def generate_results(
                     f"- Export table disabled for large datasets"
                 ),
                 kind="info",
+            ).style(
+                style={
+                    "overflow-wrap": "anywhere",
+                }
             )
         else:
             display_note = mo.Html("")
@@ -3259,6 +3305,10 @@ def generate_results(
                         f"Use the download buttons to get your data."
                     ),
                     kind="info",
+                ).style(
+                    style={
+                        "overflow-wrap": "anywhere",
+                    }
                 )
         else:
             display_table = mo.ui.table(
@@ -3291,6 +3341,10 @@ def generate_results(
                         f"Use the download buttons above to get your data in CSV, JSON, or RDF format."
                     ),
                     kind="info",
+                ).style(
+                    style={
+                        "overflow-wrap": "anywhere",
+                    }
                 )
 
         # ALL downloads are lazy for large datasets - prevents iOS crashes
@@ -3612,6 +3666,10 @@ def generate_downloads(
                         )
                     ),
                     kind="success",
+                ).style(
+                    style={
+                        "overflow-wrap": "anywhere",
+                    }
                 ),
                 download_button,
             ]
