@@ -1,7 +1,6 @@
 # /// script
 # requires-python = "==3.13.*"
 # dependencies = [
-#     "great-tables==0.20.0",
 #     "marimo",
 #     "polars==1.37.1",
 #     "rdflib==7.5.0",
@@ -49,7 +48,6 @@ with app.setup:
     from dataclasses import dataclass, field
     from datetime import datetime
     from functools import lru_cache
-    from great_tables import GT
     from rdflib import Graph, Namespace, Literal, URIRef, BNode
     from rdflib.namespace import RDF, RDFS, XSD, DCTERMS
     from typing import Optional, Dict, Any, Tuple, List, Mapping
@@ -103,7 +101,7 @@ with app.setup:
         "max_retries": 3,
         "retry_backoff": 2,
         "query_timeout": 300,
-        "table_row_limit": 2_000,
+        "table_row_limit": 1_000,
         "download_embed_threshold_bytes": 500_000,
         "color_hyperlink": "#3377c4",
         "color_wikidata_blue": "#006699",
@@ -3200,7 +3198,7 @@ def generate_results(
         display_df = build_display_dataframe(limited_df)
 
         if IS_PYODIDE:
-            # In WASM: render as plain HTML table (GT as minimal formatting, TODO improve later)
+            # In WASM: render as plain HTML table using polars .style
             display_table = display_df.style
 
             # Export table - use simpler _repr_html_() for raw data view
