@@ -54,6 +54,19 @@ with app.setup:
     from typing import Optional, Dict, Any, Tuple, List, Mapping
     from urllib.parse import quote as url_quote
 
+    # ====================================================================
+    # MARIMO RELATED
+    # ====================================================================
+
+    # Set output max bytes safely (deployment environments may have limits)
+    try:
+        mo._runtime.context.get_context().marimo_config["runtime"][
+            "output_max_bytes"
+        ] = 1_000_000_000  # 1GB for large datasets
+    except Exception:
+        # Silently fail if runtime config cannot be set
+        pass
+
     # Patch urllib for Pyodide/WASM (browser) compatibility
     IS_PYODIDE = "pyodide" in sys.modules
     if IS_PYODIDE:
