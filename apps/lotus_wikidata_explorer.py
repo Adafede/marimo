@@ -1590,7 +1590,9 @@ def format_doi_link(doi: str) -> mo.Html:
     """Format DOI as clickable link."""
     if not doi:
         return mo.Html("")
-    return mo.Html(f'<a href="https://doi.org/{doi}" target="_blank" style="color:{CONFIG["color_hyperlink"]};">{doi}</a>')
+    return mo.Html(
+        f'<a href="https://doi.org/{doi}" target="_blank" style="color:{CONFIG["color_hyperlink"]};">{doi}</a>'
+    )
 
 
 @app.function
@@ -1599,7 +1601,9 @@ def format_compound_qid(url: str) -> mo.Html:
     if not url:
         return mo.Html("")
     qid = url.replace(WIKIDATA_ENTITY_URL, "")
-    return mo.Html(f'<a href="{SCHOLIA_URL}{qid}" target="_blank" style="color:{CONFIG["color_wikidata_red"]};">{qid}</a>')
+    return mo.Html(
+        f'<a href="{SCHOLIA_URL}{qid}" target="_blank" style="color:{CONFIG["color_wikidata_red"]};">{qid}</a>'
+    )
 
 
 @app.function
@@ -1608,7 +1612,9 @@ def format_taxon_qid(url: str) -> mo.Html:
     if not url:
         return mo.Html("")
     qid = url.replace(WIKIDATA_ENTITY_URL, "")
-    return mo.Html(f'<a href="{SCHOLIA_URL}{qid}" target="_blank" style="color:{CONFIG["color_wikidata_green"]};">{qid}</a>')
+    return mo.Html(
+        f'<a href="{SCHOLIA_URL}{qid}" target="_blank" style="color:{CONFIG["color_wikidata_green"]};">{qid}</a>'
+    )
 
 
 @app.function
@@ -1617,7 +1623,9 @@ def format_reference_qid(url: str) -> mo.Html:
     if not url:
         return mo.Html("")
     qid = url.replace(WIKIDATA_ENTITY_URL, "")
-    return mo.Html(f'<a href="{SCHOLIA_URL}{qid}" target="_blank" style="color:{CONFIG["color_wikidata_blue"]};">{qid}</a>')
+    return mo.Html(
+        f'<a href="{SCHOLIA_URL}{qid}" target="_blank" style="color:{CONFIG["color_wikidata_blue"]};">{qid}</a>'
+    )
 
 
 @app.function
@@ -1626,7 +1634,9 @@ def format_statement_link(url: str) -> mo.Html:
     if not url:
         return mo.Html("")
     statement_id = url.split("/")[-1] if url else ""
-    return mo.Html(f'<a href="{url}" target="_blank" style="color:{CONFIG["color_hyperlink"]};">{statement_id}</a>')
+    return mo.Html(
+        f'<a href="{url}" target="_blank" style="color:{CONFIG["color_hyperlink"]};">{statement_id}</a>'
+    )
 
 
 @app.function
@@ -3123,20 +3133,23 @@ def generate_results(
             limited_df = results_df
 
         # Use different table component based on environment
-        # mo.ui.table and mo.Html objects have issues in Pyodide/WASM
+        # mo.ui.table has issues in Pyodide/WASM, use _repr_html_() instead
         if IS_PYODIDE:
-            # In WASM: use export_df (plain strings) instead of display_data (has mo.Html objects)
-            # Prepare a simple export dataframe for display
+            # In WASM: use df._repr_html_() for plain HTML table display
             if export_df is not None:
-                display_table = mo.plain(export_df.head(CONFIG["table_row_limit"]))
+                display_table = mo.Html(
+                    export_df.head(CONFIG["table_row_limit"])._repr_html_()
+                )
             else:
                 # For large datasets, prepare on-demand
                 simple_df = prepare_export_dataframe(limited_df, include_rdf_ref=False)
-                display_table = mo.plain(simple_df.head(CONFIG["table_row_limit"]))
+                display_table = mo.Html(
+                    simple_df.head(CONFIG["table_row_limit"])._repr_html_()
+                )
 
             # Export table same as display in WASM
             if not ui_is_large_dataset and export_df is not None:
-                export_table_ui = mo.plain(export_df)
+                export_table_ui = mo.Html(export_df._repr_html_())
             else:
                 export_table_ui = mo.callout(
                     mo.md(
@@ -3148,22 +3161,24 @@ def generate_results(
                 )
         else:
             # Rename and reorder columns for display
-            display_df = limited_df.select([
-                pl.col("smiles").alias("Compound Depiction"),
-                pl.col("name").alias("Compound Name"),
-                pl.col("smiles").alias("Compound SMILES"),
-                pl.col("inchikey").alias("Compound InChIKey"),
-                pl.col("mass").alias("Compound Mass"),
-                pl.col("taxon_name").alias("Taxon Name"),
-                pl.col("ref_title").alias("Reference Title"),
-                pl.col("pub_date").alias("Reference Date"),
-                pl.col("ref_doi").alias("Reference DOI"),
-                pl.col("compound").alias("Compound QID"),
-                pl.col("taxon").alias("Taxon QID"),
-                pl.col("reference").alias("Reference QID"),
-                pl.col("statement").alias("Statement"),
-            ])
-            
+            display_df = limited_df.select(
+                [
+                    pl.col("smiles").alias("Compound Depiction"),
+                    pl.col("name").alias("Compound Name"),
+                    pl.col("smiles").alias("Compound SMILES"),
+                    pl.col("inchikey").alias("Compound InChIKey"),
+                    pl.col("mass").alias("Compound Mass"),
+                    pl.col("taxon_name").alias("Taxon Name"),
+                    pl.col("ref_title").alias("Reference Title"),
+                    pl.col("pub_date").alias("Reference Date"),
+                    pl.col("ref_doi").alias("Reference DOI"),
+                    pl.col("compound").alias("Compound QID"),
+                    pl.col("taxon").alias("Taxon QID"),
+                    pl.col("reference").alias("Reference QID"),
+                    pl.col("statement").alias("Statement"),
+                ]
+            )
+
             display_table = mo.ui.table(
                 data=display_df,
                 format_mapping={
