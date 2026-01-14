@@ -254,7 +254,7 @@ class SPARQLWrapper:
         self.timeout = timeout
 
     def query(self, query: str, response_format: str = "json"):
-        """Execute a SPARQL query. Returns an object with .json() method."""
+        """Execute a SPARQL query. Returns parsed JSON directly."""
         headers = {
             "Accept": "application/sparql-results+json",
             "Content-Type": "application/x-www-form-urlencoded",
@@ -269,17 +269,8 @@ class SPARQLWrapper:
         )
 
         with urllib.request.urlopen(req, timeout=self.timeout) as response:
-            body = response.read().decode("utf-8")
-
-        # Return an object with .json() method for consistency
-        class Response:
-            def __init__(self, body: str):
-                self._body = body
-
-            def json(self):
-                return json.loads(self._body)
-
-        return Response(body)
+            # Read and parse JSON - response.read() is unavoidable
+            return json.loads(response.read().decode("utf-8"))
 
 
 @app.class_definition
@@ -633,7 +624,7 @@ def execute_sparql(
 
     for attempt in range(max_retries):
         try:
-            result = sparql.query(query, response_format="json").json()
+            result = sparql.query(query, response_format="json")
             if not isinstance(result, dict) or "results" not in result:
                 raise ValueError("Invalid SPARQL response format")
             return result
@@ -1509,42 +1500,74 @@ def query_wikidata(
     results = execute_sparql(query)
     bindings = results.get("results", {}).get("bindings", [])
 
-    # Clear results dict to free memory
-    results.clear()
+    # Clear results dict to free memory immediately
+    del results
 
     # Early return for empty results (efficiency - no DataFrame creation)
     if not bindings:
         return pl.DataFrame()
 
-    # Process results with generator to avoid creating intermediate list
-    def process_binding(b):
+    # Process bindings directly into column-oriented format (more memory efficient for Polars)
+    n = len(bindings)
+    compounds = [None] * n
+    names = [None] * n
+    inchikeys = [None] * n
+    smiles_list = [None] * n
+    taxon_names = [None] * n
+    taxons = [None] * n
+    ref_titles = [None] * n
+    ref_dois = [None] * n
+    references = [None] * n
+    pub_dates = [None] * n
+    masses = [None] * n
+    mfs = [None] * n
+    statements = [None] * n
+    refs = [None] * n
+
+    for i, b in enumerate(bindings):
+        compounds[i] = get_binding_value(b, "compound")
+        names[i] = get_binding_value(b, "compoundLabel")
+        inchikeys[i] = get_binding_value(b, "compound_inchikey")
+        smiles_list[i] = get_binding_value(b, "compound_smiles_iso") or get_binding_value(b, "compound_smiles_conn")
+        taxon_names[i] = get_binding_value(b, "taxon_name")
+        taxons[i] = get_binding_value(b, "taxon")
+        ref_titles[i] = get_binding_value(b, "ref_title")
         doi = get_binding_value(b, "ref_doi")
-        if isinstance(doi, str) and doi.startswith("http"):
-            doi = doi.split("doi.org/")[-1]
+        ref_dois[i] = doi.split("doi.org/")[-1] if isinstance(doi, str) and doi.startswith("http") else doi
+        references[i] = get_binding_value(b, "ref_qid")
+        pub_dates[i] = get_binding_value(b, "ref_date", None)
         mass_raw = get_binding_value(b, "compound_mass", None)
-        return {
-            "compound": get_binding_value(b, "compound"),
-            "name": get_binding_value(b, "compoundLabel"),
-            "inchikey": get_binding_value(b, "compound_inchikey"),
-            "smiles": get_binding_value(b, "compound_smiles_iso")
-            or get_binding_value(b, "compound_smiles_conn"),
-            "taxon_name": get_binding_value(b, "taxon_name"),
-            "taxon": get_binding_value(b, "taxon"),
-            "ref_title": get_binding_value(b, "ref_title"),
-            "ref_doi": doi,
-            "reference": get_binding_value(b, "ref_qid"),
-            "pub_date": get_binding_value(b, "ref_date", None),
-            "mass": float(mass_raw) if mass_raw else None,
-            "mf": get_binding_value(b, "compound_formula"),
-            "statement": get_binding_value(b, "statement"),
-            "ref": get_binding_value(b, "ref"),
-        }
+        masses[i] = float(mass_raw) if mass_raw else None
+        mfs[i] = get_binding_value(b, "compound_formula")
+        statements[i] = get_binding_value(b, "statement")
+        refs[i] = get_binding_value(b, "ref")
+        # Clear binding dict as we go to free memory
+        b.clear()
 
-    # Create DataFrame from generator (more memory efficient)
-    df = pl.DataFrame(process_binding(b) for b in bindings)
+    # Clear bindings list to free memory
+    del bindings
 
-    # Clear bindings to free memory
-    bindings.clear()
+    # Create DataFrame from column-oriented data (more efficient than row-oriented)
+    df = pl.DataFrame({
+        "compound": compounds,
+        "name": names,
+        "inchikey": inchikeys,
+        "smiles": smiles_list,
+        "taxon_name": taxon_names,
+        "taxon": taxons,
+        "ref_title": ref_titles,
+        "ref_doi": ref_dois,
+        "reference": references,
+        "pub_date": pub_dates,
+        "mass": masses,
+        "mf": mfs,
+        "statement": statements,
+        "ref": refs,
+    })
+
+    # Clear column lists to free memory
+    del compounds, names, inchikeys, smiles_list, taxon_names, taxons
+    del ref_titles, ref_dois, references, pub_dates, masses, mfs, statements, refs
 
     # Lazy transformations (Polars optimizes internally)
     if "pub_date" in df.columns:
