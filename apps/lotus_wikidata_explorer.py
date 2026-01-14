@@ -3203,7 +3203,7 @@ def generate_results(
                     f"Your search returned **{total_rows:,} rows**. For optimal performance:\n"
                     f"- Displaying first **{CONFIG['table_row_limit']:,} rows** in table view\n"
                     f"- Downloads are generated on-demand (click Generate buttons)\n"
-                    f"- Export table disabled for large datasets"
+                    f"- Export view disabled for large datasets"
                 ),
                 kind="info",
             ).style(
@@ -3262,7 +3262,7 @@ def generate_results(
             )
 
         # Download buttons generation
-        if ui_is_large_dataset and not IS_PYODIDE:
+        if ui_is_large_dataset:
             # Lazy generation buttons
             csv_generate_button = mo.ui.run_button(label="📄 Generate CSV")
             json_generate_button = mo.ui.run_button(label="📖 Generate JSON")
