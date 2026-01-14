@@ -1285,13 +1285,10 @@ def compress_if_large(
 
 
 @app.function
-def create_download_button(
-    data: str, filename: str, label: str, base_mimetype: str
-) -> mo.Html:
+def create_download_button(data: str, filename: str, label: str, base_mimetype: str):
     """Create a download button with automatic compression for large files.
 
-    Uses data URI approach for iOS/Pyodide compatibility since mo.download
-    relies on JavaScript blob downloads that don't work reliably in iOS Safari.
+    For Pyodide/iOS: uses JavaScript with proper blob handling and FileSaver-style approach.
     """
     compressed_data, final_filename, final_mimetype = compress_if_large(data, filename)
 
@@ -1302,30 +1299,56 @@ def create_download_button(
 
     mimetype = final_mimetype if final_mimetype else base_mimetype
 
-    # For Pyodide/iOS: use data URI which has better cross-browser support
+    # For Pyodide/iOS: use JavaScript-based download with proper iOS handling
     if IS_PYODIDE:
-        # Convert data to base64 for data URI
+        # Convert data to base64 for embedding in JavaScript
         if isinstance(compressed_data, bytes):
             data_bytes = compressed_data
         else:
             data_bytes = compressed_data.encode("utf-8")
 
         encoded_content = base64.b64encode(data_bytes).decode("utf-8")
-        data_uri = f"data:{mimetype};base64,{encoded_content}"
 
-        # Style matching marimo's download button appearance
+        # Generate unique ID for this button
+        button_id = f"dl_{hashlib.md5(encoded_content[:100].encode()).hexdigest()[:8]}"
+
+        # JavaScript that handles iOS Safari download limitations
+        # iOS doesn't support download attribute, so we open in new tab and let user save
         button_html = f"""
-        <a href="{data_uri}" 
-           download="{final_filename}"
-           target="_blank"
-           rel="noopener noreferrer"
-           style="display: inline-flex; align-items: center; gap: 0.5rem;
-                  padding: 0.5rem 1rem; background-color: var(--accent-color, #0070f3);
-                  color: white; text-decoration: none; border-radius: 0.375rem;
-                  font-family: system-ui, sans-serif; font-size: 0.875rem;
-                  cursor: pointer; transition: opacity 0.2s;">
+        <button id="{button_id}" 
+                onclick="(function() {{
+                    var base64 = '{encoded_content}';
+                    var binary = atob(base64);
+                    var bytes = new Uint8Array(binary.length);
+                    for (var i = 0; i < binary.length; i++) {{
+                        bytes[i] = binary.charCodeAt(i);
+                    }}
+                    var blob = new Blob([bytes], {{ type: '{mimetype}' }});
+                    var url = URL.createObjectURL(blob);
+                    
+                    // Try download attribute first (works on desktop)
+                    var a = document.createElement('a');
+                    a.href = url;
+                    a.download = '{final_filename}';
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    
+                    // For iOS: also open in new tab as fallback
+                    var iOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+                    if (iOS) {{
+                        window.open(url, '_blank');
+                    }}
+                    
+                    setTimeout(function() {{ URL.revokeObjectURL(url); }}, 10000);
+                }})()"
+                style="display: inline-flex; align-items: center; gap: 0.5rem;
+                       padding: 0.5rem 1rem; background-color: #0d6efd;
+                       color: white; border: none; border-radius: 0.375rem;
+                       font-family: system-ui, sans-serif; font-size: 0.875rem;
+                       cursor: pointer;">
             {display_label}
-        </a>
+        </button>
         """
         return mo.Html(button_html)
     else:
@@ -3309,7 +3332,7 @@ def generate_results(
                     "text/turtle",
                 )
             )
-        # Metadata download - use data URI for iOS compatibility
+        # Metadata download - use JavaScript blob for iOS compatibility
         if IS_PYODIDE:
             metadata_filename = generate_filename(
                 taxon_input.value,
@@ -3320,19 +3343,40 @@ def generate_results(
             encoded_metadata = base64.b64encode(metadata_json.encode("utf-8")).decode(
                 "utf-8"
             )
-            data_uri = f"data:application/json;base64,{encoded_metadata}"
+            meta_button_id = f"meta_dl_{hashlib.md5(encoded_metadata[:100].encode()).hexdigest()[:8]}"
             metadata_button = mo.Html(f"""
-            <a href="{data_uri}" 
-               download="{metadata_filename}"
-               target="_blank"
-               rel="noopener noreferrer"
-               style="display: inline-flex; align-items: center; gap: 0.5rem;
-                      padding: 0.5rem 1rem; background-color: var(--accent-color, #0070f3);
-                      color: white; text-decoration: none; border-radius: 0.375rem;
-                      font-family: system-ui, sans-serif; font-size: 0.875rem;
-                      cursor: pointer; transition: opacity 0.2s;">
+            <button id="{meta_button_id}" 
+                    onclick="(function() {{
+                        var base64 = '{encoded_metadata}';
+                        var binary = atob(base64);
+                        var bytes = new Uint8Array(binary.length);
+                        for (var i = 0; i < binary.length; i++) {{
+                            bytes[i] = binary.charCodeAt(i);
+                        }}
+                        var blob = new Blob([bytes], {{ type: 'application/json' }});
+                        var url = URL.createObjectURL(blob);
+                        
+                        var a = document.createElement('a');
+                        a.href = url;
+                        a.download = '{metadata_filename}';
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        
+                        var iOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+                        if (iOS) {{
+                            window.open(url, '_blank');
+                        }}
+                        
+                        setTimeout(function() {{ URL.revokeObjectURL(url); }}, 10000);
+                    }})()"
+                    style="display: inline-flex; align-items: center; gap: 0.5rem;
+                           padding: 0.5rem 1rem; background-color: #0d6efd;
+                           color: white; border: none; border-radius: 0.375rem;
+                           font-family: system-ui, sans-serif; font-size: 0.875rem;
+                           cursor: pointer;">
                 📋 Metadata
-            </a>
+            </button>
             """)
         else:
             metadata_button = mo.download(
@@ -3433,7 +3477,7 @@ def generate_downloads(
         mimetype = final_mimetype if final_mimetype else base_mimetype
         display_label = f"📥 Download {format_name}"
 
-        # Use data URI for iOS/Pyodide compatibility
+        # Use JavaScript blob download for iOS/Pyodide compatibility
         if IS_PYODIDE:
             if isinstance(compressed_data, bytes):
                 data_bytes = compressed_data
@@ -3441,20 +3485,43 @@ def generate_downloads(
                 data_bytes = compressed_data.encode("utf-8")
 
             encoded_content = base64.b64encode(data_bytes).decode("utf-8")
-            data_uri = f"data:{mimetype};base64,{encoded_content}"
+            button_id = (
+                f"lazy_dl_{hashlib.md5(encoded_content[:100].encode()).hexdigest()[:8]}"
+            )
 
             download_button = mo.Html(f"""
-            <a href="{data_uri}" 
-               download="{final_filename}"
-               target="_blank"
-               rel="noopener noreferrer"
-               style="display: inline-flex; align-items: center; gap: 0.5rem;
-                      padding: 0.5rem 1rem; background-color: var(--accent-color, #0070f3);
-                      color: white; text-decoration: none; border-radius: 0.375rem;
-                      font-family: system-ui, sans-serif; font-size: 0.875rem;
-                      cursor: pointer; transition: opacity 0.2s;">
+            <button id="{button_id}" 
+                    onclick="(function() {{
+                        var base64 = '{encoded_content}';
+                        var binary = atob(base64);
+                        var bytes = new Uint8Array(binary.length);
+                        for (var i = 0; i < binary.length; i++) {{
+                            bytes[i] = binary.charCodeAt(i);
+                        }}
+                        var blob = new Blob([bytes], {{ type: '{mimetype}' }});
+                        var url = URL.createObjectURL(blob);
+                        
+                        var a = document.createElement('a');
+                        a.href = url;
+                        a.download = '{final_filename}';
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        
+                        var iOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+                        if (iOS) {{
+                            window.open(url, '_blank');
+                        }}
+                        
+                        setTimeout(function() {{ URL.revokeObjectURL(url); }}, 10000);
+                    }})()"
+                    style="display: inline-flex; align-items: center; gap: 0.5rem;
+                           padding: 0.5rem 1rem; background-color: #0d6efd;
+                           color: white; border: none; border-radius: 0.375rem;
+                           font-family: system-ui, sans-serif; font-size: 0.875rem;
+                           cursor: pointer;">
                 {display_label}
-            </a>
+            </button>
             """)
         else:
             download_button = mo.download(
