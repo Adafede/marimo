@@ -55,19 +55,6 @@ with app.setup:
     from urllib.parse import quote as url_quote
 
     # ====================================================================
-    # MARIMO RELATED
-    # ====================================================================
-
-    # Set output max bytes safely (deployment environments may have limits)
-    try:
-        mo._runtime.context.get_context().marimo_config["runtime"][
-            "output_max_bytes"
-        ] = 1_000_000_000  # 1GB for large datasets
-    except Exception:
-        # Silently fail if runtime config cannot be set
-        pass
-
-    # ====================================================================
     # CENTRALIZED RDF NAMESPACES AND URLS
     # ====================================================================
 
@@ -694,6 +681,21 @@ def create_structure_image_url(smiles: Optional[str]) -> Optional[str]:
         return None
     encoded_smiles = url_quote(smiles)
     return f"{CONFIG['cdk_base']}?smi={encoded_smiles}&annotate=cip"
+
+
+@app.function
+def create_lazy_structure_image(smiles: Optional[str]) -> mo.Html:
+    """Create a lazy-loading structure image to reduce memory usage on mobile devices."""
+    if smiles is None:
+        return mo.Html("")
+    url = create_structure_image_url(smiles)
+    if url is None:
+        return mo.Html("")
+    # Use loading="lazy" and decoding="async" for better mobile performance
+    return mo.Html(
+        f'<img src="{url}" loading="lazy" decoding="async" '
+        f'alt="Structure" style="max-width:200px;max-height:150px;" />'
+    )
 
 
 @app.function
@@ -1585,11 +1587,16 @@ def query_wikidata(
 
 @app.function
 def build_display_dataframe(df: pl.DataFrame) -> pl.DataFrame:
-    """Build display DataFrame from source data using vectorized operations."""
+    """Build display DataFrame from source data using vectorized operations.
+
+    Uses lazy-loading images and limits the number of rows with images
+    to avoid memory issues on mobile devices (especially iOS).
+    """
     # Pre-compute all scalar columns efficiently
     display_rows = []
+    image_limit = CONFIG["lazy_generation_threshold"]
 
-    for row in df.iter_rows(named=True):
+    for idx, row in enumerate(df.iter_rows(named=True)):
         smiles = row.get("smiles") or None
         compound = row.get("compound") or None
         taxon = row.get("taxon") or None
@@ -1605,9 +1612,20 @@ def build_display_dataframe(df: pl.DataFrame) -> pl.DataFrame:
             statement_uri.split("/")[-1] if statement_uri is not None else None
         )
 
+        # Only render images for the first N rows to avoid memory issues on iOS
+        # Use lazy loading for better mobile performance
+        if idx < image_limit:
+            depiction = create_lazy_structure_image(smiles)
+        else:
+            # For rows beyond the limit, show a placeholder with SMILES tooltip
+            depiction = mo.Html(
+                f'<span title="{smiles if smiles else "No structure"}" '
+                f'style="color:#999;font-size:0.8em;">🧪</span>'
+            ) if smiles else mo.Html("")
+
         display_rows.append(
             {
-                "2D Depiction": mo.image(src=create_structure_image_url(smiles)),
+                "2D Depiction": depiction,
                 "Compound": row.get("name") or None,
                 "Compound SMILES": smiles,
                 "Compound InChIKey": row.get("inchikey") or None,
@@ -3093,11 +3111,22 @@ def generate_results(
                     f"⚡ **Large Dataset Optimization**\n\n"
                     f"Your search returned **{total_rows:,} rows**. For optimal performance:\n"
                     f"- Displaying first **{CONFIG['table_row_limit']:,} rows** in table view\n"
-                    f"- 2D structure images hidden (available in full download)\n"
+                    f"- 2D structure images shown for first **{CONFIG['lazy_generation_threshold']}** rows only\n"
                     f"- Use the Export View tab to see all data without images"
                 ),
                 kind="info",
             )
+        elif total_rows > CONFIG["lazy_generation_threshold"]:
+            # Dataset fits in table but exceeds image limit
+            display_note = mo.callout(
+                mo.md(
+                    f"📱 **Mobile-Optimized View**\n\n"
+                    f"2D structure images are shown for the first **{CONFIG['lazy_generation_threshold']}** rows to ensure smooth performance on mobile devices. "
+                    f"Rows beyond this limit show a 🧪 placeholder. SMILES are available in all rows."
+                ),
+                kind="info",
+            )
+            limited_df = results_df
         else:
             display_note = mo.Html("")
             limited_df = results_df
