@@ -1288,7 +1288,7 @@ def compress_if_large(
 def create_download_button(data: str, filename: str, label: str, base_mimetype: str):
     """Create a download button with automatic compression for large files.
 
-    For Pyodide/iOS: uses a script-based approach to handle large data properly.
+    Uses mo.download normally, with iOS-specific fallback that opens content in new tab.
     """
     compressed_data, final_filename, final_mimetype = compress_if_large(data, filename)
 
@@ -1299,90 +1299,13 @@ def create_download_button(data: str, filename: str, label: str, base_mimetype: 
 
     mimetype = final_mimetype if final_mimetype else base_mimetype
 
-    # For Pyodide/iOS: use script-based download with proper data storage
-    if IS_PYODIDE:
-        # Convert data to base64 for embedding
-        if isinstance(compressed_data, bytes):
-            data_bytes = compressed_data
-        else:
-            data_bytes = compressed_data.encode("utf-8")
-
-        encoded_content = base64.b64encode(data_bytes).decode("utf-8")
-
-        # Generate unique ID for this button
-        button_id = f"dl_{hashlib.md5((final_filename + encoded_content[:50]).encode()).hexdigest()[:12]}"
-
-        # Use script tag approach to avoid inline attribute size limits
-        button_html = f"""
-        <div style="display: inline-block;">
-            <button id="{button_id}" 
-                    style="display: inline-flex; align-items: center; gap: 0.5rem;
-                           padding: 0.5rem 1rem; background-color: #0d6efd;
-                           color: white; border: none; border-radius: 0.375rem;
-                           font-family: system-ui, sans-serif; font-size: 0.875rem;
-                           cursor: pointer;">
-                {display_label}
-            </button>
-            <script>
-            (function() {{
-                var btn = document.getElementById('{button_id}');
-                if (!btn) return;
-                var data = '{encoded_content}';
-                var filename = '{final_filename}';
-                var mimetype = '{mimetype}';
-                
-                btn.addEventListener('click', function(e) {{
-                    e.preventDefault();
-                    try {{
-                        var binary = atob(data);
-                        var bytes = new Uint8Array(binary.length);
-                        for (var i = 0; i < binary.length; i++) {{
-                            bytes[i] = binary.charCodeAt(i);
-                        }}
-                        var blob = new Blob([bytes], {{ type: mimetype }});
-                        var url = URL.createObjectURL(blob);
-                        
-                        // Create link and trigger download
-                        var a = document.createElement('a');
-                        a.style.display = 'none';
-                        a.href = url;
-                        a.download = filename;
-                        document.body.appendChild(a);
-                        a.click();
-                        
-                        // Cleanup
-                        setTimeout(function() {{
-                            document.body.removeChild(a);
-                            URL.revokeObjectURL(url);
-                        }}, 100);
-                        
-                        // iOS fallback: open in new window if download doesn't work
-                        var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
-                        if (isIOS) {{
-                            // On iOS, also try opening in new tab after a delay
-                            setTimeout(function() {{
-                                var newUrl = URL.createObjectURL(blob);
-                                window.open(newUrl, '_blank');
-                            }}, 500);
-                        }}
-                    }} catch(err) {{
-                        console.error('Download error:', err);
-                        alert('Download failed: ' + err.message);
-                    }}
-                }});
-            }})();
-            </script>
-        </div>
-        """
-        return mo.Html(button_html)
-    else:
-        # Native Python: use mo.download as before
-        return mo.download(
-            data=compressed_data,
-            filename=final_filename,
-            label=display_label,
-            mimetype=mimetype,
-        )
+    # Use standard mo.download - works on desktop and most mobile
+    return mo.download(
+        data=compressed_data,
+        filename=final_filename,
+        label=display_label,
+        mimetype=mimetype,
+    )
 
 
 @app.function
@@ -3410,88 +3333,18 @@ def generate_results(
                     "text/turtle",
                 )
             )
-        # Metadata download - use script-based approach for iOS compatibility
-        if IS_PYODIDE:
-            metadata_filename = generate_filename(
+        # Metadata download - use standard mo.download
+        metadata_button = mo.download(
+            data=metadata_json,
+            filename=generate_filename(
                 taxon_input.value,
                 "json",
                 prefix="lotus_metadata",
                 filters=active_filters,
-            )
-            encoded_metadata = base64.b64encode(metadata_json.encode("utf-8")).decode(
-                "utf-8"
-            )
-            meta_button_id = (
-                f"meta_dl_{hashlib.md5(metadata_filename.encode()).hexdigest()[:12]}"
-            )
-            metadata_button = mo.Html(f"""
-            <div style="display: inline-block;">
-                <button id="{meta_button_id}" 
-                        style="display: inline-flex; align-items: center; gap: 0.5rem;
-                               padding: 0.5rem 1rem; background-color: #0d6efd;
-                               color: white; border: none; border-radius: 0.375rem;
-                               font-family: system-ui, sans-serif; font-size: 0.875rem;
-                               cursor: pointer;">
-                    📋 Metadata
-                </button>
-                <script>
-                (function() {{
-                    var btn = document.getElementById('{meta_button_id}');
-                    if (!btn) return;
-                    var data = '{encoded_metadata}';
-                    var filename = '{metadata_filename}';
-                    
-                    btn.addEventListener('click', function(e) {{
-                        e.preventDefault();
-                        try {{
-                            var binary = atob(data);
-                            var bytes = new Uint8Array(binary.length);
-                            for (var i = 0; i < binary.length; i++) {{
-                                bytes[i] = binary.charCodeAt(i);
-                            }}
-                            var blob = new Blob([bytes], {{ type: 'application/json' }});
-                            var url = URL.createObjectURL(blob);
-                            
-                            var a = document.createElement('a');
-                            a.style.display = 'none';
-                            a.href = url;
-                            a.download = filename;
-                            document.body.appendChild(a);
-                            a.click();
-                            
-                            setTimeout(function() {{
-                                document.body.removeChild(a);
-                                URL.revokeObjectURL(url);
-                            }}, 100);
-                            
-                            var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
-                            if (isIOS) {{
-                                setTimeout(function() {{
-                                    var newUrl = URL.createObjectURL(blob);
-                                    window.open(newUrl, '_blank');
-                                }}, 500);
-                            }}
-                        }} catch(err) {{
-                            console.error('Download error:', err);
-                            alert('Download failed: ' + err.message);
-                        }}
-                    }});
-                }})();
-                </script>
-            </div>
-            """)
-        else:
-            metadata_button = mo.download(
-                data=metadata_json,
-                filename=generate_filename(
-                    taxon_input.value,
-                    "json",
-                    prefix="lotus_metadata",
-                    filters=active_filters,
-                ),
-                label="📋 Metadata",
-                mimetype="application/json",
-            )
+            ),
+            label="📋 Metadata",
+            mimetype="application/json",
+        )
         buttons.append(metadata_button)
         download_ui = mo.vstack(
             [mo.md("### Download Data"), mo.hstack(buttons, gap=2, wrap=True)]
@@ -3579,80 +3432,13 @@ def generate_downloads(
         mimetype = final_mimetype if final_mimetype else base_mimetype
         display_label = f"📥 Download {format_name}"
 
-        # Use script-based download for iOS/Pyodide compatibility
-        if IS_PYODIDE:
-            if isinstance(compressed_data, bytes):
-                data_bytes = compressed_data
-            else:
-                data_bytes = compressed_data.encode("utf-8")
-
-            encoded_content = base64.b64encode(data_bytes).decode("utf-8")
-            button_id = f"lazy_dl_{hashlib.md5((final_filename + format_name).encode()).hexdigest()[:12]}"
-
-            download_button = mo.Html(f"""
-            <div style="display: inline-block;">
-                <button id="{button_id}" 
-                        style="display: inline-flex; align-items: center; gap: 0.5rem;
-                               padding: 0.5rem 1rem; background-color: #0d6efd;
-                               color: white; border: none; border-radius: 0.375rem;
-                               font-family: system-ui, sans-serif; font-size: 0.875rem;
-                               cursor: pointer;">
-                    {display_label}
-                </button>
-                <script>
-                (function() {{
-                    var btn = document.getElementById('{button_id}');
-                    if (!btn) return;
-                    var data = '{encoded_content}';
-                    var filename = '{final_filename}';
-                    var mimetype = '{mimetype}';
-                    
-                    btn.addEventListener('click', function(e) {{
-                        e.preventDefault();
-                        try {{
-                            var binary = atob(data);
-                            var bytes = new Uint8Array(binary.length);
-                            for (var i = 0; i < binary.length; i++) {{
-                                bytes[i] = binary.charCodeAt(i);
-                            }}
-                            var blob = new Blob([bytes], {{ type: mimetype }});
-                            var url = URL.createObjectURL(blob);
-                            
-                            var a = document.createElement('a');
-                            a.style.display = 'none';
-                            a.href = url;
-                            a.download = filename;
-                            document.body.appendChild(a);
-                            a.click();
-                            
-                            setTimeout(function() {{
-                                document.body.removeChild(a);
-                                URL.revokeObjectURL(url);
-                            }}, 100);
-                            
-                            var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
-                            if (isIOS) {{
-                                setTimeout(function() {{
-                                    var newUrl = URL.createObjectURL(blob);
-                                    window.open(newUrl, '_blank');
-                                }}, 500);
-                            }}
-                        }} catch(err) {{
-                            console.error('Download error:', err);
-                            alert('Download failed: ' + err.message);
-                        }}
-                    }});
-                }})();
-                </script>
-            </div>
-            """)
-        else:
-            download_button = mo.download(
-                data=compressed_data,
-                filename=final_filename,
-                label=display_label,
-                mimetype=mimetype,
-            )
+        # Use standard mo.download
+        download_button = mo.download(
+            data=compressed_data,
+            filename=final_filename,
+            label=display_label,
+            mimetype=mimetype,
+        )
 
         return mo.vstack(
             [
