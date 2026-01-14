@@ -122,22 +122,6 @@ with app.setup:
         "default_similarity_threshold": 0.8,
     }
 
-    DISPLAY_SCHEMA: dict[str, pl.DataType] = {
-        "2D Depiction": pl.Binary,
-        "Compound": pl.String,
-        "Compound SMILES": pl.String,
-        "Compound InChIKey": pl.String,
-        "Compound Mass": pl.Float64,
-        "Taxon": pl.String,
-        "Reference Title": pl.String,
-        "Reference Date": pl.Date,
-        "Reference DOI": pl.String,
-        "Compound QID": pl.String,
-        "Taxon QID": pl.String,
-        "Reference QID": pl.String,
-        "Statement": pl.String,
-    }
-
     ELEMENT_CONFIGS = [
         ("C", "carbon", "element_c_max"),
         ("H", "hydrogen", "element_h_max"),
@@ -152,30 +136,6 @@ with app.setup:
         ("Br", "bromine"),
         ("I", "iodine"),
     ]
-
-    EXPORT_FORMATS = {
-        "csv": {
-            "extension": "csv",
-            "mimetype": "text/csv",
-            "label": "📥 CSV",
-            "icon": "📄",
-            "generator": lambda df: df.write_csv(),
-        },
-        "json": {
-            "extension": "json",
-            "mimetype": "application/json",
-            "label": "📥 JSON",
-            "icon": "📖",
-            "generator": lambda df: df.write_json(),
-        },
-        "ttl": {
-            "extension": "ttl",
-            "mimetype": "text/turtle",
-            "label": "📥 RDF/Turtle",
-            "icon": "🐢",
-            "generator": None,
-        },
-    }
 
     SPARQL_PREFIXES = """
     PREFIX p: <http://www.wikidata.org/prop/>
@@ -1611,124 +1571,62 @@ def query_wikidata(
 
 
 @app.function
-def build_display_dataframe(df: pl.DataFrame) -> pl.DataFrame:
-    """Build display DataFrame from source data.
+def format_structure_image(smiles: str):
+    """Format SMILES as 2D structure image using mo.image."""
+    if not smiles:
+        return mo.Html("")
+    img_url = f"{CONFIG['cdk_base']}?smi={url_quote(smiles)}&annotate=cip"
+    return mo.image(
+        src=img_url,
+        alt=f"Depiction of {smiles}",
+        width=150,
+        height=100,
+        rounded=True,
+    )
 
-    Limits images to first N rows, uses Polars for efficiency.
-    Links are generated as HTML strings via Polars expressions.
-    """
-    image_limit = CONFIG["lazy_generation_threshold"]
-    row_count = len(df)
 
-    # Helper to build HTML link string
-    def make_link_expr(url_expr: pl.Expr, text_expr: pl.Expr, color: str) -> pl.Expr:
-        """Build HTML link expression."""
-        return (
-            pl.when(text_expr.is_not_null() & (text_expr != ""))
-            .then(
-                pl.lit('<a href="')
-                + url_expr
-                + pl.lit('" target="_blank" style="color:')
-                + pl.lit(color)
-                + pl.lit(';">')
-                + text_expr
-                + pl.lit("</a>")
-            )
-            .otherwise(pl.lit(""))
-        )
+@app.function
+def format_doi_link(doi: str) -> mo.Html:
+    """Format DOI as clickable link."""
+    if not doi:
+        return mo.Html("")
+    return mo.Html(f'<a href="https://doi.org/{doi}" target="_blank" style="color:{CONFIG["color_hyperlink"]};">{doi}</a>')
 
-    # Extract QIDs
-    compound_qid = pl.col("compound").str.replace(WIKIDATA_ENTITY_URL, "", literal=True)
-    taxon_qid = pl.col("taxon").str.replace(WIKIDATA_ENTITY_URL, "", literal=True)
-    ref_qid = pl.col("reference").str.replace(WIKIDATA_ENTITY_URL, "", literal=True)
-    statement_id = pl.col("statement").str.split("/").list.last()
 
-    # Build the display dataframe
-    result = df.with_columns(
-        [
-            # 2D Depiction - build image HTML for first N rows, placeholder for rest
-            pl.when(pl.arange(0, row_count) < image_limit)
-            .then(
-                pl.when(pl.col("smiles").is_not_null() & (pl.col("smiles") != ""))
-                .then(
-                    pl.lit('<img src="')
-                    + pl.lit(CONFIG["cdk_base"])
-                    + pl.lit("?smi=")
-                    + pl.col("smiles").map_elements(
-                        lambda s: url_quote(s) if s else "", return_dtype=pl.String
-                    )
-                    + pl.lit(
-                        '&annotate=cip" loading="lazy" decoding="async" style="max-width:150px;max-height:100px;"/>'
-                    )
-                )
-                .otherwise(pl.lit(""))
-            )
-            .otherwise(
-                pl.when(pl.col("smiles").is_not_null() & (pl.col("smiles") != ""))
-                .then(
-                    pl.lit('<span title="')
-                    + pl.col("smiles")
-                    + pl.lit('" style="color:#999;">🧪</span>')
-                )
-                .otherwise(pl.lit(""))
-            )
-            .alias("2D Depiction"),
-            # Text columns matching DISPLAY_SCHEMA
-            pl.col("name").alias("Compound"),
-            pl.col("smiles").alias("Compound SMILES"),
-            pl.col("inchikey").alias("Compound InChIKey"),
-            pl.col("mass").alias("Compound Mass"),
-            pl.col("taxon_name").alias("Taxon"),
-            pl.col("ref_title").alias("Reference Title"),
-            pl.col("pub_date").alias("Reference Date"),
-            # Reference DOI link
-            make_link_expr(
-                pl.lit("https://doi.org/") + pl.col("ref_doi"),
-                pl.col("ref_doi"),
-                CONFIG["color_hyperlink"],
-            ).alias("Reference DOI"),
-            # QID links with Scholia URLs
-            make_link_expr(
-                pl.lit(SCHOLIA_URL) + compound_qid,
-                compound_qid,
-                CONFIG["color_wikidata_red"],
-            ).alias("Compound QID"),
-            make_link_expr(
-                pl.lit(SCHOLIA_URL) + taxon_qid,
-                taxon_qid,
-                CONFIG["color_wikidata_green"],
-            ).alias("Taxon QID"),
-            make_link_expr(
-                pl.lit(SCHOLIA_URL) + ref_qid, ref_qid, CONFIG["color_wikidata_blue"]
-            ).alias("Reference QID"),
-            # Statement link
-            make_link_expr(
-                pl.col("statement"), statement_id, CONFIG["color_hyperlink"]
-            ).alias("Statement"),
-        ]
-    ).select(list(DISPLAY_SCHEMA.keys()))
+@app.function
+def format_compound_qid(url: str) -> mo.Html:
+    """Format compound URL as Scholia link."""
+    if not url:
+        return mo.Html("")
+    qid = url.replace(WIKIDATA_ENTITY_URL, "")
+    return mo.Html(f'<a href="{SCHOLIA_URL}{qid}" target="_blank" style="color:{CONFIG["color_wikidata_red"]};">{qid}</a>')
 
-    # Convert to list of dicts and wrap HTML columns with mo.Html
-    # This is necessary because Polars can't store mo.Html objects
-    html_columns = {
-        "2D Depiction",
-        "Reference DOI",
-        "Compound QID",
-        "Taxon QID",
-        "Reference QID",
-        "Statement",
-    }
-    rows = []
-    for row in result.iter_rows(named=True):
-        new_row = {}
-        for col, val in row.items():
-            if col in html_columns:
-                new_row[col] = mo.Html(val) if val else mo.Html("")
-            else:
-                new_row[col] = val
-        rows.append(new_row)
 
-    return pl.DataFrame(rows)
+@app.function
+def format_taxon_qid(url: str) -> mo.Html:
+    """Format taxon URL as Scholia link."""
+    if not url:
+        return mo.Html("")
+    qid = url.replace(WIKIDATA_ENTITY_URL, "")
+    return mo.Html(f'<a href="{SCHOLIA_URL}{qid}" target="_blank" style="color:{CONFIG["color_wikidata_green"]};">{qid}</a>')
+
+
+@app.function
+def format_reference_qid(url: str) -> mo.Html:
+    """Format reference URL as Scholia link."""
+    if not url:
+        return mo.Html("")
+    qid = url.replace(WIKIDATA_ENTITY_URL, "")
+    return mo.Html(f'<a href="{SCHOLIA_URL}{qid}" target="_blank" style="color:{CONFIG["color_wikidata_blue"]};">{qid}</a>')
+
+
+@app.function
+def format_statement_link(url: str) -> mo.Html:
+    """Format statement URL as clickable link."""
+    if not url:
+        return mo.Html("")
+    statement_id = url.split("/")[-1] if url else ""
+    return mo.Html(f'<a href="{url}" target="_blank" style="color:{CONFIG["color_hyperlink"]};">{statement_id}</a>')
 
 
 @app.function
@@ -3249,22 +3147,44 @@ def generate_results(
                     kind="info",
                 )
         else:
-            # Native Python: use rich display with mo.Html objects
-            display_data = build_display_dataframe(limited_df)
+            # Rename and reorder columns for display
+            display_df = limited_df.select([
+                pl.col("smiles").alias("Compound Depiction"),
+                pl.col("name").alias("Compound Name"),
+                pl.col("smiles").alias("Compound SMILES"),
+                pl.col("inchikey").alias("Compound InChIKey"),
+                pl.col("mass").alias("Compound Mass"),
+                pl.col("taxon_name").alias("Taxon Name"),
+                pl.col("ref_title").alias("Reference Title"),
+                pl.col("pub_date").alias("Reference Date"),
+                pl.col("ref_doi").alias("Reference DOI"),
+                pl.col("compound").alias("Compound QID"),
+                pl.col("taxon").alias("Taxon QID"),
+                pl.col("reference").alias("Reference QID"),
+                pl.col("statement").alias("Statement"),
+            ])
+            
             display_table = mo.ui.table(
-                display_data,
+                data=display_df,
+                format_mapping={
+                    "Compound Depiction": format_structure_image,
+                    "Reference DOI": format_doi_link,
+                    "Compound QID": format_compound_qid,
+                    "Taxon QID": format_taxon_qid,
+                    "Reference QID": format_reference_qid,
+                    "Statement": format_statement_link,
+                },
                 selection=None,
                 page_size=CONFIG["page_size_default"],
             )
 
             # Export table: only show for smaller datasets
             if not ui_is_large_dataset and export_df is not None:
-                export_table = mo.ui.table(
-                    export_df,
+                export_table_ui = mo.ui.table(
+                    data=export_df,
                     selection=None,
                     page_size=CONFIG["page_size_export"],
                 )
-                export_table_ui = export_table
             else:
                 export_table_ui = mo.callout(
                     mo.md(
@@ -3496,7 +3416,8 @@ def generate_downloads(
     )
 
     # Show all generated downloads
-    mo.vstack([csv_download_ui, json_download_ui, rdf_download_ui], gap=2)
+    _out = mo.vstack([csv_download_ui, json_download_ui, rdf_download_ui], gap=2)
+    _out
     return
 
 
