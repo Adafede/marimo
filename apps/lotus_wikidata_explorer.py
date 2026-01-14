@@ -1,7 +1,6 @@
 # /// script
 # requires-python = "==3.13.*"
 # dependencies = [
-#     "httpx==0.28.1",
 #     "marimo",
 #     "polars==1.37.1",
 #     "pyarrow==22.0.0",
@@ -38,12 +37,14 @@ app = marimo.App(width="full", app_title="LOTUS Wikidata Explorer")
 with app.setup:
     import marimo as mo
     import polars as pl
-    import httpx  # Used by sparqlx, imported for exception handling
     import json
     import re
     import time
     import gzip
     import hashlib
+    import sys
+    import urllib.request
+    import urllib.parse
     from dataclasses import dataclass, field
     from datetime import datetime
     from functools import lru_cache
@@ -51,6 +52,11 @@ with app.setup:
     from rdflib.namespace import RDF, RDFS, XSD, DCTERMS
     from typing import Optional, Dict, Any, Tuple, List, Mapping
     from urllib.parse import quote as url_quote
+    
+    # Patch urllib for Pyodide/WASM (browser) compatibility
+    if "pyodide" in sys.modules:
+        import pyodide_http
+        pyodide_http.patch_all()
 
     # ====================================================================
     # CENTRALIZED RDF NAMESPACES AND URLS
@@ -275,33 +281,43 @@ with app.setup:
 
 @app.class_definition
 class SPARQLWrapper:
-    """Simple SPARQL wrapper using httpx for connection reuse."""
+    """Simple SPARQL wrapper using urllib (works in both native Python and Pyodide/WASM)."""
 
     def __init__(
         self,
         sparql_endpoint: str = "https://qlever.dev/api/wikidata",
-        client_config: Dict[str, Any] = {"timeout": 120},
+        timeout: int = 120,
     ):
         self.endpoint = sparql_endpoint
-        self.client_config = client_config or {}
-        self._client = None
+        self.timeout = timeout
 
-    @property
-    def client(self) -> httpx.Client:
-        if self._client is None:
-            self._client = httpx.Client(timeout=self.client_config.get("timeout", 60))
-        return self._client
-
-    def query(self, query: str, response_format: str = "json") -> httpx.Response:
-        """Execute a SPARQL query."""
-        headers = {"Accept": "application/sparql-results+json"}
-        response = self.client.post(
+    def query(self, query: str, response_format: str = "json"):
+        """Execute a SPARQL query. Returns an object with .json() method."""
+        headers = {
+            "Accept": "application/sparql-results+json",
+            "Content-Type": "application/x-www-form-urlencoded",
+        }
+        data = urllib.parse.urlencode({"query": query}).encode("utf-8")
+        
+        req = urllib.request.Request(
             self.endpoint,
-            data={"query": query},
+            data=data,
             headers=headers,
+            method="POST",
         )
-        response.raise_for_status()
-        return response
+        
+        with urllib.request.urlopen(req, timeout=self.timeout) as response:
+            body = response.read().decode("utf-8")
+        
+        # Return an object with .json() method for consistency
+        class Response:
+            def __init__(self, body: str):
+                self._body = body
+            
+            def json(self):
+                return json.loads(self._body)
+        
+        return Response(body)
 
 
 @app.class_definition
@@ -644,7 +660,7 @@ def build_all_compounds_query() -> str:
 def execute_sparql(
     query: str, max_retries: int = CONFIG["max_retries"]
 ) -> Dict[str, Any]:
-    """Execute SPARQL query with retry logic."""
+    """Execute SPARQL query with retry logic. Works in both native Python and Pyodide/WASM."""
     if not query or not query.strip():
         raise ValueError("SPARQL query cannot be empty")
 
@@ -660,33 +676,36 @@ def execute_sparql(
             if not isinstance(result, dict) or "results" not in result:
                 raise ValueError("Invalid SPARQL response format")
             return result
-        except httpx.TimeoutException as e:
-            if attempt == max_retries - 1:
-                raise TimeoutError(
-                    f"⏱️ Query timed out after {max_retries} attempts. Try adding filters."
-                ) from e
-            _wait(attempt)
-        except httpx.HTTPStatusError as e:
-            if attempt == max_retries - 1:
-                raise ConnectionError(
-                    f"🌐 HTTP {e.response.status_code}: {e.response.text[:200]}"
-                ) from e
-            if e.response.status_code >= 500:
-                _wait(attempt)
-            else:
-                raise
-        except (httpx.NetworkError, httpx.ConnectError) as e:
-            if attempt == max_retries - 1:
-                raise ConnectionError(f"🌐 Network error: {e}") from e
-            _wait(attempt)
         except json.JSONDecodeError as e:
             if attempt == max_retries - 1:
                 raise ValueError(f"❌ Invalid JSON: {e}") from e
             _wait(attempt)
         except Exception as e:
-            if attempt == max_retries - 1:
-                raise RuntimeError(f"❌ {type(e).__name__}: {e}") from e
-            _wait(attempt)
+            error_name = type(e).__name__
+            error_msg = str(e)
+            
+            # Handle timeout errors (both httpx and urllib)
+            if "timeout" in error_name.lower() or "timeout" in error_msg.lower():
+                if attempt == max_retries - 1:
+                    raise TimeoutError(
+                        f"⏱️ Query timed out after {max_retries} attempts. Try adding filters."
+                    ) from e
+                _wait(attempt)
+            # Handle HTTP errors
+            elif "http" in error_name.lower() or "urlerror" in error_name.lower():
+                if attempt == max_retries - 1:
+                    raise ConnectionError(f"🌐 HTTP error: {error_msg[:200]}") from e
+                _wait(attempt)
+            # Handle network errors
+            elif "network" in error_name.lower() or "connection" in error_name.lower():
+                if attempt == max_retries - 1:
+                    raise ConnectionError(f"🌐 Network error: {e}") from e
+                _wait(attempt)
+            # Other errors
+            else:
+                if attempt == max_retries - 1:
+                    raise RuntimeError(f"❌ {error_name}: {e}") from e
+                _wait(attempt)
     raise RuntimeError("Max retries exceeded")
 
 
