@@ -3226,21 +3226,30 @@ def generate_results(
 
         # Build display DataFrame using vectorized function
         display_data = build_display_dataframe(limited_df)
-        display_table = mo.ui.table(
-            display_data,
-            selection=None,
-            page_size=CONFIG["page_size_default"],
-        )
+
+        # Use different table component based on environment
+        # mo.ui.table has issues in Pyodide/WASM, use mo.plain to opt out of rich viewer
+        if IS_PYODIDE:
+            display_table = mo.plain(display_data)
+        else:
+            display_table = mo.ui.table(
+                display_data,
+                selection=None,
+                page_size=CONFIG["page_size_default"],
+            )
 
         # Export table: only show for smaller datasets to avoid memory issues
         # For large datasets, export_df is None (deferred preparation)
         if not ui_is_large_dataset and export_df is not None:
-            export_table = mo.ui.table(
-                export_df,
-                selection=None,
-                page_size=CONFIG["page_size_export"],
-            )
-            export_table_ui = export_table
+            if IS_PYODIDE:
+                export_table_ui = mo.plain(export_df)
+            else:
+                export_table = mo.ui.table(
+                    export_df,
+                    selection=None,
+                    page_size=CONFIG["page_size_export"],
+                )
+                export_table_ui = export_table
         else:
             export_table_ui = mo.callout(
                 mo.md(
