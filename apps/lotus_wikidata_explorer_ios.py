@@ -55,19 +55,6 @@ with app.setup:
     from urllib.parse import quote as url_quote
 
     # ====================================================================
-    # MARIMO RELATED
-    # ====================================================================
-
-    # Set output max bytes safely (deployment environments may have limits)
-    try:
-        mo._runtime.context.get_context().marimo_config["runtime"][
-            "output_max_bytes"
-        ] = 1_000_000_000  # 1GB for large datasets
-    except Exception:
-        # Silently fail if runtime config cannot be set
-        pass
-
-    # ====================================================================
     # CENTRALIZED RDF NAMESPACES AND URLS
     # ====================================================================
 
