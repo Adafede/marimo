@@ -52,10 +52,11 @@ with app.setup:
     from rdflib.namespace import RDF, RDFS, XSD, DCTERMS
     from typing import Optional, Dict, Any, Tuple, List, Mapping
     from urllib.parse import quote as url_quote
-    
+
     # Patch urllib for Pyodide/WASM (browser) compatibility
     if "pyodide" in sys.modules:
         import pyodide_http
+
         pyodide_http.patch_all()
 
     # ====================================================================
@@ -298,25 +299,25 @@ class SPARQLWrapper:
             "Content-Type": "application/x-www-form-urlencoded",
         }
         data = urllib.parse.urlencode({"query": query}).encode("utf-8")
-        
+
         req = urllib.request.Request(
             self.endpoint,
             data=data,
             headers=headers,
             method="POST",
         )
-        
+
         with urllib.request.urlopen(req, timeout=self.timeout) as response:
             body = response.read().decode("utf-8")
-        
+
         # Return an object with .json() method for consistency
         class Response:
             def __init__(self, body: str):
                 self._body = body
-            
+
             def json(self):
                 return json.loads(self._body)
-        
+
         return Response(body)
 
 
@@ -683,7 +684,7 @@ def execute_sparql(
         except Exception as e:
             error_name = type(e).__name__
             error_msg = str(e)
-            
+
             # Handle timeout errors (both httpx and urllib)
             if "timeout" in error_name.lower() or "timeout" in error_msg.lower():
                 if attempt == max_retries - 1:
