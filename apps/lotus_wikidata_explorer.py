@@ -3346,9 +3346,22 @@ def generate_results(
             mimetype="application/json",
         )
         buttons.append(metadata_button)
-        download_ui = mo.vstack(
-            [mo.md("### Download Data"), mo.hstack(buttons, gap=2, wrap=True)]
-        )
+
+        # On Pyodide/WASM, show banner instead of download buttons
+        if IS_PYODIDE:
+            download_ui = mo.callout(
+                mo.md(
+                    "**Downloads not available in browser mode**\n\n"
+                    "File downloads are not supported when running in Pyodide/WASM.\n\n"
+                    "To download data, please run this app locally or use the "
+                    "**Export View** tab to copy data."
+                ),
+                kind="warn",
+            )
+        else:
+            download_ui = mo.vstack(
+                [mo.md("### Download Data"), mo.hstack(buttons, gap=2, wrap=True)]
+            )
         tables_ui = mo.vstack(
             [
                 mo.md("### Browse Data"),
@@ -3498,8 +3511,11 @@ def generate_downloads(
         include_rdf_ref=True,
     )
 
-    # Show all generated downloads
-    _out = mo.vstack([csv_download_ui, json_download_ui, rdf_download_ui], gap=2)
+    # Show all generated downloads (skip on Pyodide - downloads not supported)
+    if IS_PYODIDE:
+        _out = mo.Html("")
+    else:
+        _out = mo.vstack([csv_download_ui, json_download_ui, rdf_download_ui], gap=2)
     _out
     return
 
