@@ -89,9 +89,9 @@ with app.setup:
         "max_retries": 3,
         "retry_backoff": 2,
         "query_timeout": 300,
-        "table_row_limit": 10000,
+        "table_row_limit": 5000,
         "lazy_generation_threshold": 500,
-        "download_embed_threshold_bytes": 8_000_000,
+        "download_embed_threshold_bytes": 500_000,
         "color_hyperlink": "#3377c4",
         "color_wikidata_blue": "#006699",
         "color_wikidata_green": "#339966",
@@ -981,26 +981,6 @@ def get_binding_value(binding: Dict[str, Any], key: str, default: str = "") -> s
 
 
 @app.function
-def create_link(url: str, text: str, color: str = "#3377c4") -> mo.Html:
-    """Create a styled hyperlink."""
-    safe_text = text or url or ""
-    safe_url = url or "#"
-    return mo.Html(
-        f'<a href="{safe_url}" target="_blank" rel="noopener noreferrer" '
-        f'style="color: {color}; text-decoration: none; '
-        f'border-bottom: 1px solid transparent; transition: border-color 0.2s;" '
-        f"onmouseover=\"this.style.borderColor='{color}'\" "
-        f"onmouseout=\"this.style.borderColor='transparent'\">{safe_text}</a>"
-    )
-
-
-@app.function
-def create_wikidata_link(qid: str, color: str = "#3377c4") -> mo.Html:
-    """Create a Wikidata link for a QID."""
-    return create_link(f"{SCHOLIA_URL}{qid}", qid, color=color)
-
-
-@app.function
 def pluralize(singular: str, count: int) -> str:
     """Return singular or plural form based on count with special cases."""
     return singular if count == 1 else PLURAL_MAP.get(singular, f"{singular}s")
@@ -1609,81 +1589,105 @@ def query_wikidata(
 
 @app.function
 def build_display_dataframe(df: pl.DataFrame) -> pl.DataFrame:
-    """Build display DataFrame from source data using vectorized operations.
+    """Build display DataFrame from source data.
 
-    Uses lazy-loading images and limits the number of rows with images
-    to avoid memory issues on mobile devices (especially iOS).
+    Limits images to first N rows, uses Polars for efficiency.
+    Links are generated as HTML strings via Polars expressions.
     """
-    # Pre-compute all scalar columns efficiently
-    display_rows = []
     image_limit = CONFIG["lazy_generation_threshold"]
-
-    for idx, row in enumerate(df.iter_rows(named=True)):
-        smiles = row.get("smiles") or None
-        compound = row.get("compound") or None
-        taxon = row.get("taxon") or None
-        reference = row.get("reference") or None
-        ref_doi = row.get("ref_doi") or None
-        statement_uri = row.get("statement") or None
-
-        # Extract QIDs
-        compound_qid = extract_qid(compound)
-        taxon_qid = extract_qid(taxon)
-        ref_qid = extract_qid(reference)
-        statement_id = (
-            statement_uri.split("/")[-1] if statement_uri is not None else None
-        )
-
-        # Only render images for the first N rows to avoid memory issues on iOS
-        # Use lazy loading for better mobile performance
-        if idx < image_limit:
-            depiction = create_lazy_structure_image(smiles)
-        else:
-            # For rows beyond the limit, show a placeholder with SMILES tooltip
-            depiction = (
-                mo.Html(
-                    f'<span title="{smiles if smiles else "No structure"}" '
-                    f'style="color:#999;font-size:0.8em;">🧪</span>'
-                )
-                if smiles
-                else mo.Html("")
+    row_count = len(df)
+    
+    # Helper to build HTML link string
+    def make_link_expr(url_expr: pl.Expr, text_expr: pl.Expr, color: str) -> pl.Expr:
+        """Build HTML link expression."""
+        return pl.when(text_expr.is_not_null() & (text_expr != "")).then(
+            pl.lit('<a href="') + url_expr + pl.lit('" target="_blank" style="color:')
+            + pl.lit(color) + pl.lit(';">') + text_expr + pl.lit("</a>")
+        ).otherwise(pl.lit(""))
+    
+    # Extract QIDs
+    compound_qid = pl.col("compound").str.replace(WIKIDATA_ENTITY_URL, "", literal=True)
+    taxon_qid = pl.col("taxon").str.replace(WIKIDATA_ENTITY_URL, "", literal=True)
+    ref_qid = pl.col("reference").str.replace(WIKIDATA_ENTITY_URL, "", literal=True)
+    statement_id = pl.col("statement").str.split("/").list.last()
+    
+    # Build the display dataframe
+    result = df.with_columns([
+        # 2D Depiction - build image HTML for first N rows, placeholder for rest
+        pl.when(pl.arange(0, row_count) < image_limit)
+        .then(
+            pl.when(pl.col("smiles").is_not_null() & (pl.col("smiles") != ""))
+            .then(
+                pl.lit('<img src="') + pl.lit(CONFIG["cdk_base"]) + pl.lit('?smi=')
+                + pl.col("smiles").map_elements(lambda s: url_quote(s) if s else "", return_dtype=pl.String)
+                + pl.lit('&annotate=cip" loading="lazy" decoding="async" style="max-width:150px;max-height:100px;"/>')
             )
-
-        display_rows.append(
-            {
-                "2D Depiction": depiction,
-                "Compound": row.get("name") or None,
-                "Compound SMILES": smiles,
-                "Compound InChIKey": row.get("inchikey") or None,
-                "Compound Mass": row.get("mass"),
-                "Taxon": row.get("taxon_name") or None,
-                "Reference Title": row.get("ref_title") or None,
-                "Reference Date": row.get("pub_date") or None,
-                "Reference DOI": create_link(f"https://doi.org/{ref_doi}", ref_doi)
-                if ref_doi is not None
-                else mo.Html(""),
-                "Compound QID": create_wikidata_link(
-                    compound_qid, color=CONFIG["color_wikidata_red"]
-                ),
-                "Taxon QID": create_wikidata_link(
-                    taxon_qid, color=CONFIG["color_wikidata_green"]
-                ),
-                "Reference QID": create_wikidata_link(
-                    ref_qid, color=CONFIG["color_wikidata_blue"]
-                ),
-                "Statement": create_link(statement_uri, statement_id)
-                if statement_id is not None
-                else mo.Html(""),
-            }
+            .otherwise(pl.lit(""))
         )
-
-    # Create DataFrame with proper schema
-    return pl.DataFrame(
-        {
-            name: pl.Series([r[name] for r in display_rows], dtype=dtype)
-            for name, dtype in DISPLAY_SCHEMA.items()
-        }
-    )
+        .otherwise(
+            pl.when(pl.col("smiles").is_not_null() & (pl.col("smiles") != ""))
+            .then(pl.lit('<span title="') + pl.col("smiles") + pl.lit('" style="color:#999;">🧪</span>'))
+            .otherwise(pl.lit(""))
+        )
+        .alias("2D Depiction"),
+        
+        # Text columns matching DISPLAY_SCHEMA
+        pl.col("name").alias("Compound"),
+        pl.col("smiles").alias("Compound SMILES"),
+        pl.col("inchikey").alias("Compound InChIKey"),
+        pl.col("mass").alias("Compound Mass"),
+        pl.col("taxon_name").alias("Taxon"),
+        pl.col("ref_title").alias("Reference Title"),
+        pl.col("pub_date").alias("Reference Date"),
+        
+        # Reference DOI link
+        make_link_expr(
+            pl.lit("https://doi.org/") + pl.col("ref_doi"),
+            pl.col("ref_doi"),
+            CONFIG["color_hyperlink"]
+        ).alias("Reference DOI"),
+        
+        # QID links with Scholia URLs
+        make_link_expr(
+            pl.lit(SCHOLIA_URL) + compound_qid,
+            compound_qid,
+            CONFIG["color_wikidata_red"]
+        ).alias("Compound QID"),
+        
+        make_link_expr(
+            pl.lit(SCHOLIA_URL) + taxon_qid,
+            taxon_qid,
+            CONFIG["color_wikidata_green"]
+        ).alias("Taxon QID"),
+        
+        make_link_expr(
+            pl.lit(SCHOLIA_URL) + ref_qid,
+            ref_qid,
+            CONFIG["color_wikidata_blue"]
+        ).alias("Reference QID"),
+        
+        # Statement link
+        make_link_expr(
+            pl.col("statement"),
+            statement_id,
+            CONFIG["color_hyperlink"]
+        ).alias("Statement"),
+    ]).select(list(DISPLAY_SCHEMA.keys()))
+    
+    # Convert to list of dicts and wrap HTML columns with mo.Html
+    # This is necessary because Polars can't store mo.Html objects
+    html_columns = {"2D Depiction", "Reference DOI", "Compound QID", "Taxon QID", "Reference QID", "Statement"}
+    rows = []
+    for row in result.iter_rows(named=True):
+        new_row = {}
+        for col, val in row.items():
+            if col in html_columns:
+                new_row[col] = mo.Html(val) if val else mo.Html("")
+            else:
+                new_row[col] = val
+        rows.append(new_row)
+    
+    return pl.DataFrame(rows)
 
 
 @app.function
@@ -2860,7 +2864,7 @@ def display_summary(
             parts.append(
                 mo.callout(
                     mo.md(
-                        f"No natural products found for **{taxon_input.value}** ({create_wikidata_link(qid)}) with the current filters."
+                        f"No natural products found for **{taxon_input.value}** ([{qid}]({SCHOLIA_URL}{qid})) with the current filters."
                     ),
                     kind="warn",
                 )
@@ -2879,7 +2883,7 @@ def display_summary(
         if qid == "*":
             taxon_info = "All taxa"
         else:
-            taxon_info = f"{taxon_input.value} {create_wikidata_link(qid)}"
+            taxon_info = f"{taxon_input.value} [{qid}]({SCHOLIA_URL}{qid})"
 
         # Add SMILES search info if present
         if smiles_input.value and smiles_input.value.strip():
@@ -3110,16 +3114,24 @@ def generate_results(
             qid, taxon_input.value, active_filters, results_df
         )
 
-        # Prepare export dataframes (excludes ref for CSV/JSON, includes it for RDF)
-        export_df = prepare_export_dataframe(results_df, include_rdf_ref=False)
-        # For RDF, we need the ref column too
-        export_df_rdf = prepare_export_dataframe(results_df, include_rdf_ref=True)
+        # Check if this is a large dataset BEFORE preparing export dataframes
+        # This avoids creating copies of data in memory for large datasets
         taxon_name = taxon_input.value
-        ui_is_large_dataset = len(export_df) > CONFIG["lazy_generation_threshold"]
+        ui_is_large_dataset = len(results_df) > CONFIG["lazy_generation_threshold"]
+
+        # For large datasets, defer export dataframe preparation to download time
+        if ui_is_large_dataset:
+            # Store reference to original df - export prep happens on-demand
+            export_df = None
+            export_df_rdf = None
+        else:
+            # For small datasets, prepare export dataframes immediately
+            export_df = prepare_export_dataframe(results_df, include_rdf_ref=False)
+            export_df_rdf = prepare_export_dataframe(results_df, include_rdf_ref=True)
 
         # Create metadata using already-built active_filters
         metadata = create_export_metadata(
-            export_df,
+            results_df if ui_is_large_dataset else export_df,
             taxon_input.value,
             qid,
             active_filters,
@@ -3169,7 +3181,8 @@ def generate_results(
         )
 
         # Export table: only show for smaller datasets to avoid memory issues
-        if len(export_df) <= CONFIG["lazy_generation_threshold"]:
+        # For large datasets, export_df is None (deferred preparation)
+        if not ui_is_large_dataset and export_df is not None:
             export_table = mo.ui.table(
                 export_df,
                 selection=None,
@@ -3179,7 +3192,7 @@ def generate_results(
         else:
             export_table_ui = mo.callout(
                 mo.md(
-                    f"**Large Dataset ({len(export_df):,} rows)**\n\n"
+                    f"**Large Dataset ({len(results_df):,} rows)**\n\n"
                     f"Export table view is disabled for datasets over {CONFIG['lazy_generation_threshold']} rows "
                     f"to ensure smooth performance.\n\n"
                     f"Use the download buttons above to get your data in CSV, JSON, or RDF format."
@@ -3196,19 +3209,23 @@ def generate_results(
             buttons.extend(
                 [csv_generate_button, json_generate_button, rdf_generate_button]
             )
+            # Store results_df - export dataframe will be prepared on-demand
             csv_generation_data = {
-                "export_df": export_df,
+                "results_df": results_df,
                 "active_filters": active_filters,
+                "lazy": True,
             }
             json_generation_data = {
-                "export_df": export_df,
+                "results_df": results_df,
                 "active_filters": active_filters,
+                "lazy": True,
             }
             rdf_generation_data = {
-                "export_df": export_df_rdf,  # Use RDF version with statement/ref
+                "results_df": results_df,
                 "taxon_input": taxon_input.value,
                 "qid": qid,
                 "active_filters": active_filters,
+                "lazy": True,
             }
         else:
             csv_generate_button = None
@@ -3306,6 +3323,16 @@ def generate_downloads(
 ):
     """Handle lazy generation of downloads for large datasets."""
 
+    def get_export_df(generation_data, include_rdf_ref=False):
+        """Get or prepare export dataframe on-demand."""
+        if generation_data.get("lazy"):
+            # Prepare export dataframe now (deferred from results cell)
+            return prepare_export_dataframe(
+                generation_data["results_df"], include_rdf_ref=include_rdf_ref
+            )
+        else:
+            return generation_data["export_df"]
+
     def create_lazy_download_ui(
         generate_button,
         generation_data,
@@ -3314,13 +3341,16 @@ def generate_downloads(
         data_generator_fn,
         base_mimetype: str,
         is_large: bool,
+        include_rdf_ref: bool = False,
     ):
         """Generic lazy download UI generator."""
         if not is_large or generate_button is None or not generate_button.value:
             return mo.Html("")
 
         with mo.status.spinner(title=f"Generating {format_name} format..."):
-            raw_data = data_generator_fn(generation_data)
+            # Prepare export dataframe on-demand
+            export_df = get_export_df(generation_data, include_rdf_ref)
+            raw_data = data_generator_fn(export_df, generation_data)
             compressed_data, final_filename, final_mimetype = compress_if_large(
                 raw_data,
                 generate_filename(
@@ -3334,7 +3364,7 @@ def generate_downloads(
             [
                 mo.callout(
                     mo.md(
-                        f"✅ **{format_name} Ready** - {len(generation_data['export_df']):,} entries"
+                        f"✅ **{format_name} Ready** - {len(export_df):,} entries"
                         + (
                             " (compressed)"
                             if final_mimetype == "application/gzip"
@@ -3358,7 +3388,7 @@ def generate_downloads(
         csv_generation_data,
         "CSV",
         "csv",
-        lambda d: d["export_df"].write_csv(),
+        lambda df, d: df.write_csv(),
         "text/csv",
         ui_is_large_dataset,
     )
@@ -3369,16 +3399,14 @@ def generate_downloads(
         json_generation_data,
         "JSON",
         "json",
-        lambda d: d["export_df"].write_json(),
+        lambda df, d: df.write_json(),
         "application/json",
         ui_is_large_dataset,
     )
 
-    # RDF generation
-    def _rdf_generator(d):
-        return export_to_rdf_turtle(
-            d["export_df"], d["taxon_input"], d["qid"], d["active_filters"]
-        )
+    # RDF generation (needs include_rdf_ref=True)
+    def _rdf_generator(df, d):
+        return export_to_rdf_turtle(df, d["taxon_input"], d["qid"], d["active_filters"])
 
     rdf_download_ui = create_lazy_download_ui(
         rdf_generate_button,
@@ -3388,6 +3416,7 @@ def generate_downloads(
         _rdf_generator,
         "text/turtle",
         ui_is_large_dataset,
+        include_rdf_ref=True,
     )
 
     # Show all generated downloads
