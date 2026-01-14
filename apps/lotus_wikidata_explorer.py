@@ -3268,25 +3268,9 @@ def generate_results(
                     }
                 )
 
-        # On Pyodide/WASM, skip download button generation entirely to prevent crashes
-        if IS_PYODIDE:
-            csv_generate_button = None
-            json_generate_button = None
-            rdf_generate_button = None
-            csv_generation_data = None
-            json_generation_data = None
-            rdf_generation_data = None
-            download_ui = mo.callout(
-                mo.md(
-                    "**Downloads not available in browser mode**\n\n"
-                    "File downloads are not supported when running in Pyodide/WASM.\n\n"
-                    "To download data, please run this app locally or use the "
-                    "**Export View** tab to copy data."
-                ),
-                kind="warn",
-            )
-        elif ui_is_large_dataset:
-            # ALL downloads are lazy for large datasets - prevents crashes
+        # Download buttons generation
+        if ui_is_large_dataset:
+            # Lazy generation buttons
             csv_generate_button = mo.ui.run_button(label="📄 Generate CSV")
             json_generate_button = mo.ui.run_button(label="📖 Generate JSON")
             rdf_generate_button = mo.ui.run_button(label="🐢 Generate RDF/Turtle")
@@ -3332,7 +3316,6 @@ def generate_results(
             csv_generation_data = None
             json_generation_data = None
             rdf_generation_data = None
-            # Only generate immediately for small datasets
             buttons = [
                 create_download_button(
                     export_df.write_csv(),
@@ -3520,11 +3503,8 @@ def generate_downloads(
         include_rdf_ref=True,
     )
 
-    # Show all generated downloads (skip on Pyodide - downloads not supported)
-    if IS_PYODIDE:
-        _out = mo.Html("")
-    else:
-        _out = mo.vstack([csv_download_ui, json_download_ui, rdf_download_ui], gap=2)
+    # Show all generated downloads
+    _out = mo.vstack([csv_download_ui, json_download_ui, rdf_download_ui], gap=2)
     _out
     return
 
