@@ -36,7 +36,6 @@ app = marimo.App(width="full", app_title="LOTUS Wikidata Explorer")
 with app.setup:
     import marimo as mo
     import polars as pl
-    import base64
     import json
     import re
     import time
@@ -3213,11 +3212,11 @@ def generate_results(
         display_df = build_display_dataframe(limited_df)
 
         if IS_PYODIDE:
-            # In WASM: render as plain HTML table using polars .style
-            display_table = display_df.style
+            # In WASM: render as plain table using mo.plain to avoid rich rendering issues
+            display_table = mo.plain(display_df)
 
             if not ui_is_large_dataset and export_df is not None:
-                export_table_ui = export_df.style
+                export_table_ui = mo.plain(export_df)
             else:
                 export_table_ui = mo.callout(
                     mo.md(
