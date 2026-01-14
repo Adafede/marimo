@@ -37,6 +37,7 @@ app = marimo.App(width="full", app_title="LOTUS Wikidata Explorer")
 with app.setup:
     import marimo as mo
     import polars as pl
+    import io
     import json
     import re
     import time
@@ -270,24 +271,6 @@ class SPARQLWrapper:
 
         with urllib.request.urlopen(req, timeout=self.timeout) as response:
             return response.read()
-
-    def query_json(self, query: str) -> Dict[str, Any]:
-        """Execute a SPARQL query. Returns parsed JSON (for small queries like taxon resolution)."""
-        headers = {
-            "Accept": "application/sparql-results+json",
-            "Content-Type": "application/x-www-form-urlencoded",
-        }
-        data = urllib.parse.urlencode({"query": query}).encode("utf-8")
-
-        req = urllib.request.Request(
-            self.endpoint,
-            data=data,
-            headers=headers,
-            method="POST",
-        )
-
-        with urllib.request.urlopen(req, timeout=self.timeout) as response:
-            return json.loads(response.read().decode("utf-8"))
 
 
 @app.class_definition
@@ -670,51 +653,7 @@ def execute_sparql(query: str, max_retries: int = CONFIG["max_retries"]) -> byte
 
 
 @app.function
-def execute_sparql_json(
-    query: str, max_retries: int = CONFIG["max_retries"]
-) -> Dict[str, Any]:
-    """Execute SPARQL query returning JSON (for small queries like taxon resolution)."""
-    if not query or not query.strip():
-        raise ValueError("SPARQL query cannot be empty")
-
-    def _wait(a):
-        time.sleep(CONFIG["retry_backoff"] * (2**a))
-
-    sparql = SPARQLWrapper()
-
-    for attempt in range(max_retries):
-        try:
-            result = sparql.query_json(query)
-            if not isinstance(result, dict) or "results" not in result:
-                raise ValueError("Invalid SPARQL response format")
-            return result
-        except json.JSONDecodeError as e:
-            if attempt == max_retries - 1:
-                raise ValueError(f"❌ Invalid JSON: {e}") from e
-            _wait(attempt)
-        except Exception as e:
-            error_name = type(e).__name__
-            error_msg = str(e)
-
-            if "timeout" in error_name.lower() or "timeout" in error_msg.lower():
-                if attempt == max_retries - 1:
-                    raise TimeoutError(
-                        f"⏱️ Query timed out after {max_retries} attempts."
-                    ) from e
-                _wait(attempt)
-            elif "http" in error_name.lower() or "urlerror" in error_name.lower():
-                if attempt == max_retries - 1:
-                    raise ConnectionError(f"🌐 HTTP error: {error_msg[:200]}") from e
-                _wait(attempt)
-            else:
-                if attempt == max_retries - 1:
-                    raise RuntimeError(f"❌ {error_name}: {e}") from e
-                _wait(attempt)
-    raise RuntimeError("Max retries exceeded")
-
-
-@app.function
-@lru_cache(maxsize=512)
+@lru_cache(maxsize=256)
 def extract_qid(url: Optional[str]) -> Optional[str]:
     """Extract QID from Wikidata entity URL. Cached for performance."""
     if url is None:
@@ -723,7 +662,7 @@ def extract_qid(url: Optional[str]) -> Optional[str]:
 
 
 @app.function
-@lru_cache(maxsize=1024)
+@lru_cache(maxsize=256)
 def create_structure_image_url(smiles: Optional[str]) -> Optional[str]:
     if smiles is None:
         return None
@@ -837,30 +776,41 @@ def resolve_ambiguous_matches(
     """Helper to resolve ambiguous taxon matches by connectivity. Returns (selected_qid, warning_html)."""
     qids = [qid for qid, _ in matches[:5]]  # Limit to 5 for performance
 
-    # Query connectivity to find the most connected taxon
-    connectivity_results = execute_sparql_json(build_taxon_connectivity_query(qids))
-    connectivity_map = {
-        extract_qid(get_binding_value(b, "taxon")): int(
-            get_binding_value(b, "compound_count", "0")
-        )
-        for b in connectivity_results.get("results", {}).get("bindings", [])
-    }
+    # Query connectivity to find the most connected taxon (CSV for memory efficiency)
+    csv_bytes = execute_sparql(build_taxon_connectivity_query(qids))
+    connectivity_map = {}
+    if csv_bytes and csv_bytes.strip():
+        conn_df = pl.read_csv(io.BytesIO(csv_bytes))
+        for row in conn_df.iter_rows(named=True):
+            taxon_url = row.get("taxon", "")
+            count = row.get("compound_count", 0)
+            if taxon_url:
+                qid = extract_qid(taxon_url)
+                connectivity_map[qid] = int(count) if count else 0
+        del conn_df
+    del csv_bytes
 
     # Sort by connectivity (descending)
     sorted_matches = sorted(
         matches[:5], key=lambda x: connectivity_map.get(x[0], 0), reverse=True
     )
 
-    # Get details for display
-    details_results = execute_sparql_json(build_taxon_details_query(qids))
-    details_map = {
-        extract_qid(get_binding_value(b, "taxon")): (
-            get_binding_value(b, "taxonLabel"),
-            get_binding_value(b, "taxonDescription"),
-            get_binding_value(b, "taxon_parentLabel"),
-        )
-        for b in details_results.get("results", {}).get("bindings", [])
-    }
+    # Get details for display (CSV for memory efficiency)
+    csv_bytes = execute_sparql(build_taxon_details_query(qids))
+    details_map = {}
+    if csv_bytes and csv_bytes.strip():
+        details_df = pl.read_csv(io.BytesIO(csv_bytes))
+        for row in details_df.iter_rows(named=True):
+            taxon_url = row.get("taxon", "")
+            if taxon_url:
+                qid = extract_qid(taxon_url)
+                details_map[qid] = (
+                    row.get("taxonLabel", ""),
+                    row.get("taxonDescription", ""),
+                    row.get("taxon_parentLabel", ""),
+                )
+        del details_df
+    del csv_bytes
 
     # Create matches with details including connectivity
     matches_with_details = [
@@ -955,24 +905,28 @@ def resolve_taxon_to_qid(
     if taxon_input.upper().startswith("Q") and taxon_input[1:].isdigit():
         return taxon_input.upper(), None
 
-    # Search for taxon by name
+    # Search for taxon by name (CSV for memory efficiency)
     try:
         query = build_taxon_search_query(taxon_input)
-        results = execute_sparql_json(query)
-        bindings = results.get("results", {}).get("bindings", [])
+        csv_bytes = execute_sparql(query)
 
-        if not bindings:
+        if not csv_bytes or not csv_bytes.strip():
             return None, None
 
-        # Extract matches (list comprehension for speed)
-        matches = [
-            (extract_qid(b["taxon"]["value"]), b["taxon_name"]["value"])
-            for b in bindings
-            if "taxon" in b
-            and "taxon_name" in b
-            and "value" in b["taxon"]
-            and "value" in b["taxon_name"]
-        ]
+        df = pl.read_csv(io.BytesIO(csv_bytes))
+        del csv_bytes
+
+        if df.is_empty():
+            return None, None
+
+        # Extract matches
+        matches = []
+        for row in df.iter_rows(named=True):
+            taxon_url = row.get("taxon", "")
+            taxon_name = row.get("taxon_name", "")
+            if taxon_url and taxon_name:
+                matches.append((extract_qid(taxon_url), taxon_name))
+        del df
 
         if not matches:
             return None, None
@@ -999,11 +953,6 @@ def resolve_taxon_to_qid(
 
     except Exception:
         return None, None
-
-
-@app.function
-def get_binding_value(binding: Dict[str, Any], key: str, default: str = "") -> str:
-    return binding.get(key, {}).get("value", default)
 
 
 @app.function
@@ -1401,7 +1350,7 @@ def apply_mass_filter(
 
 
 @app.function
-@lru_cache(maxsize=1024)
+@lru_cache(maxsize=256)
 def parse_molecular_formula(formula: str) -> tuple:
     """Parse molecular formula and extract atom counts. Returns tuple for caching."""
     if not formula:
@@ -1557,8 +1506,6 @@ def query_wikidata(
         return pl.DataFrame()
 
     # Read CSV directly into Polars (much more memory efficient than JSON parsing)
-    import io
-
     df = pl.read_csv(io.BytesIO(csv_bytes), infer_schema_length=10000)
 
     # Free CSV bytes immediately
