@@ -2271,7 +2271,6 @@ def md_title():
 def ui_disclaimer():
     mo.callout(
         mo.md("""
-        **Work in progress** - May not work in all deployments.  
         **Recommended:** `uvx marimo run https://raw.githubusercontent.com/Adafede/marimo/refs/heads/main/apps/lotus_wikidata_explorer.py`
         """),
         kind="info",
@@ -3217,7 +3216,6 @@ def generate_results(
             # In WASM: render as plain HTML table using polars .style
             display_table = display_df.style
 
-            # Export table - use simpler _repr_html_() for raw data view
             if not ui_is_large_dataset and export_df is not None:
                 export_table_ui = export_df.style
             else:
@@ -3270,15 +3268,29 @@ def generate_results(
                     }
                 )
 
-        # ALL downloads are lazy for large datasets - prevents iOS crashes
-        buttons = []
-        if ui_is_large_dataset:
+        # On Pyodide/WASM, skip download button generation entirely to prevent crashes
+        if IS_PYODIDE:
+            csv_generate_button = None
+            json_generate_button = None
+            rdf_generate_button = None
+            csv_generation_data = None
+            json_generation_data = None
+            rdf_generation_data = None
+            download_ui = mo.callout(
+                mo.md(
+                    "**Downloads not available in browser mode**\n\n"
+                    "File downloads are not supported when running in Pyodide/WASM.\n\n"
+                    "To download data, please run this app locally or use the "
+                    "**Export View** tab to copy data."
+                ),
+                kind="warn",
+            )
+        elif ui_is_large_dataset:
+            # ALL downloads are lazy for large datasets - prevents crashes
             csv_generate_button = mo.ui.run_button(label="📄 Generate CSV")
             json_generate_button = mo.ui.run_button(label="📖 Generate JSON")
             rdf_generate_button = mo.ui.run_button(label="🐢 Generate RDF/Turtle")
-            buttons.extend(
-                [csv_generate_button, json_generate_button, rdf_generate_button]
-            )
+            buttons = [csv_generate_button, json_generate_button, rdf_generate_button]
             # Store results_df - export dataframe will be prepared on-demand
             csv_generation_data = {
                 "results_df": results_df,
@@ -3297,6 +3309,22 @@ def generate_results(
                 "active_filters": active_filters,
                 "lazy": True,
             }
+            # Metadata download
+            metadata_button = mo.download(
+                data=metadata_json,
+                filename=generate_filename(
+                    taxon_input.value,
+                    "json",
+                    prefix="lotus_metadata",
+                    filters=active_filters,
+                ),
+                label="📋 Metadata",
+                mimetype="application/json",
+            )
+            buttons.append(metadata_button)
+            download_ui = mo.vstack(
+                [mo.md("### Download Data"), mo.hstack(buttons, gap=2, wrap=True)]
+            )
         else:
             csv_generate_button = None
             json_generate_button = None
@@ -3305,15 +3333,13 @@ def generate_results(
             json_generation_data = None
             rdf_generation_data = None
             # Only generate immediately for small datasets
-            buttons.append(
+            buttons = [
                 create_download_button(
                     export_df.write_csv(),
                     generate_filename(taxon_input.value, "csv", filters=active_filters),
                     "📥 CSV",
                     "text/csv",
-                )
-            )
-            buttons.append(
+                ),
                 create_download_button(
                     export_df.write_json(),
                     generate_filename(
@@ -3321,9 +3347,7 @@ def generate_results(
                     ),
                     "📥 JSON",
                     "application/json",
-                )
-            )
-            buttons.append(
+                ),
                 create_download_button(
                     export_to_rdf_turtle(
                         export_df_rdf, taxon_input.value, qid, active_filters
@@ -3331,34 +3355,19 @@ def generate_results(
                     generate_filename(taxon_input.value, "ttl", filters=active_filters),
                     "📥 RDF/Turtle",
                     "text/turtle",
-                )
-            )
-        # Metadata download - use standard mo.download
-        metadata_button = mo.download(
-            data=metadata_json,
-            filename=generate_filename(
-                taxon_input.value,
-                "json",
-                prefix="lotus_metadata",
-                filters=active_filters,
-            ),
-            label="📋 Metadata",
-            mimetype="application/json",
-        )
-        buttons.append(metadata_button)
-
-        # On Pyodide/WASM, show banner instead of download buttons
-        if IS_PYODIDE:
-            download_ui = mo.callout(
-                mo.md(
-                    "**Downloads not available in browser mode**\n\n"
-                    "File downloads are not supported when running in Pyodide/WASM.\n\n"
-                    "To download data, please run this app locally or use the "
-                    "**Export View** tab to copy data."
                 ),
-                kind="warn",
-            )
-        else:
+                mo.download(
+                    data=metadata_json,
+                    filename=generate_filename(
+                        taxon_input.value,
+                        "json",
+                        prefix="lotus_metadata",
+                        filters=active_filters,
+                    ),
+                    label="📋 Metadata",
+                    mimetype="application/json",
+                ),
+            ]
             download_ui = mo.vstack(
                 [mo.md("### Download Data"), mo.hstack(buttons, gap=2, wrap=True)]
             )
