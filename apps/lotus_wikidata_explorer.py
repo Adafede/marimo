@@ -3181,7 +3181,10 @@ def generate_results(
 
         if IS_PYODIDE:
             # In WASM: render as plain HTML table (HTML content renders directly)
-            display_table = GT(display_df)
+            display_table = GT(display_df).tab_style(
+                style=[style.text(whitespace="normal")],
+                locations=loc.body(),
+            )
 
             # Export table - use simpler _repr_html_() for raw data view
             if not ui_is_large_dataset and export_df is not None:
