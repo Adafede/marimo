@@ -37,6 +37,7 @@ app = marimo.App(width="full", app_title="LOTUS Wikidata Explorer")
 with app.setup:
     import marimo as mo
     import polars as pl
+    import base64
     import json
     import re
     import time
@@ -48,24 +49,11 @@ with app.setup:
     from dataclasses import dataclass, field
     from datetime import datetime
     from functools import lru_cache
-    from great_tables import GT, html
+    from great_tables import GT
     from rdflib import Graph, Namespace, Literal, URIRef, BNode
     from rdflib.namespace import RDF, RDFS, XSD, DCTERMS
     from typing import Optional, Dict, Any, Tuple, List, Mapping
     from urllib.parse import quote as url_quote
-
-    # ====================================================================
-    # MARIMO RELATED
-    # ====================================================================
-
-    # Set output max bytes safely (deployment environments may have limits)
-    try:
-        mo._runtime.context.get_context().marimo_config["runtime"][
-            "output_max_bytes"
-        ] = 1_000_000_000  # 1GB for large datasets
-    except Exception:
-        # Silently fail if runtime config cannot be set
-        pass
 
     # Patch urllib for Pyodide/WASM (browser) compatibility
     IS_PYODIDE = "pyodide" in sys.modules
@@ -115,8 +103,7 @@ with app.setup:
         "max_retries": 3,
         "retry_backoff": 2,
         "query_timeout": 300,
-        "table_row_limit": 5000,
-        "lazy_generation_threshold": 500,
+        "table_row_limit": 2_000,
         "download_embed_threshold_bytes": 500_000,
         "color_hyperlink": "#3377c4",
         "color_wikidata_blue": "#006699",
@@ -124,11 +111,11 @@ with app.setup:
         "color_wikidata_red": "#990000",
         "page_size_default": 10,
         "page_size_export": 25,
-        "year_range_start": 1700,
-        "year_default_start": 1900,
+        "year_range_start": 1_700,
+        "year_default_start": 1_900,
         "mass_default_min": 0,
-        "mass_default_max": 2000,
-        "mass_ui_max": 10000,
+        "mass_default_max": 2_000,
+        "mass_ui_max": 10_000,
         "element_c_max": 100,
         "element_h_max": 200,
         "element_n_max": 50,
@@ -1302,8 +1289,12 @@ def compress_if_large(
 @app.function
 def create_download_button(
     data: str, filename: str, label: str, base_mimetype: str
-) -> mo.download:
-    """Create a download button with automatic compression for large files."""
+) -> mo.Html:
+    """Create a download button with automatic compression for large files.
+
+    Uses data URI approach for iOS/Pyodide compatibility since mo.download
+    relies on JavaScript blob downloads that don't work reliably in iOS Safari.
+    """
     compressed_data, final_filename, final_mimetype = compress_if_large(data, filename)
 
     # Add compression indicator to label
@@ -1311,12 +1302,42 @@ def create_download_button(
         " (gzipped)" if final_mimetype == "application/gzip" else ""
     )
 
-    return mo.download(
-        data=compressed_data,
-        filename=final_filename,
-        label=display_label,
-        mimetype=final_mimetype if final_mimetype else base_mimetype,
-    )
+    mimetype = final_mimetype if final_mimetype else base_mimetype
+
+    # For Pyodide/iOS: use data URI which has better cross-browser support
+    if IS_PYODIDE:
+        # Convert data to base64 for data URI
+        if isinstance(compressed_data, bytes):
+            data_bytes = compressed_data
+        else:
+            data_bytes = compressed_data.encode("utf-8")
+
+        encoded_content = base64.b64encode(data_bytes).decode("utf-8")
+        data_uri = f"data:{mimetype};base64,{encoded_content}"
+
+        # Style matching marimo's download button appearance
+        button_html = f"""
+        <a href="{data_uri}" 
+           download="{final_filename}"
+           target="_blank"
+           rel="noopener noreferrer"
+           style="display: inline-flex; align-items: center; gap: 0.5rem;
+                  padding: 0.5rem 1rem; background-color: var(--accent-color, #0070f3);
+                  color: white; text-decoration: none; border-radius: 0.375rem;
+                  font-family: system-ui, sans-serif; font-size: 0.875rem;
+                  cursor: pointer; transition: opacity 0.2s;">
+            {display_label}
+        </a>
+        """
+        return mo.Html(button_html)
+    else:
+        # Native Python: use mo.download as before
+        return mo.download(
+            data=compressed_data,
+            filename=final_filename,
+            label=display_label,
+            mimetype=mimetype,
+        )
 
 
 @app.function
@@ -3132,7 +3153,7 @@ def generate_results(
         # Check if this is a large dataset BEFORE preparing export dataframes
         # This avoids creating copies of data in memory for large datasets
         taxon_name = taxon_input.value
-        ui_is_large_dataset = len(results_df) > CONFIG["lazy_generation_threshold"]
+        ui_is_large_dataset = len(results_df) > CONFIG["table_row_limit"]
 
         # For large datasets, defer export dataframe preparation to download time
         if ui_is_large_dataset:
@@ -3164,22 +3185,8 @@ def generate_results(
                     f"⚡ **Large Dataset Optimization**\n\n"
                     f"Your search returned **{total_rows:,} rows**. For optimal performance:\n"
                     f"- Displaying first **{CONFIG['table_row_limit']:,} rows** in table view\n"
-                    f"- 2D structure images shown for first **{CONFIG['lazy_generation_threshold']:,}** rows only\n"
                     f"- Downloads are generated on-demand (click Generate buttons)\n"
                     f"- Export table disabled for large datasets"
-                ),
-                kind="info",
-            )
-        elif total_rows > CONFIG["lazy_generation_threshold"]:
-            # Dataset fits in table but exceeds image/download limits
-            limited_df = results_df
-            display_note = mo.callout(
-                mo.md(
-                    f"**Optimized View**\n\n"
-                    f"Your search returned **{total_rows:,} rows**. For smooth performance:\n"
-                    f"- 2D structure images shown for first **{CONFIG['lazy_generation_threshold']:,}** rows (🧪 placeholder for others)\n"
-                    f"- Downloads are generated on-demand (click Generate buttons)\n"
-                    f"- SMILES strings available in all rows"
                 ),
                 kind="info",
             )
@@ -3194,16 +3201,16 @@ def generate_results(
 
         if IS_PYODIDE:
             # In WASM: render as plain HTML table (GT as minimal formatting, TODO improve later)
-            display_table = GT(display_df)
+            display_table = display_df.style
 
             # Export table - use simpler _repr_html_() for raw data view
             if not ui_is_large_dataset and export_df is not None:
-                export_table_ui = GT(export_df)
+                export_table_ui = export_df.style
             else:
                 export_table_ui = mo.callout(
                     mo.md(
                         f"**Large Dataset ({len(results_df):,} rows)**\n\n"
-                        f"Export table view is disabled for datasets over {CONFIG['lazy_generation_threshold']} rows.\n\n"
+                        f"Export table view is disabled for datasets over {CONFIG['table_row_limit']} rows.\n\n"
                         f"Use the download buttons to get your data."
                     ),
                     kind="info",
@@ -3234,7 +3241,7 @@ def generate_results(
                 export_table_ui = mo.callout(
                     mo.md(
                         f"**Large Dataset ({len(results_df):,} rows)**\n\n"
-                        f"Export table view is disabled for datasets over {CONFIG['lazy_generation_threshold']} rows "
+                        f"Export table view is disabled for datasets over {CONFIG['table_row_limit']} rows "
                         f"to ensure smooth performance.\n\n"
                         f"Use the download buttons above to get your data in CSV, JSON, or RDF format."
                     ),
@@ -3304,9 +3311,33 @@ def generate_results(
                     "text/turtle",
                 )
             )
-        # Metadata download
-        buttons.append(
-            mo.download(
+        # Metadata download - use data URI for iOS compatibility
+        if IS_PYODIDE:
+            metadata_filename = generate_filename(
+                taxon_input.value,
+                "json",
+                prefix="lotus_metadata",
+                filters=active_filters,
+            )
+            encoded_metadata = base64.b64encode(metadata_json.encode("utf-8")).decode(
+                "utf-8"
+            )
+            data_uri = f"data:application/json;base64,{encoded_metadata}"
+            metadata_button = mo.Html(f"""
+            <a href="{data_uri}" 
+               download="{metadata_filename}"
+               target="_blank"
+               rel="noopener noreferrer"
+               style="display: inline-flex; align-items: center; gap: 0.5rem;
+                      padding: 0.5rem 1rem; background-color: var(--accent-color, #0070f3);
+                      color: white; text-decoration: none; border-radius: 0.375rem;
+                      font-family: system-ui, sans-serif; font-size: 0.875rem;
+                      cursor: pointer; transition: opacity 0.2s;">
+                📋 Metadata
+            </a>
+            """)
+        else:
+            metadata_button = mo.download(
                 data=metadata_json,
                 filename=generate_filename(
                     taxon_input.value,
@@ -3317,7 +3348,7 @@ def generate_results(
                 label="📋 Metadata",
                 mimetype="application/json",
             )
-        )
+        buttons.append(metadata_button)
         download_ui = mo.vstack(
             [mo.md("### Download Data"), mo.hstack(buttons, gap=2, wrap=True)]
         )
@@ -3401,6 +3432,40 @@ def generate_downloads(
                 ),
             )
 
+        mimetype = final_mimetype if final_mimetype else base_mimetype
+        display_label = f"📥 Download {format_name}"
+
+        # Use data URI for iOS/Pyodide compatibility
+        if IS_PYODIDE:
+            if isinstance(compressed_data, bytes):
+                data_bytes = compressed_data
+            else:
+                data_bytes = compressed_data.encode("utf-8")
+
+            encoded_content = base64.b64encode(data_bytes).decode("utf-8")
+            data_uri = f"data:{mimetype};base64,{encoded_content}"
+
+            download_button = mo.Html(f"""
+            <a href="{data_uri}" 
+               download="{final_filename}"
+               target="_blank"
+               rel="noopener noreferrer"
+               style="display: inline-flex; align-items: center; gap: 0.5rem;
+                      padding: 0.5rem 1rem; background-color: var(--accent-color, #0070f3);
+                      color: white; text-decoration: none; border-radius: 0.375rem;
+                      font-family: system-ui, sans-serif; font-size: 0.875rem;
+                      cursor: pointer; transition: opacity 0.2s;">
+                {display_label}
+            </a>
+            """)
+        else:
+            download_button = mo.download(
+                data=compressed_data,
+                filename=final_filename,
+                label=display_label,
+                mimetype=mimetype,
+            )
+
         return mo.vstack(
             [
                 mo.callout(
@@ -3414,12 +3479,7 @@ def generate_downloads(
                     ),
                     kind="success",
                 ),
-                mo.download(
-                    data=compressed_data,
-                    filename=final_filename,
-                    label=f"📥 Download {format_name}",
-                    mimetype=final_mimetype if final_mimetype else base_mimetype,
-                ),
+                download_button,
             ]
         )
 
