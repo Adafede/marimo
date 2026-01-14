@@ -2939,7 +2939,13 @@ def display_summary(
         search_info_display = mo.md(f"**{combined_info}**")
 
         # Provenance hash
-        hash_info = mo.md(f"*Hashes:* Query: `{query_hash}` • Results: `{result_hash}`")
+        hash_info = mo.md(
+            f"*Hashes:* Query: `{query_hash}` • Results: `{result_hash}`"
+        ).style(
+            style={
+                "overflow-wrap": "anywhere",
+            }
+        )
 
         # Stats cards - use list comprehension for DRY
         stats_data = [
@@ -2960,6 +2966,10 @@ def display_summary(
             gap=2,
             justify="start",
             wrap=False,
+        ).style(
+            style={
+                "overflow-wrap": "anywhere",
+            }
         )
 
         search_and_stats = mo.hstack(
@@ -3364,6 +3374,10 @@ def generate_results(
                         "📥 Export View": export_table_ui,
                         "📖 Citation": mo.md(citation_text),
                         "🏷️ Metadata": mo.md(f"```json\n{metadata_json}\n```"),
+                    }
+                ).style(
+                    style={
+                        "overflow-wrap": "anywhere",
                     }
                 ),
             ]
