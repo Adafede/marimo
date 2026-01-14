@@ -1,6 +1,7 @@
 # /// script
 # requires-python = "==3.13.*"
 # dependencies = [
+#     "great-tables==0.20.0",
 #     "marimo",
 #     "polars==1.37.1",
 #     "rdflib==7.5.0",
@@ -47,6 +48,7 @@ with app.setup:
     from dataclasses import dataclass, field
     from datetime import datetime
     from functools import lru_cache
+    from great_tables import GT, html
     from rdflib import Graph, Namespace, Literal, URIRef, BNode
     from rdflib.namespace import RDF, RDFS, XSD, DCTERMS
     from typing import Optional, Dict, Any, Tuple, List, Mapping
@@ -3179,11 +3181,11 @@ def generate_results(
 
         if IS_PYODIDE:
             # In WASM: render as plain HTML table (HTML content renders directly)
-            display_table = display_df._repr_html_()
+            display_table = GT(display_df)
 
             # Export table - use simpler _repr_html_() for raw data view
             if not ui_is_large_dataset and export_df is not None:
-                export_table_ui = export_df._repr_html_()
+                export_table_ui = GT(export_df)
             else:
                 export_table_ui = mo.callout(
                     mo.md(
