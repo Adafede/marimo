@@ -1512,13 +1512,20 @@ def query_wikidata(
     results = execute_sparql(query)
     bindings = results.get("results", {}).get("bindings", [])
 
+    # Clear results dict to free memory
+    results.clear()
+
     # Early return for empty results (efficiency - no DataFrame creation)
     if not bindings:
         return pl.DataFrame()
 
-    # Process results efficiently with list comprehension (single pass)
-    rows = [
-        {
+    # Process results with generator to avoid creating intermediate list
+    def process_binding(b):
+        doi = get_binding_value(b, "ref_doi")
+        if isinstance(doi, str) and doi.startswith("http"):
+            doi = doi.split("doi.org/")[-1]
+        mass_raw = get_binding_value(b, "compound_mass", None)
+        return {
             "compound": get_binding_value(b, "compound"),
             "name": get_binding_value(b, "compoundLabel"),
             "inchikey": get_binding_value(b, "compound_inchikey"),
@@ -1527,26 +1534,20 @@ def query_wikidata(
             "taxon_name": get_binding_value(b, "taxon_name"),
             "taxon": get_binding_value(b, "taxon"),
             "ref_title": get_binding_value(b, "ref_title"),
-            "ref_doi": (
-                doi.split("doi.org/")[-1]
-                if isinstance(doi := get_binding_value(b, "ref_doi"), str)
-                and doi.startswith("http")
-                else doi
-            ),
+            "ref_doi": doi,
             "reference": get_binding_value(b, "ref_qid"),
             "pub_date": get_binding_value(b, "ref_date", None),
-            "mass": float(mass_raw)
-            if (mass_raw := get_binding_value(b, "compound_mass", None))
-            else None,
+            "mass": float(mass_raw) if mass_raw else None,
             "mf": get_binding_value(b, "compound_formula"),
             "statement": get_binding_value(b, "statement"),
             "ref": get_binding_value(b, "ref"),
         }
-        for b in bindings
-    ]
 
-    # Create DataFrame once (efficiency - avoid copies)
-    df = pl.DataFrame(rows)
+    # Create DataFrame from generator (more memory efficient)
+    df = pl.DataFrame(process_binding(b) for b in bindings)
+
+    # Clear bindings to free memory
+    bindings.clear()
 
     # Lazy transformations (Polars optimizes internally)
     if "pub_date" in df.columns:
