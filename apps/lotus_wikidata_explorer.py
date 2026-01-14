@@ -1640,6 +1640,86 @@ def format_statement_link(url: str) -> mo.Html:
 
 
 @app.function
+def build_html_table(df: pl.DataFrame) -> str:
+    """Build a plain HTML table with images and links for WASM compatibility.
+
+    This creates a full HTML table string that can be wrapped in mo.Html().
+    """
+
+    # Column definitions: (source_col, display_name, formatter)
+    # formatter is a function that takes the value and returns HTML string
+    def img_html(smiles):
+        if not smiles:
+            return ""
+        img_url = f"{CONFIG['cdk_base']}?smi={url_quote(smiles)}&annotate=cip"
+        return f'<img src="{img_url}" loading="lazy" style="max-width:150px;max-height:100px;border-radius:8px;"/>'
+
+    def doi_html(doi):
+        if not doi:
+            return ""
+        return f'<a href="https://doi.org/{doi}" target="_blank" style="color:{CONFIG["color_hyperlink"]};">{doi}</a>'
+
+    def qid_html(url, color):
+        if not url:
+            return ""
+        qid = url.replace(WIKIDATA_ENTITY_URL, "")
+        return f'<a href="{SCHOLIA_URL}{qid}" target="_blank" style="color:{color};">{qid}</a>'
+
+    def statement_html(url):
+        if not url:
+            return ""
+        statement_id = url.split("/")[-1] if url else ""
+        return f'<a href="{url}" target="_blank" style="color:{CONFIG["color_hyperlink"]};">{statement_id}</a>'
+
+    columns = [
+        ("smiles", "Compound Depiction", img_html),
+        ("name", "Compound Name", lambda x: x or ""),
+        ("smiles", "Compound SMILES", lambda x: x or ""),
+        ("inchikey", "Compound InChIKey", lambda x: x or ""),
+        ("molecular_formula", "Compound Molecular Formula", lambda x: x or ""),
+        ("mass", "Compound Mass", lambda x: f"{x:.4f}" if x else ""),
+        ("taxon_name", "Taxon Name", lambda x: x or ""),
+        ("ref_title", "Reference Title", lambda x: x or ""),
+        ("pub_date", "Reference Date", lambda x: str(x) if x else ""),
+        ("ref_doi", "Reference DOI", doi_html),
+        (
+            "compound",
+            "Compound QID",
+            lambda x: qid_html(x, CONFIG["color_wikidata_red"]),
+        ),
+        ("taxon", "Taxon QID", lambda x: qid_html(x, CONFIG["color_wikidata_green"])),
+        (
+            "reference",
+            "Reference QID",
+            lambda x: qid_html(x, CONFIG["color_wikidata_blue"]),
+        ),
+        ("statement", "Statement", statement_html),
+    ]
+
+    # Build HTML table
+    html = ['<table style="border-collapse:collapse;width:100%;font-size:14px;">']
+
+    # Header
+    html.append('<thead><tr style="background:#f5f5f5;border-bottom:2px solid #ddd;">')
+    for _, display_name, _ in columns:
+        html.append(f'<th style="padding:8px;text-align:left;">{display_name}</th>')
+    html.append("</tr></thead>")
+
+    # Body
+    html.append("<tbody>")
+    for row in df.iter_rows(named=True):
+        html.append('<tr style="border-bottom:1px solid #eee;">')
+        for src_col, _, formatter in columns:
+            val = row.get(src_col)
+            cell_html = formatter(val) if val is not None else ""
+            html.append(f'<td style="padding:8px;">{cell_html}</td>')
+        html.append("</tr>")
+    html.append("</tbody></table>")
+
+    return "".join(html)
+
+
+@app.function
 def prepare_export_dataframe(
     df: pl.DataFrame,
     include_rdf_ref: bool = False,
@@ -3133,21 +3213,12 @@ def generate_results(
             limited_df = results_df
 
         # Use different table component based on environment
-        # mo.ui.table has issues in Pyodide/WASM, use _repr_html_() instead
+        # mo.ui.table has issues in Pyodide/WASM, use plain HTML table instead
         if IS_PYODIDE:
-            # In WASM: use df._repr_html_() for plain HTML table display
-            if export_df is not None:
-                display_table = mo.Html(
-                    export_df.head(CONFIG["table_row_limit"])._repr_html_()
-                )
-            else:
-                # For large datasets, prepare on-demand
-                simple_df = prepare_export_dataframe(limited_df, include_rdf_ref=False)
-                display_table = mo.Html(
-                    simple_df.head(CONFIG["table_row_limit"])._repr_html_()
-                )
+            # In WASM: build HTML table with images and links
+            display_table = mo.Html(build_html_table(limited_df))
 
-            # Export table same as display in WASM
+            # Export table - use simpler _repr_html_() for raw data view
             if not ui_is_large_dataset and export_df is not None:
                 export_table_ui = mo.Html(export_df._repr_html_())
             else:
@@ -3167,6 +3238,7 @@ def generate_results(
                     pl.col("name").alias("Compound Name"),
                     pl.col("smiles").alias("Compound SMILES"),
                     pl.col("inchikey").alias("Compound InChIKey"),
+                    pl.col("mf").alias("Compound Molecular Formula"),
                     pl.col("mass").alias("Compound Mass"),
                     pl.col("taxon_name").alias("Taxon Name"),
                     pl.col("ref_title").alias("Reference Title"),
