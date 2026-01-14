@@ -3224,42 +3224,57 @@ def generate_results(
             display_note = mo.Html("")
             limited_df = results_df
 
-        # Build display DataFrame using vectorized function
-        display_data = build_display_dataframe(limited_df)
-
         # Use different table component based on environment
-        # mo.ui.table has issues in Pyodide/WASM, use mo.plain to opt out of rich viewer
+        # mo.ui.table and mo.Html objects have issues in Pyodide/WASM
         if IS_PYODIDE:
-            display_table = mo.plain(display_data)
+            # In WASM: use export_df (plain strings) instead of display_data (has mo.Html objects)
+            # Prepare a simple export dataframe for display
+            if export_df is not None:
+                display_table = mo.plain(export_df.head(CONFIG["table_row_limit"]))
+            else:
+                # For large datasets, prepare on-demand
+                simple_df = prepare_export_dataframe(limited_df, include_rdf_ref=False)
+                display_table = mo.plain(simple_df.head(CONFIG["table_row_limit"]))
+
+            # Export table same as display in WASM
+            if not ui_is_large_dataset and export_df is not None:
+                export_table_ui = mo.plain(export_df)
+            else:
+                export_table_ui = mo.callout(
+                    mo.md(
+                        f"**Large Dataset ({len(results_df):,} rows)**\n\n"
+                        f"Export table view is disabled for datasets over {CONFIG['lazy_generation_threshold']} rows.\n\n"
+                        f"Use the download buttons to get your data."
+                    ),
+                    kind="info",
+                )
         else:
+            # Native Python: use rich display with mo.Html objects
+            display_data = build_display_dataframe(limited_df)
             display_table = mo.ui.table(
                 display_data,
                 selection=None,
                 page_size=CONFIG["page_size_default"],
             )
 
-        # Export table: only show for smaller datasets to avoid memory issues
-        # For large datasets, export_df is None (deferred preparation)
-        if not ui_is_large_dataset and export_df is not None:
-            if IS_PYODIDE:
-                export_table_ui = mo.plain(export_df)
-            else:
+            # Export table: only show for smaller datasets
+            if not ui_is_large_dataset and export_df is not None:
                 export_table = mo.ui.table(
                     export_df,
                     selection=None,
                     page_size=CONFIG["page_size_export"],
                 )
                 export_table_ui = export_table
-        else:
-            export_table_ui = mo.callout(
-                mo.md(
-                    f"**Large Dataset ({len(results_df):,} rows)**\n\n"
-                    f"Export table view is disabled for datasets over {CONFIG['lazy_generation_threshold']} rows "
-                    f"to ensure smooth performance.\n\n"
-                    f"Use the download buttons above to get your data in CSV, JSON, or RDF format."
-                ),
-                kind="info",
-            )
+            else:
+                export_table_ui = mo.callout(
+                    mo.md(
+                        f"**Large Dataset ({len(results_df):,} rows)**\n\n"
+                        f"Export table view is disabled for datasets over {CONFIG['lazy_generation_threshold']} rows "
+                        f"to ensure smooth performance.\n\n"
+                        f"Use the download buttons above to get your data in CSV, JSON, or RDF format."
+                    ),
+                    kind="info",
+                )
 
         # ALL downloads are lazy for large datasets - prevents iOS crashes
         buttons = []
