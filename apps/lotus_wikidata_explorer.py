@@ -253,8 +253,26 @@ class SPARQLWrapper:
         self.endpoint = sparql_endpoint
         self.timeout = timeout
 
-    def query(self, query: str, response_format: str = "json"):
-        """Execute a SPARQL query. Returns parsed JSON directly."""
+    def query_csv(self, query: str) -> bytes:
+        """Execute a SPARQL query. Returns raw CSV bytes (memory efficient)."""
+        headers = {
+            "Accept": "text/csv",
+            "Content-Type": "application/x-www-form-urlencoded",
+        }
+        data = urllib.parse.urlencode({"query": query}).encode("utf-8")
+
+        req = urllib.request.Request(
+            self.endpoint,
+            data=data,
+            headers=headers,
+            method="POST",
+        )
+
+        with urllib.request.urlopen(req, timeout=self.timeout) as response:
+            return response.read()
+
+    def query_json(self, query: str) -> Dict[str, Any]:
+        """Execute a SPARQL query. Returns parsed JSON (for small queries like taxon resolution)."""
         headers = {
             "Accept": "application/sparql-results+json",
             "Content-Type": "application/x-www-form-urlencoded",
@@ -269,7 +287,6 @@ class SPARQLWrapper:
         )
 
         with urllib.request.urlopen(req, timeout=self.timeout) as response:
-            # Read and parse JSON - response.read() is unavoidable
             return json.loads(response.read().decode("utf-8"))
 
 
@@ -609,10 +626,8 @@ def build_all_compounds_query() -> str:
 
 
 @app.function
-def execute_sparql(
-    query: str, max_retries: int = CONFIG["max_retries"]
-) -> Dict[str, Any]:
-    """Execute SPARQL query with retry logic."""
+def execute_sparql(query: str, max_retries: int = CONFIG["max_retries"]) -> bytes:
+    """Execute SPARQL query with retry logic. Returns CSV bytes for memory efficiency."""
     if not query or not query.strip():
         raise ValueError("SPARQL query cannot be empty")
 
@@ -624,14 +639,7 @@ def execute_sparql(
 
     for attempt in range(max_retries):
         try:
-            result = sparql.query(query, response_format="json")
-            if not isinstance(result, dict) or "results" not in result:
-                raise ValueError("Invalid SPARQL response format")
-            return result
-        except json.JSONDecodeError as e:
-            if attempt == max_retries - 1:
-                raise ValueError(f"❌ Invalid JSON: {e}") from e
-            _wait(attempt)
+            return sparql.query_csv(query)
         except Exception as e:
             error_name = type(e).__name__
             error_msg = str(e)
@@ -654,6 +662,50 @@ def execute_sparql(
                     raise ConnectionError(f"🌐 Network error: {e}") from e
                 _wait(attempt)
             # Other errors
+            else:
+                if attempt == max_retries - 1:
+                    raise RuntimeError(f"❌ {error_name}: {e}") from e
+                _wait(attempt)
+    raise RuntimeError("Max retries exceeded")
+
+
+@app.function
+def execute_sparql_json(
+    query: str, max_retries: int = CONFIG["max_retries"]
+) -> Dict[str, Any]:
+    """Execute SPARQL query returning JSON (for small queries like taxon resolution)."""
+    if not query or not query.strip():
+        raise ValueError("SPARQL query cannot be empty")
+
+    def _wait(a):
+        time.sleep(CONFIG["retry_backoff"] * (2**a))
+
+    sparql = SPARQLWrapper()
+
+    for attempt in range(max_retries):
+        try:
+            result = sparql.query_json(query)
+            if not isinstance(result, dict) or "results" not in result:
+                raise ValueError("Invalid SPARQL response format")
+            return result
+        except json.JSONDecodeError as e:
+            if attempt == max_retries - 1:
+                raise ValueError(f"❌ Invalid JSON: {e}") from e
+            _wait(attempt)
+        except Exception as e:
+            error_name = type(e).__name__
+            error_msg = str(e)
+
+            if "timeout" in error_name.lower() or "timeout" in error_msg.lower():
+                if attempt == max_retries - 1:
+                    raise TimeoutError(
+                        f"⏱️ Query timed out after {max_retries} attempts."
+                    ) from e
+                _wait(attempt)
+            elif "http" in error_name.lower() or "urlerror" in error_name.lower():
+                if attempt == max_retries - 1:
+                    raise ConnectionError(f"🌐 HTTP error: {error_msg[:200]}") from e
+                _wait(attempt)
             else:
                 if attempt == max_retries - 1:
                     raise RuntimeError(f"❌ {error_name}: {e}") from e
@@ -786,7 +838,7 @@ def resolve_ambiguous_matches(
     qids = [qid for qid, _ in matches[:5]]  # Limit to 5 for performance
 
     # Query connectivity to find the most connected taxon
-    connectivity_results = execute_sparql(build_taxon_connectivity_query(qids))
+    connectivity_results = execute_sparql_json(build_taxon_connectivity_query(qids))
     connectivity_map = {
         extract_qid(get_binding_value(b, "taxon")): int(
             get_binding_value(b, "compound_count", "0")
@@ -800,7 +852,7 @@ def resolve_ambiguous_matches(
     )
 
     # Get details for display
-    details_results = execute_sparql(build_taxon_details_query(qids))
+    details_results = execute_sparql_json(build_taxon_details_query(qids))
     details_map = {
         extract_qid(get_binding_value(b, "taxon")): (
             get_binding_value(b, "taxonLabel"),
@@ -906,7 +958,7 @@ def resolve_taxon_to_qid(
     # Search for taxon by name
     try:
         query = build_taxon_search_query(taxon_input)
-        results = execute_sparql(query)
+        results = execute_sparql_json(query)
         bindings = results.get("results", {}).get("bindings", [])
 
         if not bindings:
@@ -1497,90 +1549,81 @@ def query_wikidata(
     else:
         query = build_compounds_query(qid)
 
-    results = execute_sparql(query)
-    bindings = results.get("results", {}).get("bindings", [])
+    # Execute query and get CSV bytes (memory efficient)
+    csv_bytes = execute_sparql(query)
 
-    # Clear results dict to free memory immediately
-    del results
-
-    # Early return for empty results (efficiency - no DataFrame creation)
-    if not bindings:
+    # Early return for empty results
+    if not csv_bytes or csv_bytes.strip() == b"":
         return pl.DataFrame()
 
-    # Process bindings directly into column-oriented format (more memory efficient for Polars)
-    n = len(bindings)
-    compounds = [None] * n
-    names = [None] * n
-    inchikeys = [None] * n
-    smiles_list = [None] * n
-    taxon_names = [None] * n
-    taxons = [None] * n
-    ref_titles = [None] * n
-    ref_dois = [None] * n
-    references = [None] * n
-    pub_dates = [None] * n
-    masses = [None] * n
-    mfs = [None] * n
-    statements = [None] * n
-    refs = [None] * n
+    # Read CSV directly into Polars (much more memory efficient than JSON parsing)
+    import io
 
-    for i, b in enumerate(bindings):
-        compounds[i] = get_binding_value(b, "compound")
-        names[i] = get_binding_value(b, "compoundLabel")
-        inchikeys[i] = get_binding_value(b, "compound_inchikey")
-        smiles_list[i] = get_binding_value(
-            b, "compound_smiles_iso"
-        ) or get_binding_value(b, "compound_smiles_conn")
-        taxon_names[i] = get_binding_value(b, "taxon_name")
-        taxons[i] = get_binding_value(b, "taxon")
-        ref_titles[i] = get_binding_value(b, "ref_title")
-        doi = get_binding_value(b, "ref_doi")
-        ref_dois[i] = (
-            doi.split("doi.org/")[-1]
-            if isinstance(doi, str) and doi.startswith("http")
-            else doi
+    df = pl.read_csv(io.BytesIO(csv_bytes), infer_schema_length=10000)
+
+    # Free CSV bytes immediately
+    del csv_bytes
+
+    # Early return if no data rows
+    if df.is_empty():
+        return pl.DataFrame()
+
+    # Rename columns from SPARQL variable names to internal names
+    column_mapping = {
+        "compound": "compound",
+        "compoundLabel": "name",
+        "compound_inchikey": "inchikey",
+        "compound_smiles_iso": "smiles_iso",
+        "compound_smiles_conn": "smiles_conn",
+        "taxon_name": "taxon_name",
+        "taxon": "taxon",
+        "ref_title": "ref_title",
+        "ref_doi": "ref_doi",
+        "ref_qid": "reference",
+        "ref_date": "pub_date",
+        "compound_mass": "mass",
+        "compound_formula": "mf",
+        "statement": "statement",
+        "ref": "ref",
+    }
+
+    # Rename columns that exist
+    rename_dict = {k: v for k, v in column_mapping.items() if k in df.columns}
+    df = df.rename(rename_dict)
+
+    # Combine smiles columns (prefer isomeric over connectivity)
+    if "smiles_iso" in df.columns or "smiles_conn" in df.columns:
+        smiles_iso = df.get_column("smiles_iso") if "smiles_iso" in df.columns else None
+        smiles_conn = (
+            df.get_column("smiles_conn") if "smiles_conn" in df.columns else None
         )
-        references[i] = get_binding_value(b, "ref_qid")
-        pub_dates[i] = get_binding_value(b, "ref_date", None)
-        mass_raw = get_binding_value(b, "compound_mass", None)
-        masses[i] = float(mass_raw) if mass_raw else None
-        mfs[i] = get_binding_value(b, "compound_formula")
-        statements[i] = get_binding_value(b, "statement")
-        refs[i] = get_binding_value(b, "ref")
-        # Clear binding dict as we go to free memory
-        b.clear()
+        if smiles_iso is not None and smiles_conn is not None:
+            df = df.with_columns(
+                pl.when(
+                    pl.col("smiles_iso").is_not_null() & (pl.col("smiles_iso") != "")
+                )
+                .then(pl.col("smiles_iso"))
+                .otherwise(pl.col("smiles_conn"))
+                .alias("smiles")
+            ).drop(["smiles_iso", "smiles_conn"])
+        elif smiles_iso is not None:
+            df = df.rename({"smiles_iso": "smiles"})
+        elif smiles_conn is not None:
+            df = df.rename({"smiles_conn": "smiles"})
 
-    # Clear bindings list to free memory
-    del bindings
+    # Process ref_doi to extract DOI from URL if needed
+    if "ref_doi" in df.columns:
+        df = df.with_columns(
+            pl.when(pl.col("ref_doi").str.starts_with("http"))
+            .then(pl.col("ref_doi").str.split("doi.org/").list.last())
+            .otherwise(pl.col("ref_doi"))
+            .alias("ref_doi")
+        )
 
-    # Create DataFrame from column-oriented data (more efficient than row-oriented)
-    df = pl.DataFrame(
-        {
-            "compound": compounds,
-            "name": names,
-            "inchikey": inchikeys,
-            "smiles": smiles_list,
-            "taxon_name": taxon_names,
-            "taxon": taxons,
-            "ref_title": ref_titles,
-            "ref_doi": ref_dois,
-            "reference": references,
-            "pub_date": pub_dates,
-            "mass": masses,
-            "mf": mfs,
-            "statement": statements,
-            "ref": refs,
-        }
-    )
-
-    # Clear column lists to free memory
-    del compounds, names, inchikeys, smiles_list, taxon_names, taxons
-    del ref_titles, ref_dois, references, pub_dates, masses, mfs, statements, refs
-
-    # Lazy transformations (Polars optimizes internally)
+    # Process pub_date to date type
     if "pub_date" in df.columns:
         df = df.with_columns(
-            pl.when(pl.col("pub_date").is_not_null())
+            pl.when(pl.col("pub_date").is_not_null() & (pl.col("pub_date") != ""))
             .then(
                 pl.col("pub_date")
                 .str.strptime(pl.Datetime, format="%Y-%m-%dT%H:%M:%SZ", strict=False)
@@ -1590,12 +1633,37 @@ def query_wikidata(
             .alias("pub_date")
         )
 
+    # Convert mass to float
+    if "mass" in df.columns:
+        df = df.with_columns(pl.col("mass").cast(pl.Float64, strict=False))
+
     # Chain filters for efficiency (Polars optimizes the execution plan)
     df = apply_year_filter(df, year_start, year_end)
     df = apply_mass_filter(df, mass_min, mass_max)
 
     if formula_filters:
         df = apply_formula_filter(df, formula_filters)
+
+    # Ensure required columns exist (fill with None if missing)
+    required_columns = [
+        "compound",
+        "name",
+        "inchikey",
+        "smiles",
+        "taxon_name",
+        "taxon",
+        "ref_title",
+        "ref_doi",
+        "reference",
+        "pub_date",
+        "mass",
+        "mf",
+        "statement",
+        "ref",
+    ]
+    for col in required_columns:
+        if col not in df.columns:
+            df = df.with_columns(pl.lit(None).alias(col))
 
     # Final operations: deduplicate and sort
     # Note: unique() is efficient in Polars, keeps first occurrence
