@@ -2972,14 +2972,12 @@ def display_summary(
             }
         )
 
-        search_and_stats = mo.hstack(
+        search_and_stats = mo.vstack(
             [
                 mo.vstack([search_info_display, hash_info], gap=0.5),
                 stats_cards,
             ],
-            justify="space-between",
-            align="center",
-            gap=3,
+            gap=2,
         )
 
         # Build API URL for sharing
