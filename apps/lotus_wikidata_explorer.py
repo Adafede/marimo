@@ -56,16 +56,19 @@ with app.setup:
     # CENTRALIZED RDF NAMESPACES AND URLS
     # ====================================================================
 
-    # Namespaces (used throughout for RDF export)
-    WD = Namespace("http://www.wikidata.org/entity/")
-    WDREF = Namespace("http://www.wikidata.org/reference/")
-    WDS = Namespace("http://www.wikidata.org/entity/statement/")
-    WDT = Namespace("http://www.wikidata.org/prop/direct/")
-    P = Namespace("http://www.wikidata.org/prop/")
-    PS = Namespace("http://www.wikidata.org/prop/statement/")
-    PR = Namespace("http://www.wikidata.org/prop/reference/")
-    PROV = Namespace("http://www.w3.org/ns/prov#")
-    SCHEMA = Namespace("http://schema.org/")
+    # RDF Namespaces wrapped in a dict to prevent marimo serialization issues
+    # Access via RDF_NS["WD"], RDF_NS["SCHEMA"], etc.
+    RDF_NS = {
+        "WD": Namespace("http://www.wikidata.org/entity/"),
+        "WDREF": Namespace("http://www.wikidata.org/reference/"),
+        "WDS": Namespace("http://www.wikidata.org/entity/statement/"),
+        "WDT": Namespace("http://www.wikidata.org/prop/direct/"),
+        "P": Namespace("http://www.wikidata.org/prop/"),
+        "PS": Namespace("http://www.wikidata.org/prop/statement/"),
+        "PR": Namespace("http://www.wikidata.org/prop/reference/"),
+        "PROV": Namespace("http://www.w3.org/ns/prov#"),
+        "SCHEMA": Namespace("http://schema.org/"),
+    }
 
     # URLs (constants)
     SCHOLIA_URL = "https://scholia.toolforge.org/"
@@ -1596,87 +1599,105 @@ def build_display_dataframe(df: pl.DataFrame) -> pl.DataFrame:
     """
     image_limit = CONFIG["lazy_generation_threshold"]
     row_count = len(df)
-    
+
     # Helper to build HTML link string
     def make_link_expr(url_expr: pl.Expr, text_expr: pl.Expr, color: str) -> pl.Expr:
         """Build HTML link expression."""
-        return pl.when(text_expr.is_not_null() & (text_expr != "")).then(
-            pl.lit('<a href="') + url_expr + pl.lit('" target="_blank" style="color:')
-            + pl.lit(color) + pl.lit(';">') + text_expr + pl.lit("</a>")
-        ).otherwise(pl.lit(""))
-    
+        return (
+            pl.when(text_expr.is_not_null() & (text_expr != ""))
+            .then(
+                pl.lit('<a href="')
+                + url_expr
+                + pl.lit('" target="_blank" style="color:')
+                + pl.lit(color)
+                + pl.lit(';">')
+                + text_expr
+                + pl.lit("</a>")
+            )
+            .otherwise(pl.lit(""))
+        )
+
     # Extract QIDs
     compound_qid = pl.col("compound").str.replace(WIKIDATA_ENTITY_URL, "", literal=True)
     taxon_qid = pl.col("taxon").str.replace(WIKIDATA_ENTITY_URL, "", literal=True)
     ref_qid = pl.col("reference").str.replace(WIKIDATA_ENTITY_URL, "", literal=True)
     statement_id = pl.col("statement").str.split("/").list.last()
-    
+
     # Build the display dataframe
-    result = df.with_columns([
-        # 2D Depiction - build image HTML for first N rows, placeholder for rest
-        pl.when(pl.arange(0, row_count) < image_limit)
-        .then(
-            pl.when(pl.col("smiles").is_not_null() & (pl.col("smiles") != ""))
+    result = df.with_columns(
+        [
+            # 2D Depiction - build image HTML for first N rows, placeholder for rest
+            pl.when(pl.arange(0, row_count) < image_limit)
             .then(
-                pl.lit('<img src="') + pl.lit(CONFIG["cdk_base"]) + pl.lit('?smi=')
-                + pl.col("smiles").map_elements(lambda s: url_quote(s) if s else "", return_dtype=pl.String)
-                + pl.lit('&annotate=cip" loading="lazy" decoding="async" style="max-width:150px;max-height:100px;"/>')
+                pl.when(pl.col("smiles").is_not_null() & (pl.col("smiles") != ""))
+                .then(
+                    pl.lit('<img src="')
+                    + pl.lit(CONFIG["cdk_base"])
+                    + pl.lit("?smi=")
+                    + pl.col("smiles").map_elements(
+                        lambda s: url_quote(s) if s else "", return_dtype=pl.String
+                    )
+                    + pl.lit(
+                        '&annotate=cip" loading="lazy" decoding="async" style="max-width:150px;max-height:100px;"/>'
+                    )
+                )
+                .otherwise(pl.lit(""))
             )
-            .otherwise(pl.lit(""))
-        )
-        .otherwise(
-            pl.when(pl.col("smiles").is_not_null() & (pl.col("smiles") != ""))
-            .then(pl.lit('<span title="') + pl.col("smiles") + pl.lit('" style="color:#999;">🧪</span>'))
-            .otherwise(pl.lit(""))
-        )
-        .alias("2D Depiction"),
-        
-        # Text columns matching DISPLAY_SCHEMA
-        pl.col("name").alias("Compound"),
-        pl.col("smiles").alias("Compound SMILES"),
-        pl.col("inchikey").alias("Compound InChIKey"),
-        pl.col("mass").alias("Compound Mass"),
-        pl.col("taxon_name").alias("Taxon"),
-        pl.col("ref_title").alias("Reference Title"),
-        pl.col("pub_date").alias("Reference Date"),
-        
-        # Reference DOI link
-        make_link_expr(
-            pl.lit("https://doi.org/") + pl.col("ref_doi"),
-            pl.col("ref_doi"),
-            CONFIG["color_hyperlink"]
-        ).alias("Reference DOI"),
-        
-        # QID links with Scholia URLs
-        make_link_expr(
-            pl.lit(SCHOLIA_URL) + compound_qid,
-            compound_qid,
-            CONFIG["color_wikidata_red"]
-        ).alias("Compound QID"),
-        
-        make_link_expr(
-            pl.lit(SCHOLIA_URL) + taxon_qid,
-            taxon_qid,
-            CONFIG["color_wikidata_green"]
-        ).alias("Taxon QID"),
-        
-        make_link_expr(
-            pl.lit(SCHOLIA_URL) + ref_qid,
-            ref_qid,
-            CONFIG["color_wikidata_blue"]
-        ).alias("Reference QID"),
-        
-        # Statement link
-        make_link_expr(
-            pl.col("statement"),
-            statement_id,
-            CONFIG["color_hyperlink"]
-        ).alias("Statement"),
-    ]).select(list(DISPLAY_SCHEMA.keys()))
-    
+            .otherwise(
+                pl.when(pl.col("smiles").is_not_null() & (pl.col("smiles") != ""))
+                .then(
+                    pl.lit('<span title="')
+                    + pl.col("smiles")
+                    + pl.lit('" style="color:#999;">🧪</span>')
+                )
+                .otherwise(pl.lit(""))
+            )
+            .alias("2D Depiction"),
+            # Text columns matching DISPLAY_SCHEMA
+            pl.col("name").alias("Compound"),
+            pl.col("smiles").alias("Compound SMILES"),
+            pl.col("inchikey").alias("Compound InChIKey"),
+            pl.col("mass").alias("Compound Mass"),
+            pl.col("taxon_name").alias("Taxon"),
+            pl.col("ref_title").alias("Reference Title"),
+            pl.col("pub_date").alias("Reference Date"),
+            # Reference DOI link
+            make_link_expr(
+                pl.lit("https://doi.org/") + pl.col("ref_doi"),
+                pl.col("ref_doi"),
+                CONFIG["color_hyperlink"],
+            ).alias("Reference DOI"),
+            # QID links with Scholia URLs
+            make_link_expr(
+                pl.lit(SCHOLIA_URL) + compound_qid,
+                compound_qid,
+                CONFIG["color_wikidata_red"],
+            ).alias("Compound QID"),
+            make_link_expr(
+                pl.lit(SCHOLIA_URL) + taxon_qid,
+                taxon_qid,
+                CONFIG["color_wikidata_green"],
+            ).alias("Taxon QID"),
+            make_link_expr(
+                pl.lit(SCHOLIA_URL) + ref_qid, ref_qid, CONFIG["color_wikidata_blue"]
+            ).alias("Reference QID"),
+            # Statement link
+            make_link_expr(
+                pl.col("statement"), statement_id, CONFIG["color_hyperlink"]
+            ).alias("Statement"),
+        ]
+    ).select(list(DISPLAY_SCHEMA.keys()))
+
     # Convert to list of dicts and wrap HTML columns with mo.Html
     # This is necessary because Polars can't store mo.Html objects
-    html_columns = {"2D Depiction", "Reference DOI", "Compound QID", "Taxon QID", "Reference QID", "Statement"}
+    html_columns = {
+        "2D Depiction",
+        "Reference DOI",
+        "Compound QID",
+        "Taxon QID",
+        "Reference QID",
+        "Statement",
+    }
     rows = []
     for row in result.iter_rows(named=True):
         new_row = {}
@@ -1686,7 +1707,7 @@ def build_display_dataframe(df: pl.DataFrame) -> pl.DataFrame:
             else:
                 new_row[col] = val
         rows.append(new_row)
-    
+
     return pl.DataFrame(rows)
 
 
@@ -2000,6 +2021,9 @@ def add_dataset_metadata(
     result_hash: str,
 ) -> None:
     """Add core dataset metadata to RDF graph (mutates graph in-place)."""
+    SCHEMA = RDF_NS["SCHEMA"]
+    WD = RDF_NS["WD"]
+
     # Dataset type and basic metadata
     g.add((dataset_uri, RDF.type, SCHEMA.Dataset))
     g.add((dataset_uri, SCHEMA.name, Literal(dataset_name, datatype=XSD.string)))
@@ -2096,6 +2120,14 @@ def add_compound_triples(
     processed_refs: set,
 ) -> None:
     """Add all triples for a single compound using Wikidata's full RDF structure."""
+    WD = RDF_NS["WD"]
+    WDT = RDF_NS["WDT"]
+    P = RDF_NS["P"]
+    PS = RDF_NS["PS"]
+    PR = RDF_NS["PR"]
+    PROV = RDF_NS["PROV"]
+    SCHEMA = RDF_NS["SCHEMA"]
+
     compound_qid = row.get("compound_qid", "")
     if not compound_qid:
         return
@@ -2209,16 +2241,16 @@ def export_to_rdf_turtle(
     # Initialize graph
     g = Graph()
 
-    # Bind namespaces
-    g.bind("wd", WD)
-    g.bind("wdref", WDREF)
-    g.bind("wds", WDS)
-    g.bind("wdt", WDT)
-    g.bind("p", P)
-    g.bind("ps", PS)
-    g.bind("pr", PR)
-    g.bind("prov", PROV)
-    g.bind("schema", SCHEMA)
+    # Bind namespaces from RDF_NS
+    g.bind("wd", RDF_NS["WD"])
+    g.bind("wdref", RDF_NS["WDREF"])
+    g.bind("wds", RDF_NS["WDS"])
+    g.bind("wdt", RDF_NS["WDT"])
+    g.bind("p", RDF_NS["P"])
+    g.bind("ps", RDF_NS["PS"])
+    g.bind("pr", RDF_NS["PR"])
+    g.bind("prov", RDF_NS["PROV"])
+    g.bind("schema", RDF_NS["SCHEMA"])
     g.bind("rdfs", RDFS)
     g.bind("xsd", XSD)
     g.bind("dcterms", DCTERMS)
