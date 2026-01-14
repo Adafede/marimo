@@ -92,7 +92,7 @@ with app.setup:
         "retry_backoff": 2,
         "query_timeout": 300,
         "table_row_limit": 10000,
-        "lazy_generation_threshold": 5000,
+        "lazy_generation_threshold": 500,
         "download_embed_threshold_bytes": 8_000_000,
         "color_hyperlink": "#3377c4",
         "color_wikidata_blue": "#006699",
@@ -1618,10 +1618,14 @@ def build_display_dataframe(df: pl.DataFrame) -> pl.DataFrame:
             depiction = create_lazy_structure_image(smiles)
         else:
             # For rows beyond the limit, show a placeholder with SMILES tooltip
-            depiction = mo.Html(
-                f'<span title="{smiles if smiles else "No structure"}" '
-                f'style="color:#999;font-size:0.8em;">🧪</span>'
-            ) if smiles else mo.Html("")
+            depiction = (
+                mo.Html(
+                    f'<span title="{smiles if smiles else "No structure"}" '
+                    f'style="color:#999;font-size:0.8em;">🧪</span>'
+                )
+                if smiles
+                else mo.Html("")
+            )
 
         display_rows.append(
             {
@@ -3111,22 +3115,25 @@ def generate_results(
                     f"⚡ **Large Dataset Optimization**\n\n"
                     f"Your search returned **{total_rows:,} rows**. For optimal performance:\n"
                     f"- Displaying first **{CONFIG['table_row_limit']:,} rows** in table view\n"
-                    f"- 2D structure images shown for first **{CONFIG['lazy_generation_threshold']}** rows only\n"
-                    f"- Use the Export View tab to see all data without images"
+                    f"- 2D structure images shown for first **{CONFIG['lazy_generation_threshold']:,}** rows only\n"
+                    f"- Downloads are generated on-demand (click Generate buttons)\n"
+                    f"- Export table disabled for large datasets"
                 ),
                 kind="info",
             )
         elif total_rows > CONFIG["lazy_generation_threshold"]:
-            # Dataset fits in table but exceeds image limit
+            # Dataset fits in table but exceeds image/download limits
+            limited_df = results_df
             display_note = mo.callout(
                 mo.md(
-                    f"📱 **Mobile-Optimized View**\n\n"
-                    f"2D structure images are shown for the first **{CONFIG['lazy_generation_threshold']}** rows to ensure smooth performance on mobile devices. "
-                    f"Rows beyond this limit show a 🧪 placeholder. SMILES are available in all rows."
+                    f"**Optimized View**\n\n"
+                    f"Your search returned **{total_rows:,} rows**. For smooth performance:\n"
+                    f"- 2D structure images shown for first **{CONFIG['lazy_generation_threshold']:,}** rows (🧪 placeholder for others)\n"
+                    f"- Downloads are generated on-demand (click Generate buttons)\n"
+                    f"- SMILES strings available in all rows"
                 ),
                 kind="info",
             )
-            limited_df = results_df
         else:
             display_note = mo.Html("")
             limited_df = results_df
@@ -3138,12 +3145,27 @@ def generate_results(
             selection=None,
             page_size=CONFIG["page_size_default"],
         )
-        export_table = mo.ui.table(
-            export_df,
-            selection=None,
-            page_size=CONFIG["page_size_export"],
-        )
-        # Immediate or lazy downloads
+
+        # Export table: only show for smaller datasets to avoid memory issues
+        if len(export_df) <= CONFIG["lazy_generation_threshold"]:
+            export_table = mo.ui.table(
+                export_df,
+                selection=None,
+                page_size=CONFIG["page_size_export"],
+            )
+            export_table_ui = export_table
+        else:
+            export_table_ui = mo.callout(
+                mo.md(
+                    f"**Large Dataset ({len(export_df):,} rows)**\n\n"
+                    f"Export table view is disabled for datasets over {CONFIG['lazy_generation_threshold']} rows "
+                    f"to ensure smooth performance.\n\n"
+                    f"Use the download buttons above to get your data in CSV, JSON, or RDF format."
+                ),
+                kind="info",
+            )
+
+        # ALL downloads are lazy for large datasets - prevents iOS crashes
         buttons = []
         if ui_is_large_dataset:
             csv_generate_button = mo.ui.run_button(label="📄 Generate CSV")
@@ -3173,8 +3195,7 @@ def generate_results(
             csv_generation_data = None
             json_generation_data = None
             rdf_generation_data = None
-
-            # Generate downloads using DRY helper
+            # Only generate immediately for small datasets
             buttons.append(
                 create_download_button(
                     export_df.write_csv(),
@@ -3183,7 +3204,6 @@ def generate_results(
                     "text/csv",
                 )
             )
-
             buttons.append(
                 create_download_button(
                     export_df.write_json(),
@@ -3194,7 +3214,6 @@ def generate_results(
                     "application/json",
                 )
             )
-
             buttons.append(
                 create_download_button(
                     export_to_rdf_turtle(
@@ -3229,7 +3248,7 @@ def generate_results(
                 mo.ui.tabs(
                     {
                         "🖼️ Display": display_table,
-                        "📥 Export View": export_table,
+                        "📥 Export View": export_table_ui,
                         "📖 Citation": mo.md(citation_text),
                         "🏷️ Metadata": mo.md(f"```json\n{metadata_json}\n```"),
                     }
@@ -3272,13 +3291,10 @@ def generate_downloads(
         format_ext: str,
         data_generator_fn,
         base_mimetype: str,
+        is_large: bool,
     ):
         """Generic lazy download UI generator."""
-        if (
-            not ui_is_large_dataset
-            or generate_button is None
-            or not generate_button.value
-        ):
+        if not is_large or generate_button is None or not generate_button.value:
             return mo.Html("")
 
         with mo.status.spinner(title=f"Generating {format_name} format..."):
@@ -3322,6 +3338,7 @@ def generate_downloads(
         "csv",
         lambda d: d["export_df"].write_csv(),
         "text/csv",
+        ui_is_large_dataset,
     )
 
     # JSON generation
@@ -3332,9 +3349,10 @@ def generate_downloads(
         "json",
         lambda d: d["export_df"].write_json(),
         "application/json",
+        ui_is_large_dataset,
     )
 
-    # RDF generation (use same pattern with custom generator)
+    # RDF generation
     def _rdf_generator(d):
         return export_to_rdf_turtle(
             d["export_df"], d["taxon_input"], d["qid"], d["active_filters"]
@@ -3347,6 +3365,7 @@ def generate_downloads(
         "ttl",
         _rdf_generator,
         "text/turtle",
+        ui_is_large_dataset,
     )
 
     # Show all generated downloads
