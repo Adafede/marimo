@@ -1,6 +1,7 @@
 # /// script
 # requires-python = "==3.13.*"
 # dependencies = [
+#     "great-tables==0.20.0",
 #     "marimo",
 #     "polars==1.37.1",
 #     "rdflib==7.5.0",
@@ -3212,11 +3213,11 @@ def generate_results(
         display_df = build_display_dataframe(limited_df)
 
         if IS_PYODIDE:
-            # In WASM: render as plain table using mo.plain to avoid rich rendering issues
-            display_table = mo.plain(display_df)
+            # In WASM: render using polars .style that requires GT dependency
+            display_table = display_df.style
 
             if not ui_is_large_dataset and export_df is not None:
-                export_table_ui = mo.plain(export_df)
+                export_table_ui = export_df.style
             else:
                 export_table_ui = mo.callout(
                     mo.md(
