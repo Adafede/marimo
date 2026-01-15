@@ -30,7 +30,6 @@ __generated_with = "0.19.2"
 app = marimo.App(app_title="Package Demo")
 
 with app.setup:
-    import adafedemarimo
     import marimo as mo
 
     from adafedemarimo.df.filters import filter_range
