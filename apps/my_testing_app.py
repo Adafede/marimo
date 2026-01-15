@@ -21,7 +21,7 @@ with app.setup:
 
 @app.cell
 def intro():
-    mo.plain_text(mo.notebook_location())
+    mo.md(mo.notebook_location())
     return
 
 
