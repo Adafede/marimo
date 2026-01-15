@@ -4,7 +4,7 @@
 #     "adafedemarimo @ https://github.com/adafede/marimo/releases/download/v0.1.0/adafedemarimo-0.1.0-py3-none-any.whl",
 #     "polars",
 #     "marimo",
-#     "rdflib"
+#     "rdflib",
 # ]
 #
 #
@@ -32,7 +32,6 @@ app = marimo.App(app_title="Package Demo")
 with app.setup:
     import marimo as mo
 
-    from adafedemarimo.df.filters import filter_range
     from adafedemarimo.df.transforms import rename_columns
 
     from adafedemarimo.text import (

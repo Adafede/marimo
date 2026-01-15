@@ -11,7 +11,7 @@ __all__ = [
 
 from typing import Optional, Callable, Any
 
-import polars as pl
+# import polars as pl
 
 
 def filter_range(
