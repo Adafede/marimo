@@ -21,10 +21,11 @@ with app.setup:
 
 @app.cell
 def intro():
-    with open(mo.notebook_dir() / "mols.py") as f:
-        contents = f.read()
-
-    mo.plain_text(contents)
+    from pathlib import Path
+    
+    nb_dir = mo.notebook_dir()
+    files = sorted(p.name for p in nb_dir.iterdir())
+    mo.plain_text("\n".join(files))
     return
 
 
