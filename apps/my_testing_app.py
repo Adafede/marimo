@@ -1,8 +1,8 @@
 # /// script
 # requires-python = "==3.13.*"
 # dependencies = [
-#    "adafedemarimo @ file:///Users/adrutz/Git/marimo",
-#     "marimo",
+#    "adafedemarimo @ git+https://github.com/adafede/marimo",
+#    "marimo",
 # ]
 # [tool.marimo.display]
 # theme = "system"
@@ -16,12 +16,13 @@ app = marimo.App(
 )
 
 with app.setup:
+    import marimo as mo
     from adafedemarimo.foo import Bar
 
 
 @app.cell
-def bar():
-    Bar()
+def message_md():
+    mo.md(Bar())
     return
 
 
