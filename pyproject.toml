@@ -1,6 +1,7 @@
 [project]
-name = "adafede-marimo"
+name = "adafede_marimo"
 version = "0.0.1"
+requires-python = ">=3.13"
 
 [project.scripts]
 lotus_wikidata_explorer = "apps.lotus_wikidata_explorer:main"
