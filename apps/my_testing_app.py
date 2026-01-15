@@ -1,7 +1,7 @@
 # /// script
 # requires-python = "==3.13.*"
 # dependencies = [
-#     "https://github.com/adafede/marimo/raw/main/dist/adafedemarimo-0.1.0-py3-none-any.whl",
+#     "adafedemarimo @ https://github.com/adafede/marimo/raw/main/dist/adafedemarimo-0.1.0-py3-none-any.whl",
 #     "marimo",
 # ]
 #
