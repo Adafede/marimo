@@ -16,7 +16,7 @@ dependencies = [
 lotus_wikidata_explorer = "apps.lotus_wikidata_explorer:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/adafedemarimo"]
+packages = ["adafedemarimo"]
 
 [tool.uv]
 package = true
