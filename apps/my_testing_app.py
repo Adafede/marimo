@@ -2,7 +2,9 @@
 # requires-python = "==3.13.*"
 # dependencies = [
 #     "adafedemarimo @ https://github.com/adafede/marimo/releases/download/v0.1.0/adafedemarimo-0.1.0-py3-none-any.whl",
+#     "polars",
 #     "marimo",
+#     "rdflib"
 # ]
 #
 #
