@@ -8,8 +8,6 @@
 # ]
 # [tool.marimo.display]
 # theme = "system"
-# [tool.marimo.runtime]
-# pythonpath = ["../src"]
 # ///
 
 """
@@ -55,8 +53,6 @@ with app.setup:
     from rdflib.namespace import RDF, RDFS, XSD, DCTERMS
     from typing import Optional, Dict, Any, Tuple, List, Mapping
     from urllib.parse import quote as url_quote
-    from foo import Bar
-    Bar()
 
     # Patch urllib for Pyodide/WASM (browser) compatibility
     IS_PYODIDE = "pyodide" in sys.modules
