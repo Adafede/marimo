@@ -1,7 +1,7 @@
 # /// script
 # requires-python = "==3.13.*"
 # dependencies = [
-#    "adafedemarimo @ git+https://github.com/adafede/marimo",
+#    "adafede-marimo @ git+https://github.com/adafede/marimo",
 #    "marimo",
 # ]
 # [tool.marimo.display]
@@ -17,7 +17,7 @@ app = marimo.App(
 
 with app.setup:
     import marimo as mo
-    from adafedemarimo.foo import Bar
+    from adafede_marimo.foo import Bar
 
 
 @app.cell

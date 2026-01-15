@@ -1,5 +1,5 @@
 [project]
-name = "adafedemarimo"
+name = "adafede-marimo"
 version = "0.0.1"
 
 [project.scripts]
@@ -7,4 +7,4 @@ lotus_wikidata_explorer = "apps.lotus_wikidata_explorer:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["adafedemarimo*"]
+include = ["adafede_marimo*"]
