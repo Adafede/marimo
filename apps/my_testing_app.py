@@ -1,7 +1,7 @@
 # /// script
 # requires-python = "==3.13.*"
 # dependencies = [
-#     "adafedemarimo==0.1.0",
+#     "adafedemarimo",
 #     "marimo",
 # ]
 #
