@@ -20,8 +20,8 @@ with app.setup:
 
 
 @app.cell
-def intro():
-    mo.md(mo.notebook_location())
+def _():
+    mo.notebook_location()
     return
 
 
