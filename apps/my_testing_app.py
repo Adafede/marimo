@@ -21,7 +21,7 @@ with app.setup:
 
 @app.cell
 def intro():
-    with open(mo.notebook_dir() / ".." / "pyproject.toml") as f:
+    with open(mo.notebook_dir() / "mols.py") as f:
         contents = f.read()
 
     mo.plain_text(contents)
