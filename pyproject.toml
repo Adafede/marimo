@@ -1,10 +1,10 @@
 [build-system]
-requires = ["pdm-backend"]
-build-backend = "pdm.backend"
+requires = ["uv_build"]
+build-backend = "uv_build"
 
 [project]
-name = "adafede_marimo"
-version = "0.0.1"
+name = "adafedemarimo"
+version = "0.1.0"
 description = "Minimal, reusable utilities for marimo applications"
 requires-python = ">=3.13"
 
@@ -13,7 +13,7 @@ lotus_wikidata_explorer = "apps.lotus_wikidata_explorer:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["adafede_marimo*"]
+include = ["adafedemarimo*"]
 
 [tool.uv]
 package = true
