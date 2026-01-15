@@ -21,11 +21,7 @@ with app.setup:
 
 @app.cell
 def intro():
-    mols_path = mo.notebook_location() / "mols.py"
-    with open(mols_path, "r") as f:
-        top_5_lines = f.readlines()[:5]
-
-    mo.plain_text(top_5_lines)
+    mo.plain_text(mo.notebook_location())
     return
 
 
