@@ -32,8 +32,6 @@ app = marimo.App(app_title="Package Demo")
 with app.setup:
     import marimo as mo
 
-    from adafedemarimo.df.transforms import rename_columns
-
     from adafedemarimo.text import (
         validate_smiles,
         parse_formula,
