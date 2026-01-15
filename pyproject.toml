@@ -7,16 +7,10 @@ name = "adafedemarimo"
 version = "0.1.0"
 description = "Minimal, reusable utilities for marimo applications"
 requires-python = ">=3.13"
-dependencies = []
-
-[project.optional-dependencies]
-df = ["polars>=1.0.0"]
-rdf = ["rdflib>=7.0.0"]
-all = [
-    "polars>=1.0.0",
-    "rdflib>=7.0.0"
+dependencies = [
+    "marimo>=0.19.2",
+    "polars>=1.37.1"
 ]
-dev = ["pytest>=7.0.0", "ruff>=0.1.0"]
 
 [project.scripts]
 lotus_wikidata_explorer = "apps.lotus_wikidata_explorer:main"
