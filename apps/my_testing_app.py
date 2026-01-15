@@ -1,13 +1,13 @@
 # /// script
 # requires-python = "==3.13.*"
 # dependencies = [
-#     "adafede_marimo==0.0.1",
+#     "adafede-marimo==0.0.1",
 #     "marimo",
 # ]
-# 
+#
 # [tool.uv.sources]
-# adafede_marimo = { git = "https://github.com/adafede/marimo", rev = "main" }
-# 
+# adafede_marimo = { path = ".." }
+#
 # [tool.marimo.display]
 # theme = "system"
 # ///
