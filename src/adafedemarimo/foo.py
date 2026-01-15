@@ -4,4 +4,4 @@ __all__ = [
 
 
 def Bar():
-    return print("Hello World")
+    return "Hello World"
