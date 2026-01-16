@@ -18,14 +18,14 @@ def to_svg(
 ) -> str:
     """
     Draw molecule to SVG string.
-    
+
     Args:
         mol: RDKit Mol object
         width: SVG width in pixels
         height: SVG height in pixels
         highlight_atoms: List of atom indices to highlight
         highlight_colors: Dict mapping atom index to RGB color tuple (0.0-1.0)
-    
+
     Returns:
         SVG string
     """

@@ -10,7 +10,7 @@ from .collect_highlights import SmartsEntry, collect_highlights
 from .to_svg import to_svg
 
 _INVALID_SMILES_TEMPLATE: str = (
-    "<div style='color:red;'>Invalid SMILES: <code>{smi}</code></div>"
+    "<div style='color:red;'>[x] Invalid SMILES: <code>{smi}</code></div>"
 )
 
 _CONTAINER_STYLE: str = (
