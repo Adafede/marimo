@@ -35,7 +35,7 @@ def _parse_connectivity(csv_bytes: bytes) -> dict[str, int]:
     df = pl.read_csv(source=io.BytesIO(csv_bytes))
     return {
         _extract_qid_from_url(row.get("taxon", "")): int(
-            row.get("compound_count", 0) or 0
+            row.get("compound_count", 0) or 0,
         )
         for row in df.iter_rows(named=True)
         if row.get("taxon")

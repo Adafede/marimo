@@ -4,7 +4,9 @@ __all__ = ["pluralize"]
 
 
 def pluralize(
-    singular: str, count: int, irregular: dict[str, str] | None = None
+    singular: str,
+    count: int,
+    irregular: dict[str, str] | None = None,
 ) -> str:
     """Return singular or plural form based on count."""
     if count == 1:

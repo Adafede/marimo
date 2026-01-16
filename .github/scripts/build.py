@@ -31,7 +31,9 @@ from loguru import logger
 
 
 def _export_html_wasm(
-    notebook_path: Path, output_dir: Path, as_app: bool = False
+    notebook_path: Path,
+    output_dir: Path,
+    as_app: bool = False,
 ) -> bool:
     """Export a single marimo notebook to HTML/WebAssembly format.
 
@@ -58,7 +60,7 @@ def _export_html_wasm(
     if as_app:
         logger.info(f"Exporting {notebook_path} to {output_path} as app")
         cmd.extend(
-            ["--mode", "run", "--no-show-code"]
+            ["--mode", "run", "--no-show-code"],
         )  # Apps run in "run" mode with hidden code
     else:
         logger.info(f"Exporting {notebook_path} to {output_path} as notebook")
@@ -135,7 +137,7 @@ def _generate_index(
             f.write(rendered_html)
         logger.info(f"Successfully generated index.html at {index_path}")
 
-    except IOError as e:
+    except OSError as e:
         # Handle file I/O errors
         logger.error(f"Error generating index.html: {e}")
     except jinja2.exceptions.TemplateError as e:
@@ -183,7 +185,7 @@ def _export(folder: Path, output_dir: Path, as_app: bool = False) -> List[dict]:
     ]
 
     logger.info(
-        f"Successfully exported {len(notebook_data)} out of {len(notebooks)} files from {folder}"
+        f"Successfully exported {len(notebook_data)} out of {len(notebooks)} files from {folder}",
     )
     return notebook_data
 

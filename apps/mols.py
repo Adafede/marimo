@@ -104,7 +104,7 @@ with app.setup:
             "```bash\n"
             "uvx marimo run https://raw.githubusercontent.com/Adafede/marimo/refs/heads/main/apps/mols.py\n"
             "```\n"
-            "If using Docker, toggle **App View** (bottom right or `cmd + .`)."
+            "If using Docker, toggle **App View** (bottom right or `cmd + .`).",
         )
         rdkit_available = False
         parse_smarts = None
@@ -152,7 +152,7 @@ def py_find_mcs(smi_input):
                 "### Automatically Detected Maximum Common Substructure (MCS) SMARTS\n\n"
                 "The SMARTS pattern below was generated automatically. It may not always be chemically meaningful or appropriate for your use case, so please review it carefully.\n\n"
                 "You can paste it below as a starting point:\n"
-                f"```smarts\n{mcs_smarts}\n```"
+                f"```smarts\n{mcs_smarts}\n```",
             )
         elif mcs_error:
             mcs = mo.md(f"[!] {mcs_error}")

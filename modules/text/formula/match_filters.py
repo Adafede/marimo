@@ -44,7 +44,9 @@ def _check_halogen_filters(formula: str, filters: FormulaFilters) -> bool:
     """Check all halogen state filters."""
     return all(
         match_halogen(
-            formula=formula, halogen=halogen, constraint=getattr(filters, attr)
+            formula=formula,
+            halogen=halogen,
+            constraint=getattr(filters, attr),
         )
         for halogen, attr in _HALOGEN_FILTERS
     )
@@ -59,5 +61,6 @@ def match_filters(formula: str, filters: FormulaFilters) -> bool:
         return normalize(formula) == normalize(filters.exact_formula.strip())
 
     return _check_element_filters(formula, filters) and _check_halogen_filters(
-        formula, filters
+        formula,
+        filters,
     )

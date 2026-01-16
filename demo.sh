@@ -16,7 +16,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 # Run the build.py script using uv
 # This is interesting as it works without explicitly installing
 # the dependencies before running this script - uv handles this automatically
-# 
+#
 # Parameters:
 #   --output_dir '_site': Specifies where to output the generated site files
 #                         '_site' is a common convention for static site generators

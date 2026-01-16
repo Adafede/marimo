@@ -34,7 +34,10 @@ class Client:
         }
         data = urllib.parse.urlencode(query={"query": query}).encode(encoding="utf-8")
         req = urllib.request.Request(
-            url=self.endpoint, data=data, headers=headers, method="POST"
+            url=self.endpoint,
+            data=data,
+            headers=headers,
+            method="POST",
         )
         with urllib.request.urlopen(url=req, timeout=self.timeout) as response:
             return response.read()
