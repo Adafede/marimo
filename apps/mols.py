@@ -84,14 +84,12 @@ with app.setup:
     use("https://raw.githubusercontent.com/Adafede/marimo/main/modules")
     # === END ===
 
-    from modules.text.strings import parse_labeled_lines
-    from modules.utils.colors import hex_to_rgb_float
+    from modules.text.strings.parse_labeled_lines import parse_labeled_lines
+    from modules.utils.colors.hex_to_rgb_float import hex_to_rgb_float
 
     try:
-        from modules.chem.rdkit_utils import (
-            find_mcs_smarts,
-            render_molecule_with_highlights,
-        )
+        from modules.chem.rdkit.find_mcs_smarts import find_mcs_smarts
+        from modules.chem.rdkit.render_with_highlights import render_with_highlights as render_molecule_with_highlights
         from rdkit.Chem import MolFromSmarts
 
         message = mo.md("✅ Your environment supports **RDKit**, all good!")
