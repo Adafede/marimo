@@ -27,7 +27,7 @@ with app.setup:
     from dataclasses import dataclass
 
     @dataclass
-    class _MockInput:
+    class MockInput:
         value: str = ""
 
     _USE_LOCAL = False  # Set to True for local development
@@ -35,6 +35,19 @@ with app.setup:
     if _USE_LOCAL:
         # Add your local module directory to the path
         # Adjust this path to where your package folder is located locally
+        sys.path.insert(0, ".")
+
+        def use(url):
+            pass
+    else:
+        import sys
+
+    # Toggle this flag for local vs remote development
+    _USE_LOCAL = False  # Set to True for local development
+
+    if _USE_LOCAL:
+        # Add your local module directory to the path
+        # Adjust this path to where your "modules" folder is located locally
         sys.path.insert(0, ".")
 
         def use(url):
@@ -80,12 +93,12 @@ with app.setup:
                 if n != s.r and not n.startswith(s.r + "."):
                     return None
                 p = f"{s.l.b}/{n.replace('.', '/')}"
-                if (p + "/__init__.py") in _c or s.l.s.head(
-                    p + "/__init__.py"
-                ).status_code == 200:
-                    return ModuleSpec(n, s.l, is_package=True)
-                if (p + ".py") in _c or s.l.s.head(p + ".py").status_code == 200:
+                py_url = p + ".py"
+                if py_url in _c or s.l.s.head(py_url).status_code == 200:
                     return ModuleSpec(n, s.l, is_package=False)
+                init_url = p + "/__init__.py"
+                if init_url in _c or s.l.s.head(init_url).status_code == 200:
+                    return ModuleSpec(n, s.l, is_package=True)
                 return None
 
         def use(url):
@@ -100,7 +113,9 @@ with app.setup:
     try:
         from modules.chem.rdkit.smarts.find_mcs import find_mcs
         from modules.chem.rdkit.smarts.parse import parse as parse_smarts
-        from modules.chem.rdkit.smiles.parse_many import parse_many as parse_smiles_list
+        from modules.chem.rdkit.smiles.parse_many import (
+            parse_many as parse_smiles_list,
+        )
         from modules.chem.rdkit.depict.with_highlights import (
             with_highlights as depict_with_highlights,
         )
@@ -145,7 +160,7 @@ def input_smiles():
             full_width=True,
         )
     else:
-        smi_input = _MockInput()
+        smi_input = MockInput()
     smi_input
     return (smi_input,)
 
@@ -184,7 +199,7 @@ def input_smarts():
             full_width=True,
         )
     else:
-        smarts_input = _MockInput()
+        smarts_input = MockInput()
     smarts_input
     return (smarts_input,)
 
@@ -207,7 +222,7 @@ def button_submit():
     if rdkit_available:
         submit_button = mo.ui.button(label="Render Molecules")
     else:
-        submit_button = _MockInput()
+        submit_button = MockInput()
     submit_button
     return (submit_button,)
 
@@ -216,7 +231,6 @@ def button_submit():
 def py_generate_html(smarts_input, smi_input, submit_button, toggles):
     if not rdkit_available:
         html = ""
-        return (html,)
 
     _ = submit_button.value  # Trigger re-render
 
@@ -296,8 +310,6 @@ def py_generate_html(smarts_input, smi_input, submit_button, toggles):
 
 @app.cell
 def html_display(html):
-    if not rdkit_available:
-        return
     mo.Html(html)
     return
 
