@@ -91,13 +91,15 @@ with app.setup:
         from modules.chem.rdkit.smarts.find_mcs import find_mcs
         from modules.chem.rdkit.smarts.parse import parse as parse_smarts
         from modules.chem.rdkit.smiles.parse_many import parse_many as parse_smiles_list
-        from modules.chem.rdkit.depict.with_highlights import with_highlights as depict_with_highlights
+        from modules.chem.rdkit.depict.with_highlights import (
+            with_highlights as depict_with_highlights,
+        )
 
-        message = mo.md("Your environment supports **RDKit**, all good!")
+        message = mo.md("[+] Your environment supports **RDKit**, all good!")
         rdkit_available = True
     except ImportError:
         message = mo.md(
-            "**RDKit not available in this environment**.\n\n"
+            "[!] **RDKit not available in this environment**.\n\n"
             "To run this script:\n"
             "```bash\n"
             "uvx marimo run https://raw.githubusercontent.com/Adafede/marimo/refs/heads/main/apps/mols.py\n"
@@ -153,9 +155,9 @@ def py_find_mcs(smi_input):
                 f"```smarts\n{mcs_smarts}\n```"
             )
         elif mcs_error:
-            mcs = mo.md(f"Warning: {mcs_error}")
+            mcs = mo.md(f"[!] {mcs_error}")
         else:
-            mcs = mo.md("No MCS SMARTS generated.")
+            mcs = mo.md("[i] No MCS SMARTS generated.")
     else:
         mcs = None
     mcs
@@ -201,14 +203,7 @@ def button_submit():
 
 
 @app.cell
-def py_generate_html(
-    cycle,
-    defaultdict,
-    smarts_input,
-    smi_input,
-    submit_button,
-    toggles,
-):
+def py_generate_html(smarts_input, smi_input, submit_button, toggles):
     _ = submit_button.value  # Trigger re-render
 
     highlight_palette = [
@@ -240,7 +235,9 @@ def py_generate_html(
     match_counter = defaultdict(int)
 
     if not smiles:
-        html = "<p style='color:orange;'>Please enter at least one SMILES string.</p>"
+        html = (
+            "<p style='color:orange;'>[!] Please enter at least one SMILES string.</p>"
+        )
     else:
         rendered = [
             depict_with_highlights(
@@ -269,7 +266,7 @@ def py_generate_html(
             "<div style='margin: 16px auto; padding:12px 16px; max-width:800px; "
             "border: 1px solid #ddd; border-radius: 8px; "
             "box-shadow: 1px 1px 5px rgba(0,0,0,0.05); font-family: sans-serif;'>"
-            "<div style='font-weight:bold; font-size:1.1em; margin-bottom:8px;'>🔎 SMARTS Match Summary</div>"
+            "<div style='font-weight:bold; font-size:1.1em; margin-bottom:8px;'>SMARTS Match Summary</div>"
             + "".join(summary_items)
             + "</div>"
         )

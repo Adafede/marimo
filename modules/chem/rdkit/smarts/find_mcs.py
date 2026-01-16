@@ -6,8 +6,10 @@ from rdkit.Chem import Mol
 from rdkit.Chem.rdFMCS import FindMCS
 
 _MIN_MOLECULES: int = 2
-_ERROR_INSUFFICIENT: str = f"Need at least {_MIN_MOLECULES} valid molecules to find MCS."
-_ERROR_FAILED: str = "Could not determine MCS."
+_ERROR_INSUFFICIENT: str = (
+    f"[!] Need at least {_MIN_MOLECULES} valid molecules to find MCS."
+)
+_ERROR_FAILED: str = "[!] Could not determine MCS."
 
 
 def find_mcs(mols: list[Mol]) -> tuple[str | None, str | None]:

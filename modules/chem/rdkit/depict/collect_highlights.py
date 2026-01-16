@@ -31,7 +31,7 @@ def _iter_pattern_highlights(
             continue
 
         atom_indices = list(iter_match_atoms(matches=matches))
-        tooltip = f"{pattern_name}: {len(matches)} match(es)"
+        tooltip = f"[+] {pattern_name}: {len(matches)} match(es)"
 
         if match_counter is not None:
             match_counter[pattern_name] += 1
