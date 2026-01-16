@@ -24,6 +24,11 @@ with app.setup:
 
     # === MODULE SETUP ===
     import sys
+    from dataclasses import dataclass
+
+    @dataclass
+    class _MockInput:
+        value: str = ""
 
     _USE_LOCAL = False  # Set to True for local development
 
@@ -140,7 +145,7 @@ def input_smiles():
             full_width=True,
         )
     else:
-        smi_input = None
+        smi_input = _MockInput()
     smi_input
     return (smi_input,)
 
@@ -179,7 +184,7 @@ def input_smarts():
             full_width=True,
         )
     else:
-        smarts_input = {}
+        smarts_input = _MockInput()
     smarts_input
     return (smarts_input,)
 
@@ -202,7 +207,7 @@ def button_submit():
     if rdkit_available:
         submit_button = mo.ui.button(label="Render Molecules")
     else:
-        submit_button = None
+        submit_button = _MockInput()
     submit_button
     return (submit_button,)
 
