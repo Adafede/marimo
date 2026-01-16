@@ -12,7 +12,7 @@
 import marimo
 
 __generated_with = "0.19.4"
-app = marimo.App(app_title="Remote Module Demo")
+app = marimo.App(app_title="Remote Import Demo")
 
 with app.setup:
     import marimo as mo
