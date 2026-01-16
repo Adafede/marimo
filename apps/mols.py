@@ -44,7 +44,10 @@ with app.setup:
 
         class _L(Loader):
             def __init__(s, b):
-                s.b, s.s = b, requests.Session()
+                s.b = b
+                s.s = requests.Session()
+                s.s.headers.clear()
+                s.s.headers.update({"User-Agent": "marimo-remote-import"})
 
             def create_module(s, _):
                 return None
@@ -72,9 +75,11 @@ with app.setup:
                 if n != s.r and not n.startswith(s.r + "."):
                     return None
                 p = f"{s.l.b}/{n.replace('.', '/')}"
-                if (p + "/__init__.py") in _c or s.l.s.head(p + "/__init__.py").ok:
+                if (p + "/__init__.py") in _c or s.l.s.head(
+                    p + "/__init__.py"
+                ).status_code == 200:
                     return ModuleSpec(n, s.l, is_package=True)
-                if (p + ".py") in _c or s.l.s.head(p + ".py").ok:
+                if (p + ".py") in _c or s.l.s.head(p + ".py").status_code == 200:
                     return ModuleSpec(n, s.l, is_package=False)
                 return None
 
@@ -174,16 +179,13 @@ def input_smarts():
             full_width=True,
         )
     else:
-        smarts_input = None
+        smarts_input = []
     smarts_input
     return (smarts_input,)
 
 
 @app.cell
 def input_toggle(smarts_input):
-    if not rdkit_available:
-        return (None,)
-    
     smarts_list = parse_labeled_lines(smarts_input.value)
     toggles = {
         smarts: mo.ui.switch(value=True, label=name) for name, smarts in smarts_list
@@ -210,7 +212,7 @@ def py_generate_html(smarts_input, smi_input, submit_button, toggles):
     if not rdkit_available:
         html = ""
         return (html,)
-    
+
     _ = submit_button.value  # Trigger re-render
 
     highlight_palette = [
