@@ -2,14 +2,14 @@
 
 __all__ = ["select_best"]
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 
 def select_best(
-    matches: List[Tuple[str, str, Optional[str], Optional[str], Optional[int]]],
-    connectivity_map: Dict[str, int],
+    matches: list[tuple[str, str, str | None, str | None, int | None]],
+    connectivity_map: dict[str, int],
     original_name: str,
-) -> Tuple[Optional[str], bool, List[Any]]:
+) -> tuple[str | None, bool, list[Any]]:
     """
     Select the best matching taxon from a list of candidates.
     

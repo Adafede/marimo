@@ -3,14 +3,13 @@
 __all__ = ["compress_if_large"]
 
 import gzip
-from typing import Tuple
 
 
 def compress_if_large(
     data: bytes,
     threshold: int = 1_000_000,
     compression_level: int = 6,
-) -> Tuple[bytes, bool]:
+) -> tuple[bytes, bool]:
     """
     Compress data with gzip if it exceeds size threshold.
     

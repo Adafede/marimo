@@ -2,18 +2,18 @@
 
 __all__ = ["filter_year"]
 
-from typing import Optional
-
 import polars as pl
 
 from .range import filter_range
 
+DEFAULT_DATE_COLUMN: str = "pub_date"
+
 
 def filter_year(
     df: pl.DataFrame,
-    year_start: Optional[int] = None,
-    year_end: Optional[int] = None,
-    column: str = "pub_date",
+    year_start: int | None = None,
+    year_end: int | None = None,
+    column: str = DEFAULT_DATE_COLUMN,
 ) -> pl.DataFrame:
     """Filter DataFrame by year range on a date column."""
     return filter_range(df, column, year_start, year_end, transform=lambda col: col.dt.year())

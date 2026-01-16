@@ -3,7 +3,6 @@
 __all__ = ["resolve_from_csv"]
 
 import io
-from typing import Dict, List, Optional, Tuple
 
 try:
     import polars as pl
@@ -14,9 +13,9 @@ except ImportError:
 
 def resolve_from_csv(
     search_results_csv: bytes,
-    connectivity_csv: Optional[bytes] = None,
-    details_csv: Optional[bytes] = None,
-) -> Tuple[List[Tuple[str, str, Optional[str], Optional[str], Optional[int]]], Dict[str, int]]:
+    connectivity_csv: bytes | None = None,
+    details_csv: bytes | None = None,
+) -> tuple[list[tuple[str, str, str | None, str | None, int | None]], dict[str, int]]:
     """
     Parse taxon search results and enrich with connectivity data.
     

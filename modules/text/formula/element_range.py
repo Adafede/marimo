@@ -3,14 +3,13 @@
 __all__ = ["ElementRange"]
 
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass(frozen=True)
 class ElementRange:
     """Range for element count in molecular formula."""
-    min_val: Optional[int] = None
-    max_val: Optional[int] = None
+    min_val: int | None = None
+    max_val: int | None = None
 
     def is_active(self) -> bool:
         """Check if range filter is active."""

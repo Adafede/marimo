@@ -2,10 +2,8 @@
 
 __all__ = ["values_clause"]
 
-from typing import List
 
-
-def values_clause(variable: str, values: List[str], prefix: str = "") -> str:
+def values_clause(variable: str, values: list[str], prefix: str = "") -> str:
     """Build a VALUES clause for SPARQL query."""
     if not values:
         return ""

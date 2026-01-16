@@ -2,14 +2,15 @@
 
 __all__ = ["validate"]
 
-from typing import Tuple, Optional
+DEFAULT_MAX_LENGTH: int = 10000
+DEFAULT_REQUIRED_ATOMS: str = "CNOSPFIBcnops"
 
 
 def validate(
     smiles: str,
-    max_length: int = 10000,
-    required_atoms: str = "CNOSPFIBcnops",
-) -> Tuple[bool, Optional[str]]:
+    max_length: int = DEFAULT_MAX_LENGTH,
+    required_atoms: str = DEFAULT_REQUIRED_ATOMS,
+) -> tuple[bool, str | None]:
     """Validate SMILES string for common issues."""
     if not smiles or not smiles.strip():
         return True, None

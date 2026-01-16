@@ -2,15 +2,15 @@
 
 __all__ = ["render_with_highlights"]
 
-from typing import Optional
 from collections import defaultdict
+from typing import Any
 
 
 def render_with_highlights(
     name: str,
     smi: str,
-    smarts_mols: list[tuple[str, str, object, tuple[float, float, float]]],
-    match_counter: Optional[defaultdict] = None,
+    smarts_mols: list[tuple[str, str, Any, tuple[float, float, float]]],
+    match_counter: defaultdict | None = None,
     width: int = 200,
     height: int = 200,
 ) -> str:

@@ -2,10 +2,8 @@
 
 __all__ = ["find_mcs_smarts"]
 
-from typing import Tuple, Optional
 
-
-def find_mcs_smarts(smiles_list: list[tuple[str, str]]) -> Tuple[Optional[str], Optional[str]]:
+def find_mcs_smarts(smiles_list: list[tuple[str, str]]) -> tuple[str | None, str | None]:
     """
     Find Maximum Common Substructure SMARTS from a list of SMILES.
 
