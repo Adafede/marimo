@@ -179,7 +179,7 @@ def input_smarts():
             full_width=True,
         )
     else:
-        smarts_input = []
+        smarts_input = {}
     smarts_input
     return (smarts_input,)
 
