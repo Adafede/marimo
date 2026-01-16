@@ -5,8 +5,23 @@ __all__ = ["html_from_smiles"]
 from .url import CDK_DEPICT_URL
 from .url_from_smiles import url_from_smiles
 
-DEFAULT_MAX_WIDTH = "150px"
-DEFAULT_MAX_HEIGHT = "100px"
+DEFAULT_MAX_WIDTH: str = "150px"
+DEFAULT_MAX_HEIGHT: str = "100px"
+DEFAULT_BORDER_RADIUS: str = "8px"
+
+
+def _build_style(
+    max_width: str,
+    max_height: str,
+    rounded: bool,
+) -> str:
+    """Build CSS style string for img tag."""
+    styles = {
+        "max-width": max_width,
+        "max-height": max_height,
+        **({"border-radius": DEFAULT_BORDER_RADIUS} if rounded else {}),
+    }
+    return ";".join(f"{k}:{v}" for k, v in styles.items())
 
 
 def html_from_smiles(
@@ -32,9 +47,7 @@ def html_from_smiles(
         annotate=annotate,
     )
 
-    style_parts = [f"max-width:{max_width}", f"max-height:{max_height}"]
-    if rounded:
-        style_parts.append("border-radius:8px")
+    style = _build_style(max_width=max_width, max_height=max_height, rounded=rounded)
+    loading_attr = 'loading="lazy" ' if lazy else ""
 
-    loading = 'loading="lazy" ' if lazy else ""
-    return f'<img src="{img_url}" {loading}style="{";".join(style_parts)};" />'
+    return f'<img src="{img_url}" {loading_attr}style="{style};" />'
