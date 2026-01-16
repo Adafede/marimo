@@ -98,22 +98,22 @@ def _():
 
 @app.cell
 def imports(use):
-    from modules.text.formula import parse_formula
-    from modules.html.urls import structure_image_url
+    from modules.text.formula.parse import parse
+    from modules.chem.cdk.depict.url_from_smiles import url_from_smiles
 
     mo.show_code()
-    return parse_formula, structure_image_url
+    return parse, url_from_smiles
 
 
 @app.cell
-def example_1(parse_formula):
-    mo.show_code(parse_formula("C₆H₁₂O₆"), position="above")
+def example_1(parse):
+    mo.show_code(parse("C₆H₁₂O₆"), position="above")
     return
 
 
 @app.cell
-def example_2(structure_image_url):
-    mo.show_code(mo.image(structure_image_url("CCO")), position="above")
+def example_2(url_from_smiles):
+    mo.show_code(mo.image(url_from_smiles("CCO")), position="above")
     return
 
 
