@@ -5,8 +5,10 @@ from functools import lru_cache
 from .url import CDK_DEPICT_URL
 from .url_from_smiles import url_from_smiles
 
+CACHE_SIZE: int = 256
 
-@lru_cache(maxsize=256)
+
+@lru_cache(maxsize=CACHE_SIZE)
 def url_from_smiles_cached(
     smiles: str | None,
     base_url: str = CDK_DEPICT_URL,
@@ -20,4 +22,5 @@ def url_from_smiles_cached(
         base_url=base_url,
         layout=layout,
         img_format=img_format,
-        annotate=annotate)
+        annotate=annotate,
+    )

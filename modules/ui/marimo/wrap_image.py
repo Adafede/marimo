@@ -16,8 +16,8 @@ def wrap_image(
     """Wrap image HTML in mo.image for mo.ui.table."""
     if not html_str:
         return mo.Html("")
-    
-    match = re.search(r'src="([^"]+)"', html_str)
+
+    match = re.search(pattern=r'src="([^"]+)"', string=html_str)
     if match:
         return mo.image(src=match.group(1), width=width, height=height, rounded=rounded)
     return mo.Html(html_str)

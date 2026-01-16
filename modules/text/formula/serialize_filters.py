@@ -8,12 +8,62 @@ from .filters import FormulaFilters
 from .serialize_range import serialize_range
 
 DEFAULT_ELEMENT_NAMES: dict[str, str] = {
-    "c": "carbon", "h": "hydrogen", "n": "nitrogen",
-    "o": "oxygen", "p": "phosphorus", "s": "sulfur"
+    "c": "carbon",
+    "h": "hydrogen",
+    "n": "nitrogen",
+    "o": "oxygen",
+    "p": "phosphorus",
+    "s": "sulfur",
 }
+
 DEFAULT_HALOGEN_NAMES: dict[str, str] = {
-    "f": "fluorine", "cl": "chlorine", "br": "bromine", "i": "iodine"
+    "f": "fluorine",
+    "cl": "chlorine",
+    "br": "bromine",
+    "i": "iodine",
 }
+
+# Element filter configuration: (key, attribute_name)
+_ELEMENT_ATTRS = (
+    ("c", "c"),
+    ("h", "h"),
+    ("n", "n"),
+    ("o", "o"),
+    ("p", "p"),
+    ("s", "s"),
+)
+
+# Halogen filter configuration: (key, attribute_name)
+_HALOGEN_ATTRS = (
+    ("f", "f_state"),
+    ("cl", "cl_state"),
+    ("br", "br_state"),
+    ("i", "i_state"),
+)
+
+
+def _serialize_elements(
+    filters: FormulaFilters,
+    element_names: dict[str, str],
+) -> dict[str, dict[str, int | None]]:
+    """Serialize element range filters to dictionary."""
+    return {
+        element_names.get(key, key): range_dict
+        for key, attr in _ELEMENT_ATTRS
+        if (range_dict := serialize_range(element_range=getattr(filters, attr)))
+    }
+
+
+def _serialize_halogens(
+    filters: FormulaFilters,
+    halogen_names: dict[str, str],
+) -> dict[str, str]:
+    """Serialize active halogen filters to dictionary."""
+    return {
+        halogen_names.get(key, key): getattr(filters, attr)
+        for key, attr in _HALOGEN_ATTRS
+        if getattr(filters, attr) != "allowed"
+    }
 
 
 def serialize_filters(
@@ -33,18 +83,9 @@ def serialize_filters(
     if filters.exact_formula and filters.exact_formula.strip():
         result["exact_formula"] = filters.exact_formula.strip()
 
-    for elem_key, elem_range in [("c", filters.c), ("h", filters.h), ("n", filters.n),
-                                  ("o", filters.o), ("p", filters.p), ("s", filters.s)]:
-        range_dict = serialize_range(elem_range)
-        if range_dict:
-            result[element_names.get(elem_key, elem_key)] = range_dict
+    result.update(_serialize_elements(filters=filters, element_names=element_names))
 
-    active_halogens = {}
-    for hal_key, state in [("f", filters.f_state), ("cl", filters.cl_state),
-                           ("br", filters.br_state), ("i", filters.i_state)]:
-        if state != "allowed":
-            active_halogens[halogen_names.get(hal_key, hal_key)] = state
-
+    active_halogens = _serialize_halogens(filters=filters, halogen_names=halogen_names)
     if active_halogens:
         result["halogens"] = active_halogens
 

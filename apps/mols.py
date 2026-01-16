@@ -89,7 +89,9 @@ with app.setup:
 
     try:
         from modules.chem.rdkit.find_mcs_smarts import find_mcs_smarts
-        from modules.chem.rdkit.render_with_highlights import render_with_highlights as render_molecule_with_highlights
+        from modules.chem.rdkit.render_with_highlights import (
+            render_with_highlights as render_molecule_with_highlights,
+        )
         from rdkit.Chem import MolFromSmarts
 
         message = mo.md("✅ Your environment supports **RDKit**, all good!")
@@ -117,8 +119,7 @@ def message_md():
 
 @app.cell
 def stop_rdkit():
-    if not rdkit_available:
-        mo.stop()
+    mo.stop(predicate=not rdkit_available)
     return
 
 

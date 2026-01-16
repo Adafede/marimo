@@ -16,4 +16,6 @@ def filter_year(
     column: str = DEFAULT_DATE_COLUMN,
 ) -> pl.DataFrame:
     """Filter DataFrame by year range on a date column."""
-    return filter_range(df, column, year_start, year_end, transform=lambda col: col.dt.year())
+    return filter_range(
+        df, column, year_start, year_end, transform=lambda col: col.dt.year()
+    )
