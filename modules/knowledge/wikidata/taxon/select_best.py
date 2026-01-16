@@ -27,11 +27,15 @@ def select_best(
 
     if exact_matches:
         sorted_matches = sorted(
-            exact_matches, key=lambda x: connectivity_map.get(x[0], 0), reverse=True
+            exact_matches,
+            key=lambda x: connectivity_map.get(x[0], 0),
+            reverse=True,
         )
         return sorted_matches[0][0], True, sorted_matches
 
     sorted_matches = sorted(
-        matches[:10], key=lambda x: connectivity_map.get(x[0], 0), reverse=True
+        matches[:10],
+        key=lambda x: connectivity_map.get(x[0], 0),
+        reverse=True,
     )
     return sorted_matches[0][0] if sorted_matches else None, False, sorted_matches

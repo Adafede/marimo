@@ -9,7 +9,7 @@ def query_taxon_details(values_clause_str: str) -> str:
     """Build SPARQL query for taxon details."""
     return f"""
     {PREFIXES}
-    SELECT ?taxon ?taxonLabel ?taxonDescription ?taxon_parent ?taxon_parentLabel 
+    SELECT ?taxon ?taxonLabel ?taxonDescription ?taxon_parent ?taxon_parentLabel
     WHERE {{
       {values_clause_str}
       OPTIONAL {{ ?taxon wdt:P171 ?taxon_parent }}

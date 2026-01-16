@@ -19,6 +19,9 @@ def lazy_structure_image(
         return mo.Html("")
 
     html = html_generator_func(
-        smiles, base_url, max_width=max_width, max_height=max_height
+        smiles,
+        base_url,
+        max_width=max_width,
+        max_height=max_height,
     )
     return mo.Html(html) if html else mo.Html("")

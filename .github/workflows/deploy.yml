@@ -39,7 +39,7 @@ jobs:
           # No, it should not be an action. As otherwise can't run before push
           uv run .github/scripts/build.py  # This script exports all notebooks to the _site directory
           tree _site                       # Display the exported files
-    
+
       # Upload the generated site as an artifact for the deploy job
       - name: 📤 Upload artifact
         uses: actions/upload-pages-artifact@v4

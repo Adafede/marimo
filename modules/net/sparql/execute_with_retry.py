@@ -37,7 +37,7 @@ def execute_with_retry(
 
     if "timeout" in error_name.lower() or "timeout" in error_msg.lower():
         raise TimeoutError(
-            f"Query timed out after {max_retries} attempts."
+            f"Query timed out after {max_retries} attempts.",
         ) from last_error
     elif "http" in error_name.lower() or "urlerror" in error_name.lower():
         raise ConnectionError(f"HTTP error: {error_msg[:200]}") from last_error
