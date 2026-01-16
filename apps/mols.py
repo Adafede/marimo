@@ -181,6 +181,9 @@ def input_smarts():
 
 @app.cell
 def input_toggle(smarts_input):
+    if not rdkit_available:
+        return (None,)
+    
     smarts_list = parse_labeled_lines(smarts_input.value)
     toggles = {
         smarts: mo.ui.switch(value=True, label=name) for name, smarts in smarts_list
@@ -204,6 +207,10 @@ def button_submit():
 
 @app.cell
 def py_generate_html(smarts_input, smi_input, submit_button, toggles):
+    if not rdkit_available:
+        html = ""
+        return (html,)
+    
     _ = submit_button.value  # Trigger re-render
 
     highlight_palette = [
@@ -281,7 +288,9 @@ def py_generate_html(smarts_input, smi_input, submit_button, toggles):
 
 
 @app.cell
-def html(html):
+def html_display(html):
+    if not rdkit_available:
+        return
     mo.Html(html)
     return
 
