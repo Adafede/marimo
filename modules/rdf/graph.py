@@ -26,7 +26,7 @@ def add_literal(
 ) -> None:
     """
     Add a literal triple to graph if value is non-empty.
-    
+
     Args:
         graph: RDF graph to add to (mutated in place)
         subject: Subject URI
@@ -34,10 +34,10 @@ def add_literal(
         value: Value to add
         datatype: XSD datatype for the literal
         skip_empty: If True, skip None and empty string values
-    
+
     Example:
         >>> g = Graph()
-        >>> add_literal(g, URIRef("http://example.org/item"), 
+        >>> add_literal(g, URIRef("http://example.org/item"),
         ...             URIRef("http://example.org/name"), "Test")
     """
     if skip_empty and (value is None or value == ""):
@@ -53,7 +53,7 @@ def add_resource(
 ) -> None:
     """
     Add a resource triple to graph.
-    
+
     Args:
         graph: RDF graph to add to (mutated in place)
         subject: Subject URI
@@ -69,15 +69,14 @@ def bind_namespaces(
 ) -> None:
     """
     Bind namespace prefixes to graph.
-    
+
     Args:
         graph: RDF graph (mutated in place)
         namespaces: Dict mapping prefix to namespace URI
-    
+
     Example:
         >>> g = Graph()
         >>> bind_namespaces(g, {"wd": "http://www.wikidata.org/entity/"})
     """
     for prefix, uri in namespaces.items():
         graph.bind(prefix, Namespace(uri))
-

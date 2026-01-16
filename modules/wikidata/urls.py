@@ -6,7 +6,7 @@ URLs and utility functions for Wikidata services.
 
 __all__ = [
     "WIKIDATA_SPARQL_ENDPOINT",
-    "QLEVER_SPARQL_ENDPOINT", 
+    "QLEVER_SPARQL_ENDPOINT",
     "SCHOLIA_BASE",
     "WIKIDATA_ENTITY_PREFIX",
     "WIKIDATA_STATEMENT_PREFIX",
@@ -30,13 +30,13 @@ SCHOLIA_BASE = "https://scholia.toolforge.org/"
 def scholia_url(qid: str) -> str:
     """
     Build Scholia URL for a Wikidata QID.
-    
+
     Args:
         qid: Wikidata QID (e.g., "Q12345")
-    
+
     Returns:
         Scholia URL
-    
+
     Example:
         >>> scholia_url("Q12345")
         'https://scholia.toolforge.org/Q12345'
@@ -47,16 +47,15 @@ def scholia_url(qid: str) -> str:
 def wikidata_wiki_url(qid: str) -> str:
     """
     Build Wikidata wiki URL for a QID.
-    
+
     Args:
         qid: Wikidata QID
-    
+
     Returns:
         Wikidata wiki URL
-    
+
     Example:
         >>> wikidata_wiki_url("Q12345")
         'https://www.wikidata.org/wiki/Q12345'
     """
     return f"https://www.wikidata.org/wiki/{qid}"
-

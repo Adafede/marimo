@@ -3,6 +3,7 @@
 # dependencies = [
 #     "marimo",
 #     "rdkit==2025.9.3",
+#     "requests==2.32.5",
 # ]
 # [tool.marimo.display]
 # theme = "system"
@@ -10,7 +11,7 @@
 
 import marimo
 
-__generated_with = "0.19.2"
+__generated_with = "0.19.4"
 app = marimo.App(
     width="medium",
     app_title="Automated substructure depiction and verification",
@@ -21,7 +22,76 @@ with app.setup:
     from collections import defaultdict
     from itertools import cycle
 
+    # === MODULE SETUP ===
+    import sys
+
+    _USE_LOCAL = False  # Set to True for local development
+
+    if _USE_LOCAL:
+        # Add your local module directory to the path
+        # Adjust this path to where your package folder is located locally
+        sys.path.insert(0, ".")
+
+        def use(url):
+            pass
+    else:
+        ## === GITHUB MODULES IMPORT ===
+        import requests
+        from importlib.machinery import ModuleSpec
+        from importlib.abc import MetaPathFinder, Loader
+
+        _c = {}
+
+        class _L(Loader):
+            def __init__(s, b):
+                s.b, s.s = b, requests.Session()
+
+            def create_module(s, _):
+                return None
+
+            def exec_module(s, m):
+                n, p = (
+                    m.__spec__.name,
+                    m.__spec__.submodule_search_locations is not None,
+                )
+                u = f"{s.b}/{n.replace('.', '/')}" + ("/__init__.py" if p else ".py")
+                if u not in _c:
+                    _c[u] = s.s.get(u).text
+                m.__file__, m.__path__, m.__package__ = (
+                    u,
+                    [u.rsplit("/", 1)[0]] if p else None,
+                    n if p else n.rpartition(".")[0],
+                )
+                exec(compile(_c[u], u, "exec"), m.__dict__)
+
+        class _F(MetaPathFinder):
+            def __init__(s, b, r):
+                s.r, s.l = r, _L(b)
+
+            def find_spec(s, n, *_):
+                if n != s.r and not n.startswith(s.r + "."):
+                    return None
+                p = f"{s.l.b}/{n.replace('.', '/')}"
+                if (p + ".py") in _c or s.l.s.head(p + ".py").ok:
+                    return ModuleSpec(n, s.l, is_package=False)
+                if (p + "/__init__.py") in _c or s.l.s.head(p + "/__init__.py").ok:
+                    return ModuleSpec(n, s.l, is_package=True)
+                return None
+
+        def use(url):
+            sys.meta_path.insert(0, _F(url.rsplit("/", 1)[0], url.rsplit("/", 1)[1]))
+
+    use("https://raw.githubusercontent.com/Adafede/marimo/main/modules")
+    # === END ===
+
+    from modules.text.strings import parse_labeled_lines
+    from modules.utils.colors import hex_to_rgb_float
+
     try:
+        from modules.chem.rdkit_utils import (
+            find_mcs_smarts,
+            render_molecule_with_highlights,
+        )
         from rdkit.Chem import MolFromSmarts
 
         message = mo.md("✅ Your environment supports **RDKit**, all good!")
@@ -37,86 +107,8 @@ with app.setup:
         )
         rdkit_available = False
         MolFromSmarts = None
-
-
-@app.function
-def parse_input(text):
-    items = []
-    for line in text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        if " " in line:
-            val, name = line.split(" ", 1)
-            items.append((name.strip(), val.strip()))
-        else:
-            items.append((line, line))
-    return items
-
-
-@app.function
-def hex_to_rgb_float(hex_color):
-    h = hex_color.lstrip("#")
-    return tuple(int(h[i : i + 2], 16) / 255.0 for i in (0, 2, 4))
-
-
-@app.function
-def find_mcs_smarts(smiles_list):
-    from rdkit.Chem import MolFromSmiles
-    from rdkit.Chem.rdFMCS import FindMCS
-
-    mols = [MolFromSmiles(smi) for _, smi in smiles_list]
-    mols = [mol for mol in mols if mol is not None]
-    if len(mols) < 2:
-        return None, "⚠️ Need at least two valid SMILES to find MCS."
-
-    mcs_result = FindMCS(mols)
-    if mcs_result.canceled or not mcs_result.smartsString:
-        return None, "⚠️ Could not determine MCS."
-
-    return mcs_result.smartsString, None
-
-
-@app.function
-def render_molecule(name, smi, smarts_mols, match_counter):
-    from rdkit.Chem import MolFromSmiles
-    from rdkit.Chem.Draw.rdMolDraw2D import MolDraw2DSVG
-    from rdkit.Chem.rdDepictor import Compute2DCoords
-
-    mol = MolFromSmiles(smi)
-    if not mol:
-        return f"<div style='color:red;'>🚫 Invalid SMILES: <code>{smi}</code></div>"
-
-    Compute2DCoords(mol)
-    atom_ids, colors, tooltips = [], {}, []
-
-    for s_name, smarts, smarts_mol, color in smarts_mols:
-        matches = mol.GetSubstructMatches(smarts_mol)
-        if matches:
-            for match in matches:
-                atom_ids.extend(match)
-                for idx in match:
-                    colors[idx] = color
-            tooltips.append(f"✅ {s_name}: {len(matches)} match(es)")
-            match_counter[s_name] += 1
-
-    drawer = MolDraw2DSVG(200, 200)
-    drawer.DrawMolecule(mol, highlightAtoms=atom_ids, highlightAtomColors=colors)
-    drawer.FinishDrawing()
-
-    label = (
-        f"<strong>{name}</strong><br><code>{smi}</code>"
-        if name != smi
-        else f"<code>{smi}</code>"
-    )
-
-    return (
-        "<div style='display:inline-block; margin:12px; text-align:center; "
-        "border:1px solid #eee; padding:10px; border-radius:8px; "
-        "box-shadow: 2px 2px 5px rgba(0,0,0,0.1);'>"
-        f"{drawer.GetDrawingText()}<br>{label}<br>"
-        f"<small>{'<br>'.join(tooltips)}</small></div>"
-    )
+        find_mcs_smarts = None
+        render_molecule_with_highlights = None
 
 
 @app.cell
@@ -150,7 +142,7 @@ def input_smiles():
 @app.cell
 def py_find_mcs(smi_input):
     if rdkit_available:
-        smiles_list = parse_input(smi_input.value)
+        smiles_list = parse_labeled_lines(smi_input.value)
         mcs_smarts, mcs_error = find_mcs_smarts(smiles_list)
 
         if mcs_smarts:
@@ -187,7 +179,7 @@ def input_smarts():
 
 @app.cell
 def input_toggle(smarts_input):
-    smarts_list = parse_input(smarts_input.value)
+    smarts_list = parse_labeled_lines(smarts_input.value)
     toggles = {
         smarts: mo.ui.switch(value=True, label=name) for name, smarts in smarts_list
     }
@@ -209,7 +201,14 @@ def button_submit():
 
 
 @app.cell
-def py_generate_html(smarts_input, smi_input, submit_button, toggles):
+def py_generate_html(
+    cycle,
+    defaultdict,
+    smarts_input,
+    smi_input,
+    submit_button,
+    toggles,
+):
     _ = submit_button.value  # Trigger re-render
 
     highlight_palette = [
@@ -225,8 +224,8 @@ def py_generate_html(smarts_input, smi_input, submit_button, toggles):
     ]
     color_cycle = cycle(highlight_palette)
 
-    smiles = parse_input(smi_input.value)
-    raw_smarts = parse_input(smarts_input.value)
+    smiles = parse_labeled_lines(smi_input.value)
+    raw_smarts = parse_labeled_lines(smarts_input.value)
 
     active_smarts = [
         (name, smarts) for name, smarts in raw_smarts if toggles[smarts].value
@@ -244,7 +243,7 @@ def py_generate_html(smarts_input, smi_input, submit_button, toggles):
         html = "<p style='color:orange;'>⚠️ Please enter at least one SMILES string.</p>"
     else:
         rendered = [
-            render_molecule(name, smi, parsed_smarts, match_counter)
+            render_molecule_with_highlights(name, smi, parsed_smarts, match_counter)
             for name, smi in smiles
         ]
 

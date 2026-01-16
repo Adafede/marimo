@@ -17,15 +17,15 @@ from urllib.parse import urlencode, quote
 def build_query_string(params: dict[str, str | int | float | bool]) -> str:
     """
     Build a URL query string from parameters.
-    
+
     Args:
         params: Dictionary of parameter names to values.
                 None values are excluded.
                 Bool values become "true"/"false".
-    
+
     Returns:
         Query string starting with "?" or empty string if no params
-    
+
     Example:
         >>> build_query_string({"name": "test", "count": 5})
         '?name=test&count=5'
@@ -40,10 +40,10 @@ def build_query_string(params: dict[str, str | int | float | bool]) -> str:
             filtered[k] = "true" if v else "false"
         else:
             filtered[k] = str(v)
-    
+
     if not filtered:
         return ""
-    
+
     return "?" + urlencode(filtered)
 
 
@@ -54,15 +54,15 @@ def structure_image_url(
 ) -> str:
     """
     Generate URL for chemical structure image from SMILES.
-    
+
     Args:
         smiles: SMILES string
         base_url: Base URL for the depiction service
         annotate: Annotation style (e.g., "cip" for stereochemistry)
-    
+
     Returns:
         Complete URL for structure image
-    
+
     Example:
         >>> structure_image_url("c1ccccc1")
         'https://www.simolecule.com/cdkdepict/depict/cow/svg?smi=c1ccccc1&annotate=cip'
@@ -74,13 +74,13 @@ def structure_image_url(
 def doi_url(doi: str) -> str:
     """
     Generate DOI resolver URL.
-    
+
     Args:
         doi: DOI string (with or without URL prefix)
-    
+
     Returns:
         Full DOI URL
-    
+
     Example:
         >>> doi_url("10.1234/example")
         'https://doi.org/10.1234/example'
@@ -94,16 +94,15 @@ def doi_url(doi: str) -> str:
 def scholia_url(qid: str) -> str:
     """
     Generate Scholia URL for a Wikidata QID.
-    
+
     Args:
         qid: Wikidata QID (e.g., "Q12345")
-    
+
     Returns:
         Scholia URL
-    
+
     Example:
         >>> scholia_url("Q12345")
         'https://scholia.toolforge.org/Q12345'
     """
     return f"https://scholia.toolforge.org/{qid}"
-
