@@ -3,4 +3,6 @@ name = "adafedemarimo"
 version = "0.1.0"
 description = "Minimal, reusable utilities for marimo applications"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "marimo>=0.19.4",
+]
