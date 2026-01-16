@@ -19,16 +19,16 @@ def link(
 ) -> str:
     """
     Generate an HTML anchor tag.
-    
+
     Args:
         url: The href URL
         text: Link text content
         target: Target attribute (default: "_blank")
         rel: Rel attribute for security
-    
+
     Returns:
         HTML anchor tag string
-    
+
     Example:
         >>> link("https://example.com", "Example")
         '<a href="https://example.com" target="_blank" rel="noopener noreferrer">Example</a>'
@@ -44,16 +44,16 @@ def styled_link(
 ) -> str:
     """
     Generate a styled HTML anchor tag.
-    
+
     Args:
         url: The href URL
         text: Link text content
         color: CSS color for the link
         target: Target attribute
-    
+
     Returns:
         HTML anchor tag with inline style
-    
+
     Example:
         >>> styled_link("https://example.com", "Example", "#ff0000")
         '<a href="https://example.com" target="_blank" style="color:#ff0000;">Example</a>'
@@ -71,7 +71,7 @@ def image(
 ) -> str:
     """
     Generate an HTML img tag.
-    
+
     Args:
         src: Image source URL
         alt: Alt text
@@ -79,28 +79,27 @@ def image(
         max_height: CSS max-height
         lazy: Whether to use lazy loading
         rounded: Whether to add border-radius
-    
+
     Returns:
         HTML img tag string
-    
+
     Example:
         >>> image("img.png", "My Image", lazy=True)
         '<img src="img.png" alt="My Image" loading="lazy" style="max-width:200px;max-height:150px;" />'
     """
     parts = [f'<img src="{src}"']
-    
+
     if alt:
         parts.append(f'alt="{alt}"')
-    
+
     if lazy:
         parts.append('loading="lazy"')
-    
+
     style_parts = [f"max-width:{max_width}", f"max-height:{max_height}"]
     if rounded:
         style_parts.append("border-radius:8px")
-    
+
     parts.append(f'style="{";".join(style_parts)};"')
     parts.append("/>")
-    
-    return " ".join(parts)
 
+    return " ".join(parts)

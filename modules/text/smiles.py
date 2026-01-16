@@ -19,15 +19,15 @@ def validate_smiles(
 ) -> Tuple[bool, Optional[str]]:
     """
     Validate SMILES string for common issues.
-    
+
     Args:
         smiles: The SMILES string to validate
         max_length: Maximum allowed length
         required_atoms: Characters that indicate valid atom symbols
-    
+
     Returns:
         Tuple of (is_valid, error_message). If valid, error_message is None.
-    
+
     Example:
         >>> validate_smiles("c1ccccc1")
         (True, None)
@@ -43,7 +43,7 @@ def validate_smiles(
 
     if len(smiles) < 1:
         return False, "SMILES string is empty after trimming whitespace"
-    
+
     if len(smiles) > max_length:
         return False, (
             f"SMILES string is too long ({len(smiles):,} characters). "
@@ -73,16 +73,16 @@ def validate_smiles(
 def escape_for_sparql(smiles: str) -> str:
     """
     Escape SMILES string for safe use in SPARQL queries.
-    
-    SMILES strings can contain backslashes (e.g., /C=C\\3/) which are 
+
+    SMILES strings can contain backslashes (e.g., /C=C\\3/) which are
     escape characters in SPARQL string literals and must be doubled.
-    
+
     Args:
         smiles: The SMILES string to escape
-    
+
     Returns:
         The escaped SMILES string
-    
+
     Example:
         >>> escape_for_sparql("C/C=C\\\\C")
         'C/C=C\\\\\\\\C'
@@ -90,4 +90,3 @@ def escape_for_sparql(smiles: str) -> str:
     if not smiles:
         return smiles
     return smiles.replace("\\", "\\\\")
-

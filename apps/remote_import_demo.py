@@ -30,20 +30,19 @@ def title():
 def _():
     # === COPY INTO YOUR APP SETUP ===
     import sys
-    import os
 
     # Toggle this flag for local vs remote development
     _USE_LOCAL = False  # Set to True for local development
 
     if _USE_LOCAL:
         # Add your local module directory to the path
-        # Adjust this path to where your 'modules' folder is located locally
+        # Adjust this path to where your "modules" folder is located locally
         sys.path.insert(0, ".")
 
         def use(url):
             pass
     else:
-        # === GITHUB MODULES IMPORT ===
+        ## === GITHUB MODULES IMPORT ===
         import requests
         from importlib.machinery import ModuleSpec
         from importlib.abc import MetaPathFinder, Loader
@@ -62,9 +61,7 @@ def _():
                     m.__spec__.name,
                     m.__spec__.submodule_search_locations is not None,
                 )
-                u = f"{s.b}/{n.replace('.', '/')}" + (
-                    "/__init__.py" if p else ".py"
-                )
+                u = f"{s.b}/{n.replace('.', '/')}" + ("/__init__.py" if p else ".py")
                 if u not in _c:
                     _c[u] = s.s.get(u).text
                 m.__file__, m.__path__, m.__package__ = (
@@ -89,10 +86,11 @@ def _():
                 return None
 
         def use(url):
-            sys.meta_path.insert(
-                0, _F(url.rsplit("/", 1)[0], url.rsplit("/", 1)[1])
-            )
+            sys.meta_path.insert(0, _F(url.rsplit("/", 1)[0], url.rsplit("/", 1)[1]))
 
+    # Usage: use("https://raw.githubusercontent.com/USER/REPO/BRANCH/PATH/PACKAGE")
+    use("https://raw.githubusercontent.com/Adafede/marimo/main/modules")
+    # === END ===
 
     mo.show_code()
     return (use,)
@@ -100,9 +98,6 @@ def _():
 
 @app.cell
 def imports(use):
-    # Usage: use("https://raw.githubusercontent.com/USER/REPO/BRANCH/PATH/PACKAGE")
-    use("https://raw.githubusercontent.com/Adafede/marimo/main/modules")
-
     from modules.text.formula import parse_formula
     from modules.html.urls import structure_image_url
 
