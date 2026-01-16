@@ -11,7 +11,7 @@
 
 import marimo
 
-__generated_with = "0.19.2"
+__generated_with = "0.19.4"
 app = marimo.App(app_title="Remote Module Demo")
 
 with app.setup:
@@ -28,54 +28,70 @@ def title():
 
 @app.cell
 def _():
-    # === GITHUB MODULES IMPORT: COPY INTO YOUR APP SETUP ===
-    import sys, requests
-    from importlib.machinery import ModuleSpec
-    from importlib.abc import MetaPathFinder, Loader
+    # === COPY INTO YOUR APP SETUP ===
+    import sys
+    import os
 
-    _c = {}
+    # Toggle this flag for local vs remote development
+    _USE_LOCAL = False  # Set to True for local development
 
+    if _USE_LOCAL:
+        # Add your local module directory to the path
+        # Adjust this path to where your 'modules' folder is located locally
+        sys.path.insert(0, ".")
 
-    class _L(Loader):
-        def __init__(s, b):
-            s.b, s.s = b, requests.Session()
+        def use(url):
+            pass
+    else:
+        # === GITHUB MODULES IMPORT ===
+        import requests
+        from importlib.machinery import ModuleSpec
+        from importlib.abc import MetaPathFinder, Loader
 
-        def create_module(s, _):
-            return None
+        _c = {}
 
-        def exec_module(s, m):
-            n, p = (
-                m.__spec__.name,
-                m.__spec__.submodule_search_locations is not None,
-            )
-            u = f"{s.b}/{n.replace('.', '/')}" + ("/__init__.py" if p else ".py")
-            if u not in _c:
-                _c[u] = s.s.get(u).text
-            m.__file__, m.__path__, m.__package__ = (
-                u,
-                [u.rsplit("/", 1)[0]] if p else None,
-                n if p else n.rpartition(".")[0],
-            )
-            exec(compile(_c[u], u, "exec"), m.__dict__)
+        class _L(Loader):
+            def __init__(s, b):
+                s.b, s.s = b, requests.Session()
 
-
-    class _F(MetaPathFinder):
-        def __init__(s, b, r):
-            s.r, s.l = r, _L(b)
-
-        def find_spec(s, n, *_):
-            if n != s.r and not n.startswith(s.r + "."):
+            def create_module(s, _):
                 return None
-            p = f"{s.l.b}/{n.replace('.', '/')}"
-            if (p + ".py") in _c or s.l.s.head(p + ".py").ok:
-                return ModuleSpec(n, s.l, is_package=False)
-            if (p + "/__init__.py") in _c or s.l.s.head(p + "/__init__.py").ok:
-                return ModuleSpec(n, s.l, is_package=True)
-            return None
 
+            def exec_module(s, m):
+                n, p = (
+                    m.__spec__.name,
+                    m.__spec__.submodule_search_locations is not None,
+                )
+                u = f"{s.b}/{n.replace('.', '/')}" + (
+                    "/__init__.py" if p else ".py"
+                )
+                if u not in _c:
+                    _c[u] = s.s.get(u).text
+                m.__file__, m.__path__, m.__package__ = (
+                    u,
+                    [u.rsplit("/", 1)[0]] if p else None,
+                    n if p else n.rpartition(".")[0],
+                )
+                exec(compile(_c[u], u, "exec"), m.__dict__)
 
-    def use(url):
-        sys.meta_path.insert(0, _F(url.rsplit("/", 1)[0], url.rsplit("/", 1)[1]))
+        class _F(MetaPathFinder):
+            def __init__(s, b, r):
+                s.r, s.l = r, _L(b)
+
+            def find_spec(s, n, *_):
+                if n != s.r and not n.startswith(s.r + "."):
+                    return None
+                p = f"{s.l.b}/{n.replace('.', '/')}"
+                if (p + ".py") in _c or s.l.s.head(p + ".py").ok:
+                    return ModuleSpec(n, s.l, is_package=False)
+                if (p + "/__init__.py") in _c or s.l.s.head(p + "/__init__.py").ok:
+                    return ModuleSpec(n, s.l, is_package=True)
+                return None
+
+        def use(url):
+            sys.meta_path.insert(
+                0, _F(url.rsplit("/", 1)[0], url.rsplit("/", 1)[1])
+            )
 
 
     mo.show_code()
@@ -96,7 +112,7 @@ def imports(use):
 
 @app.cell
 def example_1(parse_formula):
-    mo.show_code(parse_formula("C6H12O6"), position="above")
+    mo.show_code(parse_formula("C₆H₁₂O₆"), position="above")
     return
 
 
