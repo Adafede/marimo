@@ -79,10 +79,12 @@ def _():
                 if n != s.r and not n.startswith(s.r + "."):
                     return None
                 p = f"{s.l.b}/{n.replace('.', '/')}"
-                if (p + ".py") in _c or s.l.s.head(p + ".py").ok:
-                    return ModuleSpec(n, s.l, is_package=False)
+                # Check for package first (directory with __init__.py)
                 if (p + "/__init__.py") in _c or s.l.s.head(p + "/__init__.py").ok:
                     return ModuleSpec(n, s.l, is_package=True)
+                # Then check for module (.py file)
+                if (p + ".py") in _c or s.l.s.head(p + ".py").ok:
+                    return ModuleSpec(n, s.l, is_package=False)
                 return None
 
         def use(url):
