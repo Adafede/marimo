@@ -2,14 +2,14 @@
 
 __all__ = ["lazy_structure_image"]
 
-from typing import Optional
+from collections.abc import Callable
 
 import marimo as mo
 
 
 def lazy_structure_image(
-    smiles: Optional[str],
-    html_generator_func,
+    smiles: str | None,
+    html_generator_func: Callable[..., str],
     base_url: str = "https://www.simolecule.com/cdkdepict",
     max_width: str = "200px",
     max_height: str = "150px",

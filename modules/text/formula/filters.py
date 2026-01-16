@@ -3,7 +3,6 @@
 __all__ = ["FormulaFilters"]
 
 from dataclasses import dataclass, field
-from typing import Optional
 
 from .element_range import ElementRange
 
@@ -11,7 +10,7 @@ from .element_range import ElementRange
 @dataclass(frozen=True)
 class FormulaFilters:
     """Molecular formula filtering criteria."""
-    exact_formula: Optional[str] = None
+    exact_formula: str | None = None
     c: ElementRange = field(default_factory=ElementRange)
     h: ElementRange = field(default_factory=ElementRange)
     n: ElementRange = field(default_factory=ElementRange)

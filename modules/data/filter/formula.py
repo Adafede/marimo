@@ -2,16 +2,19 @@
 
 __all__ = ["filter_formula"]
 
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any
 
 import polars as pl
+
+DEFAULT_FORMULA_COLUMN: str = "mf"
 
 
 def filter_formula(
     df: pl.DataFrame,
     filters: Any,
-    column: str = "mf",
-    match_func: Optional[Callable[[str, Any], bool]] = None,
+    column: str = DEFAULT_FORMULA_COLUMN,
+    match_func: Callable[[str, Any], bool] | None = None,
 ) -> pl.DataFrame:
     """Filter DataFrame by molecular formula criteria."""
     if column not in df.columns:

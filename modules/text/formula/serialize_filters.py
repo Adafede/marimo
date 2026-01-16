@@ -2,28 +2,33 @@
 
 __all__ = ["serialize_filters"]
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 from .filters import FormulaFilters
 from .serialize_range import serialize_range
 
+DEFAULT_ELEMENT_NAMES: dict[str, str] = {
+    "c": "carbon", "h": "hydrogen", "n": "nitrogen",
+    "o": "oxygen", "p": "phosphorus", "s": "sulfur"
+}
+DEFAULT_HALOGEN_NAMES: dict[str, str] = {
+    "f": "fluorine", "cl": "chlorine", "br": "bromine", "i": "iodine"
+}
+
 
 def serialize_filters(
-    filters: Optional[FormulaFilters],
-    element_names: Optional[Dict[str, str]] = None,
-    halogen_names: Optional[Dict[str, str]] = None,
-) -> Optional[Dict[str, Any]]:
+    filters: FormulaFilters | None,
+    element_names: dict[str, str] | None = None,
+    halogen_names: dict[str, str] | None = None,
+) -> dict[str, Any] | None:
     """Convert FormulaFilters to dictionary for metadata export."""
     if not filters or not filters.is_active():
         return None
 
-    if element_names is None:
-        element_names = {"c": "carbon", "h": "hydrogen", "n": "nitrogen",
-                         "o": "oxygen", "p": "phosphorus", "s": "sulfur"}
-    if halogen_names is None:
-        halogen_names = {"f": "fluorine", "cl": "chlorine", "br": "bromine", "i": "iodine"}
+    element_names = element_names or DEFAULT_ELEMENT_NAMES
+    halogen_names = halogen_names or DEFAULT_HALOGEN_NAMES
 
-    result: Dict[str, Any] = {}
+    result: dict[str, Any] = {}
 
     if filters.exact_formula and filters.exact_formula.strip():
         result["exact_formula"] = filters.exact_formula.strip()

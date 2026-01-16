@@ -2,7 +2,8 @@
 
 __all__ = ["filter_range"]
 
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any
 
 import polars as pl
 
@@ -10,9 +11,9 @@ import polars as pl
 def filter_range(
     df: pl.DataFrame,
     column: str,
-    min_val: Optional[Any] = None,
-    max_val: Optional[Any] = None,
-    transform: Optional[Callable[[pl.Expr], pl.Expr]] = None,
+    min_val: Any | None = None,
+    max_val: Any | None = None,
+    transform: Callable[[pl.Expr], pl.Expr] | None = None,
     keep_nulls: bool = True,
 ) -> pl.DataFrame:
     """Filter DataFrame by column value range."""

@@ -93,11 +93,11 @@ def _():
     # === END ===
 
     mo.show_code()
-    return (use,)
+    return
 
 
 @app.cell
-def imports(use):
+def imports():
     from modules.text.formula.parse import parse
     from modules.chem.cdk.depict.url_from_smiles import url_from_smiles
 
