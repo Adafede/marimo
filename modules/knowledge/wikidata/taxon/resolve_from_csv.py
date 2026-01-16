@@ -6,9 +6,53 @@ import io
 
 try:
     import polars as pl
+
     HAS_POLARS = True
 except ImportError:
     HAS_POLARS = False
+
+
+def _extract_qid_from_url(url: str) -> str:
+    """Extract QID from Wikidata entity URL."""
+    return url.split("/")[-1] if "/" in url else url
+
+
+def _parse_search_results(csv_bytes: bytes) -> list[tuple[str, str]]:
+    """Parse search results CSV into list of (qid, name) tuples."""
+    df = pl.read_csv(source=io.BytesIO(csv_bytes))
+    if df.is_empty():
+        return []
+
+    return [
+        (_extract_qid_from_url(row.get("taxon", "")), row.get("taxon_name", ""))
+        for row in df.iter_rows(named=True)
+        if row.get("taxon") and row.get("taxon_name")
+    ]
+
+
+def _parse_connectivity(csv_bytes: bytes) -> dict[str, int]:
+    """Parse connectivity CSV into qid -> compound_count mapping."""
+    df = pl.read_csv(source=io.BytesIO(csv_bytes))
+    return {
+        _extract_qid_from_url(row.get("taxon", "")): int(
+            row.get("compound_count", 0) or 0
+        )
+        for row in df.iter_rows(named=True)
+        if row.get("taxon")
+    }
+
+
+def _parse_details(csv_bytes: bytes) -> dict[str, dict[str, str | None]]:
+    """Parse details CSV into qid -> {description, parent} mapping."""
+    df = pl.read_csv(source=io.BytesIO(csv_bytes))
+    return {
+        _extract_qid_from_url(row.get("taxon", "")): {
+            "description": row.get("taxonDescription"),
+            "parent": row.get("taxon_parentLabel"),
+        }
+        for row in df.iter_rows(named=True)
+        if row.get("taxon")
+    }
 
 
 def resolve_from_csv(
@@ -18,7 +62,7 @@ def resolve_from_csv(
 ) -> tuple[list[tuple[str, str, str | None, str | None, int | None]], dict[str, int]]:
     """
     Parse taxon search results and enrich with connectivity data.
-    
+
     Returns:
         Tuple of:
         - List of matches: (qid, name, description, parent, compound_count)
@@ -30,47 +74,31 @@ def resolve_from_csv(
     if not search_results_csv or not search_results_csv.strip():
         return [], {}
 
-    df = pl.read_csv(io.BytesIO(search_results_csv))
-    if df.is_empty():
+    base_matches = _parse_search_results(csv_bytes=search_results_csv)
+    if not base_matches:
         return [], {}
 
-    matches = []
-    for row in df.iter_rows(named=True):
-        taxon_url = row.get("taxon", "")
-        name = row.get("taxon_name", "")
-        if taxon_url and name:
-            qid = taxon_url.split("/")[-1] if "/" in taxon_url else taxon_url
-            matches.append((qid, name, None, None, None))
+    connectivity_map = (
+        _parse_connectivity(csv_bytes=connectivity_csv)
+        if connectivity_csv and connectivity_csv.strip()
+        else {}
+    )
 
-    if not matches:
-        return [], {}
+    details_map = (
+        _parse_details(csv_bytes=details_csv)
+        if details_csv and details_csv.strip()
+        else {}
+    )
 
-    connectivity_map = {}
-    if connectivity_csv and connectivity_csv.strip():
-        conn_df = pl.read_csv(io.BytesIO(connectivity_csv))
-        for row in conn_df.iter_rows(named=True):
-            taxon_url = row.get("taxon", "")
-            count = row.get("compound_count", 0)
-            if taxon_url:
-                qid = taxon_url.split("/")[-1] if "/" in taxon_url else taxon_url
-                connectivity_map[qid] = int(count) if count else 0
-
-    details_map = {}
-    if details_csv and details_csv.strip():
-        details_df = pl.read_csv(io.BytesIO(details_csv))
-        for row in details_df.iter_rows(named=True):
-            taxon_url = row.get("taxon", "")
-            if taxon_url:
-                qid = taxon_url.split("/")[-1] if "/" in taxon_url else taxon_url
-                details_map[qid] = {
-                    "description": row.get("taxonDescription"),
-                    "parent": row.get("taxon_parentLabel"),
-                }
-
-    enriched = []
-    for qid, name, _, _, _ in matches:
-        details = details_map.get(qid, {})
-        count = connectivity_map.get(qid)
-        enriched.append((qid, name, details.get("description"), details.get("parent"), count))
+    enriched = [
+        (
+            qid,
+            name,
+            details_map.get(qid, {}).get("description"),
+            details_map.get(qid, {}).get("parent"),
+            connectivity_map.get(qid),
+        )
+        for qid, name in base_matches
+    ]
 
     return enriched, connectivity_map

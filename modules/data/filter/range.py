@@ -3,6 +3,8 @@
 __all__ = ["filter_range"]
 
 from collections.abc import Callable
+from functools import reduce
+from operator import and_
 from typing import Any
 
 import polars as pl
@@ -20,19 +22,21 @@ def filter_range(
     if (min_val is None and max_val is None) or column not in df.columns:
         return df
 
-    col_expr = pl.col(column)
-    if transform:
-        col_expr = transform(col_expr)
+    col_expr = transform(pl.col(column)) if transform else pl.col(column)
 
-    conditions = []
-    if min_val is not None:
-        conditions.append(col_expr >= min_val)
-    if max_val is not None:
-        conditions.append(col_expr <= max_val)
+    conditions = [
+        cond
+        for cond in (
+            col_expr >= min_val if min_val is not None else None,
+            col_expr <= max_val if max_val is not None else None,
+        )
+        if cond is not None
+    ]
 
-    combined = conditions[0]
-    for cond in conditions[1:]:
-        combined = combined & cond
+    if not conditions:
+        return df
+
+    combined = reduce(and_, conditions)
 
     if keep_nulls:
         combined = pl.col(column).is_null() | combined

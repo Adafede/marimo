@@ -2,12 +2,17 @@
 
 __all__ = ["link_from_statement"]
 
-from .styled_anchor import styled_anchor
+from .styled_anchor import DEFAULT_LINK_COLOR, styled_anchor
 
 
-def link_from_statement(url: str, color: str = "#3377c4") -> str:
+def _extract_statement_id(url: str) -> str:
+    """Extract statement ID from Wikidata statement URL."""
+    return url.split("/")[-1]
+
+
+def link_from_statement(url: str, color: str = DEFAULT_LINK_COLOR) -> str:
     """Create styled HTML link for a Wikidata statement URL."""
     if not url:
         return ""
-    statement_id = url.split("/")[-1]
-    return styled_anchor(url, statement_id, color)
+    statement_id = _extract_statement_id(url=url)
+    return styled_anchor(url=url, text=statement_id, color=color)

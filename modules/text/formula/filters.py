@@ -10,6 +10,7 @@ from .element_range import ElementRange
 @dataclass(frozen=True)
 class FormulaFilters:
     """Molecular formula filtering criteria."""
+
     exact_formula: str | None = None
     c: ElementRange = field(default_factory=ElementRange)
     h: ElementRange = field(default_factory=ElementRange)
@@ -28,6 +29,9 @@ class FormulaFilters:
             return True
         if any(r.is_active() for r in [self.c, self.h, self.n, self.o, self.p, self.s]):
             return True
-        if any(s != "allowed" for s in [self.f_state, self.cl_state, self.br_state, self.i_state]):
+        if any(
+            s != "allowed"
+            for s in [self.f_state, self.cl_state, self.br_state, self.i_state]
+        ):
             return True
         return False

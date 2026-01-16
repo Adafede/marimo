@@ -8,6 +8,7 @@ import urllib.request
 
 if "pyodide" in sys.modules:
     import pyodide_http
+
     pyodide_http.patch_all()
 
 
@@ -31,9 +32,11 @@ class Client:
             "Content-Type": "application/x-www-form-urlencoded",
             "User-Agent": self.user_agent,
         }
-        data = urllib.parse.urlencode({"query": query}).encode("utf-8")
-        req = urllib.request.Request(self.endpoint, data=data, headers=headers, method="POST")
-        with urllib.request.urlopen(req, timeout=self.timeout) as response:
+        data = urllib.parse.urlencode(query={"query": query}).encode(encoding="utf-8")
+        req = urllib.request.Request(
+            url=self.endpoint, data=data, headers=headers, method="POST"
+        )
+        with urllib.request.urlopen(url=req, timeout=self.timeout) as response:
             return response.read()
 
     def query_csv(self, query: str) -> bytes:

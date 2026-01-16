@@ -2,14 +2,19 @@
 
 __all__ = ["DOI_BASE", "link_from_doi"]
 
-from .styled_anchor import styled_anchor
+from .styled_anchor import DEFAULT_LINK_COLOR, styled_anchor
 
 DOI_BASE = "https://doi.org/"
 
 
-def link_from_doi(doi: str, color: str = "#3377c4") -> str:
+def _extract_doi(doi: str) -> str:
+    """Extract DOI identifier from URL or raw DOI."""
+    return doi.split("doi.org/")[-1] if "doi.org/" in doi else doi
+
+
+def link_from_doi(doi: str, color: str = DEFAULT_LINK_COLOR) -> str:
     """Create styled HTML link for a DOI."""
     if not doi:
         return ""
-    clean_doi = doi.split("doi.org/")[-1] if "doi.org/" in doi else doi
-    return styled_anchor(f"{DOI_BASE}{clean_doi}", clean_doi, color)
+    clean_doi = _extract_doi(doi=doi)
+    return styled_anchor(url=f"{DOI_BASE}{clean_doi}", text=clean_doi, color=color)

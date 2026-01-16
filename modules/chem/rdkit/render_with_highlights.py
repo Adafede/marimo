@@ -5,6 +5,51 @@ __all__ = ["render_with_highlights"]
 from collections import defaultdict
 from typing import Any
 
+# RDKit imports are inside the function for lazy loading (optional dependency)
+
+_INVALID_SMILES_TEMPLATE = (
+    "<div style='color:red;'>🚫 Invalid SMILES: <code>{smi}</code></div>"
+)
+
+_SVG_CONTAINER_STYLE = (
+    "display:inline-block; margin:12px; text-align:center; "
+    "border:1px solid #eee; padding:10px; border-radius:8px; "
+    "box-shadow: 2px 2px 5px rgba(0,0,0,0.1);"
+)
+
+
+def _process_smarts_matches(
+    mol: Any,
+    smarts_mols: list[tuple[str, str, Any, tuple[float, float, float]]],
+    match_counter: defaultdict | None,
+) -> tuple[list[int], dict[int, tuple[float, float, float]], list[str]]:
+    """Process SMARTS patterns and return atom highlights."""
+    atom_ids: list[int] = []
+    colors: dict[int, tuple[float, float, float]] = {}
+    tooltips: list[str] = []
+
+    for s_name, _, smarts_mol, color in smarts_mols:
+        matches = mol.GetSubstructMatches(smarts_mol)
+        if not matches:
+            continue
+
+        match_atoms = [idx for match in matches for idx in match]
+        atom_ids.extend(match_atoms)
+        colors.update({idx: color for idx in match_atoms})
+        tooltips.append(f"✅ {s_name}: {len(matches)} match(es)")
+
+        if match_counter is not None:
+            match_counter[s_name] += 1
+
+    return atom_ids, colors, tooltips
+
+
+def _create_label(name: str, smi: str) -> str:
+    """Create label for molecule display."""
+    if name != smi:
+        return f"<strong>{name}</strong><br><code>{smi}</code>"
+    return f"<code>{smi}</code>"
+
 
 def render_with_highlights(
     name: str,
@@ -34,36 +79,25 @@ def render_with_highlights(
 
     mol = MolFromSmiles(smi)
     if not mol:
-        return f"<div style='color:red;'>🚫 Invalid SMILES: <code>{smi}</code></div>"
+        return _INVALID_SMILES_TEMPLATE.format(smi=smi)
 
     Compute2DCoords(mol)
-    atom_ids, colors, tooltips = [], {}, []
 
-    for s_name, smarts, smarts_mol, color in smarts_mols:
-        matches = mol.GetSubstructMatches(smarts_mol)
-        if matches:
-            for match in matches:
-                atom_ids.extend(match)
-                for idx in match:
-                    colors[idx] = color
-            tooltips.append(f"✅ {s_name}: {len(matches)} match(es)")
-            if match_counter is not None:
-                match_counter[s_name] += 1
+    atom_ids, colors, tooltips = _process_smarts_matches(
+        mol=mol,
+        smarts_mols=smarts_mols,
+        match_counter=match_counter,
+    )
 
     drawer = MolDraw2DSVG(width, height)
     drawer.DrawMolecule(mol, highlightAtoms=atom_ids, highlightAtomColors=colors)
     drawer.FinishDrawing()
 
-    label = (
-        f"<strong>{name}</strong><br><code>{smi}</code>"
-        if name != smi
-        else f"<code>{smi}</code>"
-    )
+    label = _create_label(name=name, smi=smi)
+    tooltips_html = "<br>".join(tooltips)
 
     return (
-        "<div style='display:inline-block; margin:12px; text-align:center; "
-        "border:1px solid #eee; padding:10px; border-radius:8px; "
-        "box-shadow: 2px 2px 5px rgba(0,0,0,0.1);'>"
+        f"<div style='{_SVG_CONTAINER_STYLE}'>"
         f"{drawer.GetDrawingText()}<br>{label}<br>"
-        f"<small>{'<br>'.join(tooltips)}</small></div>"
+        f"<small>{tooltips_html}</small></div>"
     )

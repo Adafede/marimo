@@ -23,9 +23,12 @@ SELECT_VARS_MINIMAL = """
 ?compound ?compoundLabel ?compound_inchikey ?compound_smiles_conn
 """
 
-SELECT_VARS_INTERIM = SELECT_VARS_MINIMAL + """
+SELECT_VARS_INTERIM = (
+    SELECT_VARS_MINIMAL
+    + """
 ?taxon ?taxon_name ?ref_qid ?statement ?ref
 """
+)
 
 IDENTIFIERS = """
 ?compound wdt:P235 ?compound_inchikey;

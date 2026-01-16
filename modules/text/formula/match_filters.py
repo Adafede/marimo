@@ -3,9 +3,51 @@
 __all__ = ["match_filters"]
 
 from .filters import FormulaFilters
-from .normalize import normalize
 from .match_element import match_element
 from .match_halogen import match_halogen
+from .normalize import normalize
+
+# Element filter configuration: (element_symbol, filter_attribute)
+_ELEMENT_FILTERS = (
+    ("C", "c"),
+    ("H", "h"),
+    ("N", "n"),
+    ("O", "o"),
+    ("P", "p"),
+    ("S", "s"),
+)
+
+# Halogen filter configuration: (halogen_symbol, state_attribute)
+_HALOGEN_FILTERS = (
+    ("F", "f_state"),
+    ("Cl", "cl_state"),
+    ("Br", "br_state"),
+    ("I", "i_state"),
+)
+
+
+def _check_element_filters(formula: str, filters: FormulaFilters) -> bool:
+    """Check all element range filters."""
+    return all(
+        not getattr(filters, attr).is_active()
+        or match_element(
+            formula=formula,
+            element=elem,
+            min_count=getattr(filters, attr).min_val,
+            max_count=getattr(filters, attr).max_val,
+        )
+        for elem, attr in _ELEMENT_FILTERS
+    )
+
+
+def _check_halogen_filters(formula: str, filters: FormulaFilters) -> bool:
+    """Check all halogen state filters."""
+    return all(
+        match_halogen(
+            formula=formula, halogen=halogen, constraint=getattr(filters, attr)
+        )
+        for halogen, attr in _HALOGEN_FILTERS
+    )
 
 
 def match_filters(formula: str, filters: FormulaFilters) -> bool:
@@ -16,15 +58,6 @@ def match_filters(formula: str, filters: FormulaFilters) -> bool:
     if filters.exact_formula and filters.exact_formula.strip():
         return normalize(formula) == normalize(filters.exact_formula.strip())
 
-    for elem, range_filter in [("C", filters.c), ("H", filters.h), ("N", filters.n),
-                                ("O", filters.o), ("P", filters.p), ("S", filters.s)]:
-        if range_filter.is_active():
-            if not match_element(formula, elem, range_filter.min_val, range_filter.max_val):
-                return False
-
-    for halogen, state in [("F", filters.f_state), ("Cl", filters.cl_state),
-                           ("Br", filters.br_state), ("I", filters.i_state)]:
-        if not match_halogen(formula, halogen, state):
-            return False
-
-    return True
+    return _check_element_filters(formula, filters) and _check_halogen_filters(
+        formula, filters
+    )

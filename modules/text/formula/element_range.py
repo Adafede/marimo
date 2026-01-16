@@ -8,6 +8,7 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class ElementRange:
     """Range for element count in molecular formula."""
+
     min_val: int | None = None
     max_val: int | None = None
 

@@ -19,10 +19,12 @@ def filter_formula(
     """Filter DataFrame by molecular formula criteria."""
     if column not in df.columns:
         return df
-    if hasattr(filters, 'is_active') and not filters.is_active():
+    if hasattr(filters, "is_active") and not filters.is_active():
         return df
     if match_func is None:
         return df
 
-    mask = [match_func(row.get(column, ""), filters) for row in df.iter_rows(named=True)]
+    mask = [
+        match_func(row.get(column, ""), filters) for row in df.iter_rows(named=True)
+    ]
     return df.filter(pl.Series(mask))
