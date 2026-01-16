@@ -51,7 +51,11 @@ def _():
 
         class _L(Loader):
             def __init__(s, b):
-                s.b, s.s = b, requests.Session()
+                s.b = b
+                s.s = requests.Session()
+                # Remove headers that trigger browser warnings
+                s.s.headers.clear()
+                s.s.headers.update({"User-Agent": "marimo-remote-import"})
 
             def create_module(s, _):
                 return None
@@ -80,10 +84,12 @@ def _():
                     return None
                 p = f"{s.l.b}/{n.replace('.', '/')}"
                 # Check for package first (directory with __init__.py)
-                if (p + "/__init__.py") in _c or s.l.s.head(p + "/__init__.py").ok:
+                if (p + "/__init__.py") in _c or s.l.s.head(
+                    p + "/__init__.py"
+                ).status_code == 200:
                     return ModuleSpec(n, s.l, is_package=True)
                 # Then check for module (.py file)
-                if (p + ".py") in _c or s.l.s.head(p + ".py").ok:
+                if (p + ".py") in _c or s.l.s.head(p + ".py").status_code == 200:
                     return ModuleSpec(n, s.l, is_package=False)
                 return None
 
