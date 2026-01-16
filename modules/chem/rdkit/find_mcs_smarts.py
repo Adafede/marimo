@@ -2,9 +2,8 @@
 
 __all__ = ["find_mcs_smarts"]
 
-# RDKit imports are inside the function for lazy loading (optional dependency)
-
-_MIN_MOLECULES_FOR_MCS = 2
+from .smarts.find_mcs import find_mcs
+from .smiles.parse_many import parse_many
 
 
 def find_mcs_smarts(
@@ -19,21 +18,5 @@ def find_mcs_smarts(
     Returns:
         Tuple of (smarts_string, error_message)
     """
-    from rdkit.Chem import MolFromSmiles
-    from rdkit.Chem.rdFMCS import FindMCS
-
-    valid_mols = [
-        mol for _, smi in smiles_list if (mol := MolFromSmiles(smi)) is not None
-    ]
-
-    if len(valid_mols) < _MIN_MOLECULES_FOR_MCS:
-        return (
-            None,
-            f"⚠️ Need at least {_MIN_MOLECULES_FOR_MCS} valid SMILES to find MCS.",
-        )
-
-    mcs_result = FindMCS(valid_mols)
-    if mcs_result.canceled or not mcs_result.smartsString:
-        return None, "⚠️ Could not determine MCS."
-
-    return mcs_result.smartsString, None
+    valid_mols = parse_many(smiles_list=smiles_list)
+    return find_mcs(mols=valid_mols)

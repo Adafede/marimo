@@ -88,17 +88,16 @@ with app.setup:
     from modules.utils.colors.hex_to_rgb_float import hex_to_rgb_float
 
     try:
-        from modules.chem.rdkit.find_mcs_smarts import find_mcs_smarts
-        from modules.chem.rdkit.render_with_highlights import (
-            render_with_highlights as render_molecule_with_highlights,
-        )
-        from rdkit.Chem import MolFromSmarts
+        from modules.chem.rdkit.smarts.find_mcs import find_mcs
+        from modules.chem.rdkit.smarts.parse import parse as parse_smarts
+        from modules.chem.rdkit.smiles.parse_many import parse_many as parse_smiles_list
+        from modules.chem.rdkit.depict.with_highlights import with_highlights as depict_with_highlights
 
-        message = mo.md("✅ Your environment supports **RDKit**, all good!")
+        message = mo.md("Your environment supports **RDKit**, all good!")
         rdkit_available = True
     except ImportError:
         message = mo.md(
-            "⚠️ **RDKit not available in this environment**.\n\n"
+            "**RDKit not available in this environment**.\n\n"
             "To run this script:\n"
             "```bash\n"
             "uvx marimo run https://raw.githubusercontent.com/Adafede/marimo/refs/heads/main/apps/mols.py\n"
@@ -106,9 +105,10 @@ with app.setup:
             "If using Docker, toggle **App View** (bottom right or `cmd + .`)."
         )
         rdkit_available = False
-        MolFromSmarts = None
-        find_mcs_smarts = None
-        render_molecule_with_highlights = None
+        parse_smarts = None
+        find_mcs = None
+        parse_smiles_list = None
+        depict_with_highlights = None
 
 
 @app.cell
@@ -142,19 +142,20 @@ def input_smiles():
 def py_find_mcs(smi_input):
     if rdkit_available:
         smiles_list = parse_labeled_lines(smi_input.value)
-        mcs_smarts, mcs_error = find_mcs_smarts(smiles_list)
+        valid_mols = parse_smiles_list(smiles_list=smiles_list)
+        mcs_smarts, mcs_error = find_mcs(mols=valid_mols)
 
         if mcs_smarts:
             mcs = mo.md(
-                "### 📎 Automatically Detected Maximum Common Substructure (MCS) SMARTS\n\n"
+                "### Automatically Detected Maximum Common Substructure (MCS) SMARTS\n\n"
                 "The SMARTS pattern below was generated automatically. It may not always be chemically meaningful or appropriate for your use case, so please review it carefully.\n\n"
                 "You can paste it below as a starting point:\n"
                 f"```smarts\n{mcs_smarts}\n```"
             )
         elif mcs_error:
-            mcs = mo.md(f"⚠️ {mcs_error}")
+            mcs = mo.md(f"Warning: {mcs_error}")
         else:
-            mcs = mo.md("ℹ️ No MCS SMARTS generated.")
+            mcs = mo.md("No MCS SMARTS generated.")
     else:
         mcs = None
     mcs
@@ -192,7 +193,7 @@ def input_toggle(smarts_input):
 @app.cell
 def button_submit():
     if rdkit_available:
-        submit_button = mo.ui.button(label="🔬 Render Molecules")
+        submit_button = mo.ui.button(label="Render Molecules")
     else:
         submit_button = None
     submit_button
@@ -230,19 +231,24 @@ def py_generate_html(
         (name, smarts) for name, smarts in raw_smarts if toggles[smarts].value
     ]
 
-    parsed_smarts = []
-    for (name, smarts), color in zip(active_smarts, color_cycle):
-        mol = MolFromSmarts(smarts)
-        if mol:
-            parsed_smarts.append((name, smarts, mol, hex_to_rgb_float(color)))
+    parsed_smarts = [
+        (name, smarts, mol, hex_to_rgb_float(hex_color=color))
+        for (name, smarts), color in zip(active_smarts, color_cycle)
+        if (mol := parse_smarts(smarts=smarts)) is not None
+    ]
 
     match_counter = defaultdict(int)
 
     if not smiles:
-        html = "<p style='color:orange;'>⚠️ Please enter at least one SMILES string.</p>"
+        html = "<p style='color:orange;'>Please enter at least one SMILES string.</p>"
     else:
         rendered = [
-            render_molecule_with_highlights(name, smi, parsed_smarts, match_counter)
+            depict_with_highlights(
+                name=name,
+                smiles=smi,
+                smarts_entries=parsed_smarts,
+                match_counter=match_counter,
+            )
             for name, smi in smiles
         ]
 
