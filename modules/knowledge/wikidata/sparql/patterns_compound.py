@@ -5,6 +5,7 @@ __all__ = [
     "SELECT_VARS_MINIMAL",
     "SELECT_VARS_INTERIM",
     "IDENTIFIERS",
+    "COMPOUND_IDENTIFIERS",
     "TAXON_REFERENCE_ASSOCIATION",
     "PROPERTIES_OPTIONAL",
     "TAXONOMIC_REFERENCE_OPTIONAL",
@@ -34,6 +35,9 @@ IDENTIFIERS = """
 ?compound wdt:P235 ?compound_inchikey;
           wdt:P233 ?compound_smiles_conn.
 """
+
+# Alias for clearer semantics
+COMPOUND_IDENTIFIERS = IDENTIFIERS
 
 TAXON_REFERENCE_ASSOCIATION = """
 ?compound p:P703 ?statement.
