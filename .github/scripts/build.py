@@ -231,10 +231,25 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
     )
 
     # Function to get inlined code for a module and its dependencies
-    def get_inlined_code_with_deps(module_path: str, indent: str) -> str:
-        """Get inlined code for a module, including its transitive dependencies."""
+    def get_inlined_code_with_deps(
+        module_path: str, indent: str, aliases: dict = None
+    ) -> str:
+        """Get inlined code for a module, including its transitive dependencies.
+
+        Args:
+            module_path: The module path (e.g., 'modules.text.strings.pluralize')
+            indent: The indentation to use for the inlined code
+            aliases: Dict mapping original names to aliases (e.g., {'ENTITY_PREFIX': 'WIKIDATA_ENTITY_PREFIX'})
+        """
         if module_path in inlined_modules:
-            return ""  # Already inlined
+            # Module already inlined, but we may still need to add aliases
+            if aliases:
+                alias_lines = []
+                for original, alias in aliases.items():
+                    if original != alias:
+                        alias_lines.append(f"{indent}{alias} = {original}")
+                return "\n".join(alias_lines) + "\n" if alias_lines else ""
+            return ""
 
         if module_path not in module_code_map:
             return ""  # Module not found
@@ -258,14 +273,16 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
         inlined_modules.add(module_path)
 
         # Remove 'from modules.*' imports from the code since deps are now inlined
+        # Handle multi-line imports with parentheses (including 'as' aliases)
         code = re.sub(
-            r"^\s*from\s+modules\.[\w.]+\s+import\s+\([^)]*\)\s*\n",
+            r"^\s*from\s+modules\.[\w.]+\s+import\s*\([^)]*\)\n",
             "",
             code,
             flags=re.MULTILINE | re.DOTALL,
         )
+        # Handle single-line imports (must not start with parenthesis after import)
         code = re.sub(
-            r"^\s*from\s+modules\.[\w.]+\s+import\s+[^\n(]+\n",
+            r"^\s*from\s+modules\.[\w.]+\s+import\s+(?!\()[^\n]+\n",
             "",
             code,
             flags=re.MULTILINE,
@@ -285,10 +302,47 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
                 indented_lines.append(f"{indent}{line}")
             else:
                 indented_lines.append("")
+
+        # Add alias assignments if any
+        if aliases:
+            for original, alias in aliases.items():
+                if original != alias:
+                    indented_lines.append(f"{indent}{alias} = {original}")
+
         indented_lines.append("")
 
         result_parts.append("\n".join(indented_lines))
         return "\n".join(result_parts)
+
+    def parse_import_aliases(import_text: str) -> dict:
+        """Parse import statement to extract name -> alias mappings.
+
+        Examples:
+            'foo, bar' -> {'foo': 'foo', 'bar': 'bar'}
+            'foo as f, bar as b' -> {'foo': 'f', 'bar': 'b'}
+            '(\n    foo as f,\n    bar,\n)' -> {'foo': 'f', 'bar': 'bar'}
+        """
+        aliases = {}
+        # Remove parentheses and normalize whitespace
+        text = import_text.strip()
+        if text.startswith("("):
+            text = text[1:]
+        if text.endswith(")"):
+            text = text[:-1]
+
+        # Split by comma and process each import
+        for item in text.split(","):
+            item = item.strip()
+            if not item:
+                continue
+
+            if " as " in item:
+                original, alias = item.split(" as ", 1)
+                aliases[original.strip()] = alias.strip()
+            else:
+                aliases[item] = item
+
+        return aliases
 
     # Function to replace a single import with inlined code
     def replace_import_with_inline(match):
@@ -296,8 +350,15 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
         indent = match.group(1)  # Capture the indentation
         module_path = match.group(2)  # e.g., "modules.text.strings.pluralize"
 
+        # Extract the import names part (everything after 'import')
+        import_match = re.search(r"\bimport\s+(.+)$", full_match, re.DOTALL)
+        aliases = {}
+        if import_match:
+            import_text = import_match.group(1).rstrip("\n")
+            aliases = parse_import_aliases(import_text)
+
         if module_path in module_code_map:
-            return get_inlined_code_with_deps(module_path, indent)
+            return get_inlined_code_with_deps(module_path, indent, aliases)
         else:
             # Module not found in our map, keep the original import
             # (will be removed later if it's a modules.* import)
@@ -305,16 +366,18 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
 
     # Replace single-line imports: from modules.x.y import z
     # Pattern captures: (indent)(module_path) import (names)
+    # Must NOT match lines that have ( after import (those are multi-line)
     notebook_code = re.sub(
-        r"^(\s*)from\s+(modules\.[\w.]+)\s+import\s+[^\n(]+\n",
+        r"^(\s*)from\s+(modules\.[\w.]+)\s+import\s+(?!\()[^\n]+\n",
         replace_import_with_inline,
         notebook_code,
         flags=re.MULTILINE,
     )
 
-    # Replace multi-line imports: from modules.x.y import (\n    z,\n)
+    # Replace multi-line imports: from modules.x.y import (\n    z as alias,\n)
+    # The pattern needs to match across multiple lines including 'as' aliases
     notebook_code = re.sub(
-        r"^(\s*)from\s+(modules\.[\w.]+)\s+import\s+\([^)]*\)\s*\n",
+        r"^(\s*)from\s+(modules\.[\w.]+)\s+import\s*\([^)]*\)\n",
         replace_import_with_inline,
         notebook_code,
         flags=re.MULTILINE | re.DOTALL,
@@ -323,13 +386,13 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
     # Remove any remaining 'from modules.*' lines that weren't replaced
     # (e.g., modules we didn't have code for)
     notebook_code = re.sub(
-        r"^\s*from\s+modules\.[\w.]+\s+import\s+\([^)]*\)\s*\n",
+        r"^\s*from\s+modules\.[\w.]+\s+import\s*\([^)]*\)\n",
         "",
         notebook_code,
         flags=re.MULTILINE | re.DOTALL,
     )
     notebook_code = re.sub(
-        r"^\s*from\s+modules\.[\w.]+\s+import\s+[^\n(]+\n",
+        r"^\s*from\s+modules\.[\w.]+\s+import\s+(?!\()[^\n]+\n",
         "",
         notebook_code,
         flags=re.MULTILINE,
