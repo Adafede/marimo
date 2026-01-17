@@ -1,4 +1,4 @@
-"""Wrap image HTML in mo.image."""
+"""Wrap image HTML for mo.ui.table display."""
 
 __all__ = ["wrap_image"]
 
@@ -9,15 +9,26 @@ import marimo as mo
 
 def wrap_image(
     html_str: str,
-    width: int = 150,
-    height: int = 100,
+    max_width: str = "150px",
+    max_height: str = "100px",
     rounded: bool = True,
 ) -> mo.Html:
-    """Wrap image HTML in mo.image for mo.ui.table."""
+    """
+    Wrap image HTML in mo.Html for mo.ui.table.
+
+    Takes an HTML img tag string and returns it wrapped in mo.Html
+    with consistent styling for table display.
+    """
     if not html_str:
         return mo.Html("")
 
+    # If it's already an img tag, extract src and rebuild with consistent styling
     match = re.search(pattern=r'src="([^"]+)"', string=html_str)
     if match:
-        return mo.image(src=match.group(1), width=width, height=height, rounded=rounded)
+        src = match.group(1)
+        border_radius = "border-radius: 8px;" if rounded else ""
+        styled_img = f'<img src="{src}" loading="lazy" style="max-width: {max_width}; max-height: {max_height}; {border_radius}" />'
+        return mo.Html(styled_img)
+
+    # If no src found, return as-is
     return mo.Html(html_str)
