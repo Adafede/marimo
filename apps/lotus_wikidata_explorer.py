@@ -5,6 +5,7 @@
 #     "marimo",
 #     "polars==1.37.1",
 #     "rdflib==7.5.0",
+#     "requests==2.32.5",
 # ]
 # [tool.marimo.display]
 # theme = "system"
@@ -31,7 +32,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import marimo
 
-__generated_with = "0.19.2"
+__generated_with = "0.19.4"
 app = marimo.App(width="full", app_title="LOTUS Wikidata Explorer")
 
 with app.setup:
@@ -351,18 +352,18 @@ class SearchParams:
     # Formula filter
     formula_filter: bool = False
     exact_formula: str = ""
-    c_min: Optional[int] = None
-    c_max: Optional[int] = None
-    h_min: Optional[int] = None
-    h_max: Optional[int] = None
-    n_min: Optional[int] = None
-    n_max: Optional[int] = None
-    o_min: Optional[int] = None
-    o_max: Optional[int] = None
-    p_min: Optional[int] = None
-    p_max: Optional[int] = None
-    s_min: Optional[int] = None
-    s_max: Optional[int] = None
+    c_min: int | None = None
+    c_max: int | None = None
+    h_min: int | None = None
+    h_max: int | None = None
+    n_min: int | None = None
+    n_max: int | None = None
+    o_min: int | None = None
+    o_max: int | None = None
+    p_min: int | None = None
+    p_max: int | None = None
+    s_min: int | None = None
+    s_max: int | None = None
     f_state: str = "allowed"
     cl_state: str = "allowed"
     br_state: str = "allowed"
@@ -409,7 +410,7 @@ class SearchParams:
             auto_run=True,
         )
 
-    def to_formula_filters(self) -> Optional[FormulaFilters]:
+    def to_formula_filters(self) -> FormulaFilters | None:
         """Convert to FormulaFilters if formula filter is active."""
         if not self.formula_filter:
             return None
@@ -792,7 +793,9 @@ def resolve_ambiguous_matches(
 
     # Sort by connectivity (descending)
     sorted_matches = sorted(
-        matches[:5], key=lambda x: connectivity_map.get(x[0], 0), reverse=True
+        matches[:5],
+        key=lambda x: connectivity_map.get(x[0], 0),
+        reverse=True,
     )
 
     # Get details for display (CSV for memory efficiency)
@@ -826,20 +829,25 @@ def resolve_ambiguous_matches(
 
     selected_qid = sorted_matches[0][0]
     return selected_qid, create_taxon_warning_html(
-        matches_with_details, selected_qid, is_exact=is_exact
+        matches_with_details,
+        selected_qid,
+        is_exact=is_exact,
     )
 
 
 @app.function
 def create_taxon_warning_html(
-    matches: list, selected_qid: str, is_exact: bool
+    matches: list,
+    selected_qid: str,
+    is_exact: bool,
 ) -> mo.Html:
     """Create an HTML warning with clickable QID links and taxon details."""
+
     match_type = "exact matches" if is_exact else "similar taxa"
     intro = (
         f"Ambiguous taxon name. Multiple {match_type} found:"
         if is_exact
-        else f"No exact match. Similar taxa found:"
+        else "No exact match. Similar taxa found:"
     )
 
     # Build HTML list of matches
@@ -893,7 +901,7 @@ def create_taxon_warning_html(
 @app.function
 def resolve_taxon_to_qid(
     taxon_input: str,
-) -> Tuple[Optional[str], Optional[mo.Html]]:
+) -> tuple[str | None, mo.Html | None]:
     """Resolve taxon name or QID to a valid QID."""
     taxon_input = taxon_input.strip()
 
@@ -1074,16 +1082,16 @@ def create_formula_filters(
 @app.function
 def build_active_filters_dict(
     mass_filter_active: bool,
-    mass_min_val: Optional[float],
-    mass_max_val: Optional[float],
+    mass_min_val: float | None,
+    mass_max_val: float | None,
     year_filter_active: bool,
-    year_start_val: Optional[int],
-    year_end_val: Optional[int],
-    formula_filters: Optional[FormulaFilters],
-    smiles: Optional[str] = None,
-    smiles_search_type: Optional[str] = None,
-    smiles_threshold: Optional[float] = None,
-) -> Dict[str, Any]:
+    year_start_val: int | None,
+    year_end_val: int | None,
+    formula_filters: FormulaFilters | None,
+    smiles: str | None = None,
+    smiles_search_type: str | None = None,
+    smiles_threshold: float | None = None,
+) -> dict[str, Any]:
     """Build a dictionary of active filters for metadata export."""
     filters = {}
 
@@ -1124,7 +1132,7 @@ def generate_filename(
     taxon_name: str,
     file_type: str,
     prefix: str = "lotus_data",
-    filters: Dict[str, Any] = None,
+    filters: dict[str, Any] = None,
 ) -> str:
     """Generate standardized, descriptive filename for exports."""
     # Handle wildcard for all taxa
@@ -1139,7 +1147,10 @@ def generate_filename(
 
     # Add SMILES search type if present
     if filters and "chemical_structure" in filters:
-        search_type = filters["chemical_structure"].get("search_type", "substructure")
+        search_type = filters["chemical_structure"].get(
+            "search_type",
+            "substructure",
+        )
         components.append(search_type)  # Just the type, not "smiles_type"
 
     # Add general filter indicator if other filters are active
@@ -1437,12 +1448,12 @@ def apply_formula_filter(df: pl.DataFrame, filters: FormulaFilters) -> pl.DataFr
 @app.function
 def query_wikidata(
     qid: str,
-    year_start: Optional[int] = None,
-    year_end: Optional[int] = None,
-    mass_min: Optional[float] = None,
-    mass_max: Optional[float] = None,
-    formula_filters: Optional[FormulaFilters] = None,
-    smiles: Optional[str] = None,
+    year_start: int | None = None,
+    year_end: int | None = None,
+    mass_min: float | None = None,
+    mass_max: float | None = None,
+    formula_filters: FormulaFilters | None = None,
+    smiles: str | None = None,
     search_mode: str = "taxon",
     smiles_search_type: str = "substructure",
     smiles_threshold: float = 0.8,
@@ -1459,31 +1470,31 @@ def query_wikidata(
     if search_mode not in ("taxon", "smiles", "combined"):
         raise ValueError(
             f"Invalid search_mode: '{search_mode}'. "
-            f"Must be one of: 'taxon', 'smiles', 'combined'"
+            f"Must be one of: 'taxon', 'smiles', 'combined'",
         )
 
     if smiles_search_type not in ("substructure", "similarity"):
         raise ValueError(
             f"Invalid smiles_search_type: '{smiles_search_type}'. "
-            f"Must be one of: 'substructure', 'similarity'"
+            f"Must be one of: 'substructure', 'similarity'",
         )
 
     if not (0.0 <= smiles_threshold <= 1.0):
         raise ValueError(
             f"Invalid smiles_threshold: {smiles_threshold}. "
-            f"Must be between 0.0 and 1.0"
+            f"Must be between 0.0 and 1.0",
         )
 
     if year_start is not None and year_end is not None and year_start > year_end:
         raise ValueError(
             f"Invalid year range: start ({year_start}) > end ({year_end}). "
-            f"Start year must be <= end year."
+            f"Start year must be <= end year.",
         )
 
     if mass_min is not None and mass_max is not None and mass_min > mass_max:
         raise ValueError(
             f"Invalid mass range: min ({mass_min}) > max ({mass_max}). "
-            f"Minimum mass must be <= maximum mass."
+            f"Minimum mass must be <= maximum mass.",
         )
 
     # Build query based on search mode
@@ -1547,11 +1558,11 @@ def query_wikidata(
         if smiles_iso is not None and smiles_conn is not None:
             df = df.with_columns(
                 pl.when(
-                    pl.col("smiles_iso").is_not_null() & (pl.col("smiles_iso") != "")
+                    pl.col("smiles_iso").is_not_null() & (pl.col("smiles_iso") != ""),
                 )
                 .then(pl.col("smiles_iso"))
                 .otherwise(pl.col("smiles_conn"))
-                .alias("smiles")
+                .alias("smiles"),
             ).drop(["smiles_iso", "smiles_conn"])
         elif smiles_iso is not None:
             df = df.rename({"smiles_iso": "smiles"})
@@ -1564,7 +1575,7 @@ def query_wikidata(
             pl.when(pl.col("ref_doi").str.starts_with("http"))
             .then(pl.col("ref_doi").str.split("doi.org/").list.last())
             .otherwise(pl.col("ref_doi"))
-            .alias("ref_doi")
+            .alias("ref_doi"),
         )
 
     # Process pub_date to date type
@@ -1577,7 +1588,7 @@ def query_wikidata(
                 .dt.date()
             )
             .otherwise(None)
-            .alias("pub_date")
+            .alias("pub_date"),
         )
 
     # Convert mass to float
@@ -1615,7 +1626,7 @@ def query_wikidata(
     # Final operations: deduplicate and sort
     # Note: unique() is efficient in Polars, keeps first occurrence
     return df.unique(subset=["compound", "taxon", "reference"], keep="first").sort(
-        "name"
+        "name",
     )
 
 
@@ -1783,10 +1794,10 @@ def create_export_metadata(
     df: pl.DataFrame,
     taxon_input: str,
     qid: str,
-    filters: Dict[str, Any],
-    query_hash: Optional[str] = None,
-    result_hash: Optional[str] = None,
-) -> Dict[str, Any]:
+    filters: dict[str, Any],
+    query_hash: str | None = None,
+    result_hash: str | None = None,
+) -> dict[str, Any]:
     """Create FAIR-compliant metadata for exported datasets."""
 
     # Build descriptive name and description based on search type
@@ -1851,7 +1862,7 @@ def create_export_metadata(
                 "@type": "ScholarlyArticle",
                 "name": "LOTUS initiative",
                 "identifier": "https://doi.org/10.7554/eLife.70780",
-            }
+            },
         ],
         "distribution": [
             {
@@ -1909,20 +1920,20 @@ def create_citation_text(taxon_input: str) -> str:
     """Generate citation text for the exported data."""
     current_date = datetime.now().strftime("%B %d, %Y")
     return f"""
-## 📖 How to Cite This Data
+## How to Cite This Data
 
 ### Dataset Citation
-LOTUS Initiative via Wikidata. ({datetime.now().year}). *Data for {taxon_input}*.  
-Retrieved from LOTUS Wikidata Explorer on {current_date}.  
+LOTUS Initiative via Wikidata. ({datetime.now().year}). *Data for {taxon_input}*.
+Retrieved from LOTUS Wikidata Explorer on {current_date}.
 License: [CC0 1.0 Universal](https://creativecommons.org/publicdomain/zero/1.0/)
 
 ### LOTUS Initiative Publication
-Rutz A, Sorokina M, Galgonek J, et al. (2022). The LOTUS initiative for open knowledge 
-management in natural products research. *eLife* **11**:e70780.  
+Rutz A, Sorokina M, Galgonek J, et al. (2022). The LOTUS initiative for open knowledge
+management in natural products research. *eLife* **11**:e70780.
 DOI: [10.7554/eLife.70780](https://doi.org/10.7554/eLife.70780)
 
 ### This Tool
-{CONFIG["app_name"]} v{CONFIG["app_version"]}  
+{CONFIG["app_name"]} v{CONFIG["app_version"]}
 [Source Code]({CONFIG["app_url"]}) (AGPL-3.0)
 
 ### Data Sources
@@ -1933,11 +1944,11 @@ DOI: [10.7554/eLife.70780](https://doi.org/10.7554/eLife.70780)
 
 @app.function
 def compute_provenance_hashes(
-    qid: Optional[str],
-    taxon_input: Optional[str],
-    filters: Optional[Dict[str, Any]],
+    qid: str | None,
+    taxon_input: str | None,
+    filters: dict[str, Any] | None,
     df: pl.DataFrame,
-) -> Tuple[str, str]:
+) -> tuple[str, str]:
     """
     Compute query and result hashes for provenance tracking.
 
@@ -1950,7 +1961,9 @@ def compute_provenance_hashes(
     query_components = [qid or "", taxon_input or ""]
     if filters:
         query_components.append(json.dumps(filters, sort_keys=True))
-    query_hash = hashlib.sha256("|".join(query_components).encode("utf-8")).hexdigest()
+    query_hash = hashlib.sha256(
+        "|".join(query_components).encode("utf-8"),
+    ).hexdigest()
 
     # Result hash - extract compound QIDs efficiently
     compound_col = "compound_qid" if "compound_qid" in df.columns else "compound"
@@ -1962,7 +1975,7 @@ def compute_provenance_hashes(
             .to_series()
             .drop_nulls()
             .unique()
-            .to_list()
+            .to_list(),
         )
     else:
         compound_ids = []
@@ -1975,9 +1988,9 @@ def compute_provenance_hashes(
 def create_dataset_uri(
     qid: str,
     taxon_input: str,
-    filters: Optional[Dict[str, Any]],
+    filters: dict[str, Any] | None,
     df: pl.DataFrame,
-) -> Tuple[URIRef, str, str]:
+) -> tuple[URIRef, str, str]:
     """
     Create dataset URI based on result content for reproducibility.
 
@@ -1987,7 +2000,12 @@ def create_dataset_uri(
     content-addressable URN based ONLY on what was found (not what was asked).
     The query hash is returned separately for metadata storage.
     """
-    query_hash, result_hash = compute_provenance_hashes(qid, taxon_input, filters, df)
+    query_hash, result_hash = compute_provenance_hashes(
+        qid,
+        taxon_input,
+        filters,
+        df,
+    )
 
     # Create a content-addressable URI using URN scheme with ONLY result hash
     # Format: urn:hash:sha256:RESULT_HASH
@@ -1999,8 +2017,9 @@ def create_dataset_uri(
 
 @app.function
 def build_dataset_description(
-    taxon_input: str, filters: Optional[Dict[str, Any]]
-) -> Tuple[str, str]:
+    taxon_input: str,
+    filters: dict[str, Any],
+) -> tuple[str, str]:
     """Build descriptive dataset name and description. Returns (name, description)."""
     dataset_name = f"LOTUS Data for {taxon_input}"
     dataset_desc = f"Chemical compounds found in taxon {taxon_input} from Wikidata"
@@ -2046,7 +2065,7 @@ def add_dataset_metadata(
             dataset_uri,
             SCHEMA.description,
             Literal(dataset_desc, datatype=XSD.string),
-        )
+        ),
     )
 
     # License and provenance - CC0 from Wikidata/LOTUS
@@ -2055,7 +2074,7 @@ def add_dataset_metadata(
             dataset_uri,
             SCHEMA.license,
             URIRef("https://creativecommons.org/publicdomain/zero/1.0/"),
-        )
+        ),
     )
     g.add((dataset_uri, SCHEMA.provider, URIRef(CONFIG["app_url"])))
     g.add((dataset_uri, DCTERMS.source, URIRef(WIKIDATA_URL)))
@@ -2066,14 +2085,14 @@ def add_dataset_metadata(
             dataset_uri,
             SCHEMA.numberOfRecords,
             Literal(df_len, datatype=XSD.integer),
-        )
+        ),
     )
     g.add(
         (
             dataset_uri,
             SCHEMA.version,
             Literal(CONFIG["app_version"], datatype=XSD.string),
-        )
+        ),
     )
 
     # Reference to LOTUS Initiative (Q104225190) as the source project
@@ -2082,7 +2101,7 @@ def add_dataset_metadata(
             dataset_uri,
             SCHEMA.isBasedOn,
             URIRef(WIKIDATA_WIKI_URL + "Q104225190"),
-        )
+        ),
     )
 
     # Link to the taxon being queried (if specific)
@@ -2099,7 +2118,7 @@ def add_dataset_metadata(
                 f"Generated by query with hash: {query_hash}",
                 datatype=XSD.string,
             ),
-        )
+        ),
     )
     # Result hash is implicit in the dataset URI itself (urn:hash:sha256:RESULT_HASH)
     # but we also add it explicitly for clarity
@@ -2108,27 +2127,14 @@ def add_dataset_metadata(
             dataset_uri,
             DCTERMS.identifier,
             Literal(f"sha256:{result_hash}", datatype=XSD.string),
-        )
+        ),
     )
-
-
-@app.function
-def add_optional_literal(
-    g: Graph,
-    subject: URIRef,
-    predicate: URIRef,
-    value: Any,
-    datatype=XSD.string,
-) -> None:
-    """Add optional literal triple to graph if value exists (DRY helper)."""
-    if value is not None and value != "":
-        g.add((subject, predicate, Literal(value, datatype=datatype)))
 
 
 @app.function
 def add_compound_triples(
     g: Graph,
-    row: Dict[str, Any],
+    row: dict[str, Any],
     dataset_uri: URIRef,
     processed_taxa: set,
     processed_refs: set,
@@ -2192,7 +2198,9 @@ def add_compound_triples(
             statement_node = BNode()
 
         # Full statement pattern (following Wikidata RDF structure)
-        g.add((compound_uri, P.P703, statement_node))  # compound has a P703 statement
+        g.add(
+            (compound_uri, P.P703, statement_node),
+        )  # compound has a P703 statement
         g.add((statement_node, PS.P703, taxon_uri))  # statement value is the taxon
 
         # Add provenance if reference exists
@@ -2249,7 +2257,7 @@ def export_to_rdf_turtle(
     df: pl.DataFrame,
     taxon_input: str,
     qid: str,
-    filters: Optional[Dict[str, Any]] = None,
+    filters: dict[str, Any] | None = None,
 ) -> str:
     """Export data to RDF Turtle format using Wikidata's full RDF structure."""
     # Initialize graph
@@ -2271,7 +2279,10 @@ def export_to_rdf_turtle(
 
     # Create dataset URI with provenance hashes
     dataset_uri, query_hash, result_hash = create_dataset_uri(
-        qid, taxon_input, filters, df
+        qid,
+        taxon_input,
+        filters,
+        df,
     )
 
     # Build dataset description
@@ -2304,7 +2315,7 @@ def export_to_rdf_turtle(
 @app.cell
 def md_title():
     mo.md("""
-    # 🌐 LOTUS Wikidata Explorer
+    # LOTUS Wikidata Explorer
     """)
     return
 
@@ -2319,7 +2330,7 @@ def ui_disclaimer():
     ).style(
         style={
             "overflow-wrap": "anywhere",
-        }
+        },
     )
     return
 
@@ -2329,7 +2340,7 @@ def ui_url_api():
     # URL Query API section (left)
     url_api_section = mo.accordion(
         {
-            "🔗 URL Query API": mo.md("""
+            "URL Query API": mo.md("""
             Query via URL parameters. Add to notebook URL to auto-execute searches.
 
             **Key Parameters:**
@@ -2349,20 +2360,20 @@ def ui_url_api():
             ?smiles=c1ccccc1&smiles_search_type=similarity&smiles_threshold=0.45
             ?taxon=*&mass_filter=true&mass_min=300&mass_max=500
             ```
-            """)
-        }
+            """),
+        },
     )
 
     # Help & Documentation section (right)
     help_section = mo.accordion(
         {
-            "❓ Help": mo.md("""
-            **Quick Start:** Enter taxon (or "*") → Add SMILES (optional) → Apply filters → Search
+            "Help": mo.md("""
+            **Quick Start:** Enter taxon (or "*") --> Add SMILES (optional) --> Apply filters --> Search
 
             **Search Modes:**
-            - **Taxon only**: All compounds in that group
-            - **SMILES only**: Find structures everywhere
-            - **Both**: Find structures in specific taxon
+            - **Taxon only**: Find all compounds in that taxonomic group
+            - **SMILES only**: Find compounds by chemical structure (SACHEM)
+            - **Both**: Find structures within a specific taxonomic group
 
             **Chemical Search** (SACHEM/IDSM):
             - **Substructure**: Find compounds containing your structure
@@ -2371,8 +2382,8 @@ def ui_url_api():
             **Filters:** Mass (Da), Year, Formula (exact or element ranges + halogen control)
 
             **Export:** CSV, JSON, RDF/Turtle. Auto-compress >8MB.
-            """)
-        }
+            """),
+        },
     )
 
     # Display side by side
@@ -2433,7 +2444,7 @@ def url_params_check():
             ).style(
                 style={
                     "overflow-wrap": "anywhere",
-                }
+                },
             )
     return
 
@@ -2443,7 +2454,7 @@ def ui_search_params(search_params):
     ## TAXON INPUT
     taxon_input = mo.ui.text(
         value=search_params.taxon,
-        label="🔬 Taxon Name or Wikidata QID - Optional",
+        label="Taxon Name or Wikidata QID - Optional",
         placeholder="e.g., Artemisia annua, Cinchona, Q157115, or * for all taxa",
         full_width=True,
     )
@@ -2451,7 +2462,7 @@ def ui_search_params(search_params):
     ## SMILES INPUT
     smiles_input = mo.ui.text(
         value=search_params.smiles,
-        label="🧪 Chemical Structure (SMILES) - Optional",
+        label="Chemical Structure (SMILES) - Optional",
         placeholder="e.g., c1ccccc1 (benzene), CC(=O)Oc1ccccc1C(=O)O (aspirin)",
         full_width=True,
     )
@@ -2459,7 +2470,7 @@ def ui_search_params(search_params):
     smiles_search_type = mo.ui.dropdown(
         options=["substructure", "similarity"],
         value=search_params.smiles_search_type,
-        label="🔍 Chemical Search Type",
+        label="Chemical Search Type",
         full_width=True,
     )
 
@@ -2468,13 +2479,14 @@ def ui_search_params(search_params):
         stop=1.0,
         step=0.05,
         value=search_params.smiles_threshold,
-        label="🎯 Similarity Threshold",
+        label="Similarity Threshold",
         full_width=True,
     )
 
     ## MASS FILTERS
     mass_filter = mo.ui.checkbox(
-        label="⚖️ Filter by mass", value=search_params.mass_filter
+        label="Filter by mass",
+        value=search_params.mass_filter,
     )
 
     mass_min = mo.ui.number(
@@ -2495,7 +2507,8 @@ def ui_search_params(search_params):
     )
 
     formula_filter = mo.ui.checkbox(
-        label="⚛️ Filter by molecular formula", value=search_params.formula_filter
+        label="Filter by molecular formula",
+        value=search_params.formula_filter,
     )
     exact_formula = mo.ui.text(
         value=search_params.exact_formula,
@@ -2533,21 +2546,34 @@ def ui_search_params(search_params):
     # Halogen selectors
     _ho = ["allowed", "required", "excluded"]
     f_state = mo.ui.dropdown(
-        options=_ho, value=search_params.f_state, label="F", full_width=True
+        options=_ho,
+        value=search_params.f_state,
+        label="F",
+        full_width=True,
     )
     cl_state = mo.ui.dropdown(
-        options=_ho, value=search_params.cl_state, label="Cl", full_width=True
+        options=_ho,
+        value=search_params.cl_state,
+        label="Cl",
+        full_width=True,
     )
     br_state = mo.ui.dropdown(
-        options=_ho, value=search_params.br_state, label="Br", full_width=True
+        options=_ho,
+        value=search_params.br_state,
+        label="Br",
+        full_width=True,
     )
     i_state = mo.ui.dropdown(
-        options=_ho, value=search_params.i_state, label="I", full_width=True
+        options=_ho,
+        value=search_params.i_state,
+        label="I",
+        full_width=True,
     )
 
     current_year = datetime.now().year
     year_filter = mo.ui.checkbox(
-        label="🗓️ Filter by publication year", value=search_params.year_filter
+        label="Filter by publication year",
+        value=search_params.year_filter,
     )
     year_start = mo.ui.number(
         value=search_params.year_start,
@@ -2564,7 +2590,7 @@ def ui_search_params(search_params):
         full_width=True,
     )
 
-    run_button = mo.ui.run_button(label="🔍 Search Wikidata")
+    run_button = mo.ui.run_button(label="Search Wikidata")
     return (
         br_state,
         c_max,
@@ -2656,7 +2682,7 @@ def ui_filters(
 
     # Build filters UI
     filters_ui = [
-        mo.md("## 🔍 Search Parameters"),
+        mo.md("## Search Parameters"),
         main_search,
         mo.md("### Optional Filters"),
         filter_buttons,
@@ -2684,9 +2710,11 @@ def ui_filters(
                 mo.hstack([s_min, s_max], gap=2, widths="equal"),
                 mo.md("**Halogen constraints**"),
                 mo.hstack(
-                    [f_state, cl_state, br_state, i_state], gap=2, widths="equal"
+                    [f_state, cl_state, br_state, i_state],
+                    gap=2,
+                    widths="equal",
                 ),
-            ]
+            ],
         )
 
     filters_ui.append(run_button)
@@ -2748,22 +2776,25 @@ def launch_query(
         use_smiles = bool(smiles_str)
         use_taxon = bool(taxon_input_str and taxon_input_str != "*")
 
+        # Initialize all return values for all paths
+        qid = None
+        taxon_warning = None
+        results_df = None
+
         if use_smiles and use_taxon:
             # Both present - search by structure within taxon
             spinner_message = (
-                f"🔎 Searching for SMILES '{smiles_str[:30]}...' in {taxon_input_str}"
+                f"Searching for SMILES '{smiles_str[:30]}...' in {taxon_input_str}"
             )
         elif use_smiles:
             # SMILES only
-            spinner_message = f"🔎 Searching for SMILES: {smiles_str[:50]}..."
-            qid = None
-            taxon_warning = None
+            spinner_message = f"Searching for SMILES: {smiles_str[:50]}..."
         else:
             # Taxon only
             if taxon_input_str == "*":
-                spinner_message = "🔎 Searching all taxa ..."
+                spinner_message = "Searching all taxa ..."
             else:
-                spinner_message = f"🔎 Searching for: {taxon_input_str}"
+                spinner_message = f"Searching for: {taxon_input_str}"
 
         with mo.status.spinner(title=spinner_message):
             # Resolve taxon if using taxon (either alone or with SMILES)
@@ -2780,13 +2811,13 @@ def launch_query(
                                 f"**Suggestions:**\n"
                                 f"- Check spelling (scientific names are case-sensitive)\n"
                                 f"- Try a different taxonomic level (e.g., genus instead of species)\n"
-                                f"- Use a Wikidata QID directly (e.g., Q157115)"
+                                f"- Use a Wikidata QID directly (e.g., Q157115)",
                             ),
                             kind="warn",
                         ).style(
                             style={
                                 "overflow-wrap": "anywhere",
-                            }
+                            },
                         ),
                     )
 
@@ -2847,21 +2878,27 @@ def launch_query(
                 else:
                     # Taxon only
                     results_df = query_wikidata(
-                        qid, y_start, y_end, m_min, m_max, formula_filt
+                        qid,
+                        y_start,
+                        y_end,
+                        m_min,
+                        m_max,
+                        formula_filt,
                     )
             except Exception as e:
                 mo.stop(
                     True,
                     mo.callout(
-                        mo.md(f"**Query Error:** {str(e)}"), kind="danger"
+                        mo.md(f"**Query Error:** {str(e)}"),
+                        kind="danger",
                     ).style(
                         style={
                             "overflow-wrap": "anywhere",
-                        }
+                        },
                     ),
                 )
         elapsed = round(time.time() - start_time, 2)
-        _ = mo.md(f"⏱️ Query completed in **{elapsed}s**.")
+        _ = mo.md(f"Query completed in **{elapsed}s**.")
     return qid, results_df, taxon_warning
 
 
@@ -2915,8 +2952,8 @@ def display_summary(
                 mo.callout(taxon_warning, kind="warn").style(
                     style={
                         "overflow-wrap": "anywhere",
-                    }
-                )
+                    },
+                ),
             )
 
         # Handle wildcard case
@@ -2924,27 +2961,27 @@ def display_summary(
             parts.append(
                 mo.callout(
                     mo.md(
-                        f"No natural products found for **all taxa** with the current filters."
+                        "No compounds found for **all taxa** with the current filters.",
                     ),
                     kind="warn",
                 ).style(
                     style={
                         "overflow-wrap": "anywhere",
-                    }
-                )
+                    },
+                ),
             )
         else:
             parts.append(
                 mo.callout(
                     mo.md(
-                        f"No natural products found for **{taxon_input.value}** ([{qid}]({SCHOLIA_URL}{qid})) with the current filters."
+                        f"No compounds found for **{taxon_input.value}** ([{qid}]({scholia_url(qid)})) with the current filters.",
                     ),
                     kind="warn",
                 ).style(
                     style={
                         "overflow-wrap": "anywhere",
-                    }
-                )
+                    },
+                ),
             )
         summary_and_downloads = mo.vstack(parts) if len(parts) > 1 else parts[0]
     else:
@@ -2973,7 +3010,7 @@ def display_summary(
             else:
                 smiles_info = f"SMILES: `{_smiles_str}...` ({search_type})"
 
-            combined_info = f"{taxon_info} • {smiles_info}"
+            combined_info = f"{taxon_info} - {smiles_info}"
         else:
             combined_info = taxon_info
 
@@ -2982,19 +3019,19 @@ def display_summary(
 
         # Provenance hash
         hash_info = mo.md(
-            f"*Hashes:* Query: `{query_hash}` • Results: `{result_hash}`"
+            f"*Hashes:* Query: `{query_hash}` - Results: `{result_hash}`",
         ).style(
             style={
                 "overflow-wrap": "anywhere",
-            }
+            },
         )
 
         # Stats cards - use list comprehension for DRY
         stats_data = [
-            (n_compounds, "🧪", "Compound"),
-            (n_taxa, "🌱", "Taxon"),
-            (n_refs, "📚", "Reference"),
-            (n_entries, "📝", "Entry"),
+            (n_compounds, "Compounds"),
+            (n_taxa, "Taxa"),
+            (n_refs, "References"),
+            (n_entries, "Entries"),
         ]
         stats_cards = mo.hstack(
             [
@@ -3011,7 +3048,7 @@ def display_summary(
         ).style(
             style={
                 "overflow-wrap": "anywhere",
-            }
+            },
         )
 
         search_and_stats = mo.vstack(
@@ -3058,16 +3095,16 @@ def display_summary(
         if api_url:
             url_display = mo.md(
                 f"""
-                **🔗 Shareable URL**
+                **Shareable URL**
 
                 Copy and append this to your notebook URL to share this exact search:
                 ```
                 {api_url}
                 ```
-                """
+                """,
             )
             api_url_section = mo.accordion(
-                {"🔁 Share this search": url_display},
+                {"Share this search": url_display},
                 multiple=False,
             )
         else:
@@ -3084,8 +3121,8 @@ def display_summary(
                 mo.callout(taxon_warning, kind="warn").style(
                     style={
                         "overflow-wrap": "anywhere",
-                    }
-                )
+                    },
+                ),
             )
 
         # Stack summary and downloads vertically
@@ -3150,11 +3187,12 @@ def generate_results(
         result_hash = None
     elif len(results_df) == 0:
         download_ui = mo.callout(
-            mo.md("No compounds match your search criteria."), kind="neutral"
+            mo.md("No compounds match your search criteria."),
+            kind="neutral",
         ).style(
             style={
                 "overflow-wrap": "anywhere",
-            }
+            },
         )
         tables_ui = mo.Html("")
         ui_is_large_dataset = False
@@ -3206,7 +3244,10 @@ def generate_results(
 
         # Compute hashes for provenance using centralized helper
         query_hash, result_hash = compute_provenance_hashes(
-            qid, taxon_input.value, active_filters, results_df
+            qid,
+            taxon_input.value,
+            active_filters,
+            results_df,
         )
 
         # Check if this is a large dataset BEFORE preparing export dataframes
@@ -3241,17 +3282,17 @@ def generate_results(
             limited_df = results_df.head(CONFIG["table_row_limit"])
             display_note = mo.callout(
                 mo.md(
-                    f"⚡ **Large Dataset Optimization**\n\n"
+                    f"**Large Dataset Optimization**\n\n"
                     f"Your search returned **{total_rows:,} rows**. For optimal performance:\n"
                     f"- Displaying first **{CONFIG['table_row_limit']:,} rows** in table view\n"
                     f"- Downloads are generated on-demand (click Generate buttons)\n"
-                    f"- Export view disabled for large datasets"
+                    f"- Export view disabled for large datasets",
                 ),
                 kind="info",
             ).style(
                 style={
                     "overflow-wrap": "anywhere",
-                }
+                },
             )
         else:
             display_note = mo.Html("")
@@ -3294,22 +3335,26 @@ def generate_results(
                     f"**Large Dataset ({len(results_df):,} rows)**\n\n"
                     f"Export table view is disabled for datasets over {CONFIG['table_row_limit']} rows "
                     f"to ensure smooth performance.\n\n"
-                    f"Use the download buttons above to get your data in CSV, JSON, or RDF format."
+                    f"Use the download buttons above to get your data in CSV, JSON, or RDF format.",
                 ),
                 kind="info",
             ).style(
                 style={
                     "overflow-wrap": "anywhere",
-                }
+                },
             )
 
         # Download buttons generation
         if ui_is_large_dataset:
             # Lazy generation buttons
-            csv_generate_button = mo.ui.run_button(label="📄 Generate CSV")
-            json_generate_button = mo.ui.run_button(label="📖 Generate JSON")
-            rdf_generate_button = mo.ui.run_button(label="🐢 Generate RDF/Turtle")
-            buttons = [csv_generate_button, json_generate_button, rdf_generate_button]
+            csv_generate_button = mo.ui.run_button(label="Generate CSV")
+            json_generate_button = mo.ui.run_button(label="Generate JSON")
+            rdf_generate_button = mo.ui.run_button(label="Generate RDF/Turtle")
+            buttons = [
+                csv_generate_button,
+                json_generate_button,
+                rdf_generate_button,
+            ]
             # Store results_df - export dataframe will be prepared on-demand
             csv_generation_data = {
                 "results_df": results_df,
@@ -3337,12 +3382,15 @@ def generate_results(
                     prefix="lotus_metadata",
                     filters=active_filters,
                 ),
-                label="📋 Metadata",
+                label="Metadata",
                 mimetype="application/json",
             )
-            buttons.append(metadata_button)
             download_ui = mo.vstack(
-                [mo.md("### Download Data"), mo.hstack(buttons, gap=2, wrap=True)]
+                [
+                    mo.md("### Download Data"),
+                    mo.hstack(buttons, gap=2, wrap=True),
+                    metadata_button,
+                ],
             )
         else:
             csv_generate_button = None
@@ -3355,23 +3403,28 @@ def generate_results(
                 create_download_button(
                     export_df.write_csv(),
                     generate_filename(taxon_input.value, "csv", filters=active_filters),
-                    "📥 CSV",
+                    "CSV",
                     "text/csv",
                 ),
                 create_download_button(
                     export_df.write_json(),
                     generate_filename(
-                        taxon_input.value, "json", filters=active_filters
+                        taxon_input.value,
+                        "json",
+                        filters=active_filters,
                     ),
-                    "📥 JSON",
+                    "JSON",
                     "application/json",
                 ),
                 create_download_button(
                     export_to_rdf_turtle(
-                        export_df_rdf, taxon_input.value, qid, active_filters
+                        export_df_rdf,
+                        taxon_input.value,
+                        qid,
+                        active_filters,
                     ),
                     generate_filename(taxon_input.value, "ttl", filters=active_filters),
-                    "📥 RDF/Turtle",
+                    "RDF/Turtle",
                     "text/turtle",
                 ),
                 mo.download(
@@ -3382,12 +3435,12 @@ def generate_results(
                         prefix="lotus_metadata",
                         filters=active_filters,
                     ),
-                    label="📋 Metadata",
+                    label="Metadata",
                     mimetype="application/json",
                 ),
             ]
             download_ui = mo.vstack(
-                [mo.md("### Download Data"), mo.hstack(buttons, gap=2, wrap=True)]
+                [mo.md("### Download Data"), mo.hstack(buttons, gap=2, wrap=True)],
             )
         tables_ui = mo.vstack(
             [
@@ -3395,17 +3448,17 @@ def generate_results(
                 display_note,
                 mo.ui.tabs(
                     {
-                        "🖼️ Display": display_table,
-                        "📥 Export View": export_table_ui,
-                        "📖 Citation": mo.md(citation_text),
-                        "🏷️ Metadata": mo.md(f"```json\n{metadata_json}\n```"),
-                    }
+                        "Display": display_table,
+                        "Export View": export_table_ui,
+                        "Citation": mo.md(citation_text),
+                        "Metadata": mo.md(f"```json\n{metadata_json}\n```"),
+                    },
                 ).style(
                     style={
                         "overflow-wrap": "anywhere",
-                    }
+                    },
                 ),
-            ]
+            ],
         )
     return (
         csv_generate_button,
@@ -3441,7 +3494,8 @@ def generate_downloads(
         if generation_data.get("lazy"):
             # Prepare export dataframe now (deferred from results cell)
             return prepare_export_dataframe(
-                generation_data["results_df"], include_rdf_ref=include_rdf_ref
+                generation_data["results_df"],
+                include_rdf_ref=include_rdf_ref,
             )
         else:
             return generation_data["export_df"]
@@ -3474,7 +3528,7 @@ def generate_downloads(
             )
 
         mimetype = final_mimetype if final_mimetype else base_mimetype
-        display_label = f"📥 Download {format_name}"
+        display_label = f"Download {format_name}"
 
         # Use standard mo.download
         download_button = mo.download(
@@ -3488,21 +3542,21 @@ def generate_downloads(
             [
                 mo.callout(
                     mo.md(
-                        f"✅ **{format_name} Ready** - {len(export_df):,} entries"
+                        f"**{format_name} Ready** - {len(export_df):,} entries"
                         + (
                             " (compressed)"
                             if final_mimetype == "application/gzip"
                             else ""
-                        )
+                        ),
                     ),
                     kind="success",
                 ).style(
                     style={
                         "overflow-wrap": "anywhere",
-                    }
+                    },
                 ),
                 download_button,
-            ]
+            ],
         )
 
     # CSV generation
@@ -3563,7 +3617,7 @@ def ui_params():
     # Display auto-search message if URL parameters detected
     if search_params.auto_run:
         _ = mo.md(
-            f"**Auto-executing search for:** {search_params.taxon if search_params.taxon else search_params.smiles}"
+            f"**Auto-executing search for:** {search_params.taxon if search_params.taxon else search_params.smiles}",
         )
     return (search_params,)
 
@@ -3592,7 +3646,10 @@ def main():
         parser.add_argument("--taxon", help="Taxon name or QID")
         parser.add_argument("--output", "-o", help="Output file")
         parser.add_argument(
-            "--format", "-f", choices=["csv", "json", "ttl"], default="csv"
+            "--format",
+            "-f",
+            choices=["csv", "json", "ttl"],
+            default="csv",
         )
         parser.add_argument("--year-start", type=int, help="Minimum publication year")
         parser.add_argument("--year-end", type=int, help="Maximum publication year")
@@ -3601,7 +3658,8 @@ def main():
 
         # Molecular formula filters
         parser.add_argument(
-            "--formula", help="Exact molecular formula (e.g., C15H10O5)"
+            "--formula",
+            help="Exact molecular formula (e.g., C15H10O5)",
         )
         parser.add_argument("--c-min", type=int, help="Minimum carbon atoms")
         parser.add_argument("--c-max", type=int, help="Maximum carbon atoms")
@@ -3613,7 +3671,8 @@ def main():
         parser.add_argument("--o-max", type=int, help="Maximum oxygen atoms")
 
         parser.add_argument(
-            "--smiles", help="SMILES string for chemical structure search"
+            "--smiles",
+            help="SMILES string for chemical structure search",
         )
         parser.add_argument(
             "--smiles-search-type",
@@ -3627,7 +3686,9 @@ def main():
             help="Similarity threshold (0.0-1.0, default: 0.8)",
         )
         parser.add_argument(
-            "--compress", action="store_true", help="Compress output with gzip"
+            "--compress",
+            action="store_true",
+            help="Compress output with gzip",
         )
         parser.add_argument(
             "--show-metadata",
@@ -3640,12 +3701,15 @@ def main():
             help="Export metadata as JSON file alongside data (creates <output>.metadata.json)",
         )
         parser.add_argument(
-            "--verbose", "-v", action="store_true", help="Verbose output"
+            "--verbose",
+            "-v",
+            action="store_true",
+            help="Verbose output",
         )
         args = parser.parse_args()
 
         try:
-            with open(__file__, "r", encoding="utf-8") as f:
+            with open(__file__, encoding="utf-8") as f:
                 file_content = f.read()
 
             # Strategy: Extract app.setup block AND all @app.function decorated functions
@@ -3743,7 +3807,7 @@ def main():
             # Resolve taxon using the REAL function
             qid, warning = resolve_taxon_to_qid(args.taxon)
             if not qid:
-                print(f"❌ Taxon not found: {args.taxon}", file=sys.stderr)
+                print(f"[x] Taxon not found: {args.taxon}", file=sys.stderr)
                 sys.exit(1)
 
             # Determine search mode based on whether SMILES is provided
@@ -3753,7 +3817,7 @@ def main():
 
             # Improved verbose logging
             if args.verbose:
-                print(f"🔍 Search Configuration:", file=sys.stderr)
+                print("Search Configuration:", file=sys.stderr)
                 print(f"   Mode: {search_mode}", file=sys.stderr)
                 print(f"   Taxon: {args.taxon} (QID: {qid})", file=sys.stderr)
 
@@ -3771,13 +3835,13 @@ def main():
 
                 filters_applied = []
                 if args.year_start:
-                    filters_applied.append(f"year ≥ {args.year_start}")
+                    filters_applied.append(f"year >= {args.year_start}")
                 if args.year_end:
-                    filters_applied.append(f"year ≤ {args.year_end}")
+                    filters_applied.append(f"year <= {args.year_end}")
                 if args.mass_min:
-                    filters_applied.append(f"mass ≥ {args.mass_min}")
+                    filters_applied.append(f"mass >= {args.mass_min}")
                 if args.mass_max:
-                    filters_applied.append(f"mass ≤ {args.mass_max}")
+                    filters_applied.append(f"mass <= {args.mass_max}")
                 if args.formula:
                     filters_applied.append(f"formula = {args.formula}")
                 elem_args = [
@@ -3793,7 +3857,10 @@ def main():
                 if any(elem_args):
                     filters_applied.append("element ranges")
                 if filters_applied:
-                    print(f"   Filters: {', '.join(filters_applied)}", file=sys.stderr)
+                    print(
+                        f"   Filters: {', '.join(filters_applied)}",
+                        file=sys.stderr,
+                    )
                 print(file=sys.stderr)
 
             # Build formula filters if any formula arguments provided
@@ -3844,23 +3911,29 @@ def main():
             )
 
             if df.is_empty():
-                print(f"❌ No data found", file=sys.stderr)
+                print("[x] No data found", file=sys.stderr)
                 sys.exit(1)
 
             if args.verbose:
-                print(f"✅ Query Results:", file=sys.stderr)
+                print("Query Results:", file=sys.stderr)
                 print(f"   Total entries: {len(df):,}", file=sys.stderr)
 
                 # Show unique counts if columns exist
                 if "compound" in df.columns:
                     unique_compounds = df.select(pl.col("compound")).n_unique()
-                    print(f"   Unique compounds: {unique_compounds:,}", file=sys.stderr)
+                    print(
+                        f"   Unique compounds: {unique_compounds:,}",
+                        file=sys.stderr,
+                    )
                 if "taxon" in df.columns:
                     unique_taxa = df.select(pl.col("taxon")).n_unique()
                     print(f"   Unique taxa: {unique_taxa:,}", file=sys.stderr)
                 if "reference" in df.columns:
                     unique_refs = df.select(pl.col("reference")).n_unique()
-                    print(f"   Unique references: {unique_refs:,}", file=sys.stderr)
+                    print(
+                        f"   Unique references: {unique_refs:,}",
+                        file=sys.stderr,
+                    )
                 print(file=sys.stderr)  # Empty line for readability
 
             # Build filters dict in the same format as the UI (needed for metadata and provenance)
@@ -3904,7 +3977,7 @@ def main():
             if filters:
                 query_components.append(json.dumps(filters, sort_keys=True))
             query_hash = hashlib.sha256(
-                "|".join(query_components).encode("utf-8")
+                "|".join(query_components).encode("utf-8"),
             ).hexdigest()
 
             # Result hash - based on actual compound identifiers (what was found)
@@ -3913,10 +3986,10 @@ def main():
                     extract_qid(row["compound"])
                     for row in df.iter_rows(named=True)
                     if row.get("compound")
-                ]
+                ],
             )
             result_hash = hashlib.sha256(
-                "|".join(compound_qids).encode("utf-8")
+                "|".join(compound_qids).encode("utf-8"),
             ).hexdigest()
 
             # Show metadata mode - use the REAL create_export_metadata function
@@ -3951,10 +4024,13 @@ def main():
                 # RDF export: include ref column for full provenance
                 export_df = prepare_export_dataframe(df, include_rdf_ref=True)
                 data = export_to_rdf_turtle(
-                    export_df, args.taxon, qid, filters if filters else None
+                    export_df,
+                    args.taxon,
+                    qid,
+                    filters if filters else None,
                 ).encode("utf-8")
             else:
-                print(f"❌ Unknown format: {args.format}", file=sys.stderr)
+                print(f"[x] Unknown format: {args.format}", file=sys.stderr)
                 sys.exit(1)
 
             # Compress if requested
@@ -3971,7 +4047,7 @@ def main():
                 output_path.write_bytes(data)
                 if args.verbose:
                     print(
-                        f"✓ Exported {len(data):,} bytes to: {output_path}",
+                        f"[+] Exported {len(data):,} bytes to: {output_path}",
                         file=sys.stderr,
                     )
 
@@ -3986,19 +4062,19 @@ def main():
                         result_hash=result_hash,
                     )
                     metadata_path = output_path.with_suffix(
-                        output_path.suffix + ".metadata.json"
+                        output_path.suffix + ".metadata.json",
                     )
                     metadata_path.write_text(json.dumps(metadata, indent=2))
                     if args.verbose:
                         print(
-                            f"✓ Exported metadata to: {metadata_path}",
+                            f"[+] Exported metadata to: {metadata_path}",
                             file=sys.stderr,
                         )
             else:
                 sys.stdout.buffer.write(data)
 
         except Exception as e:
-            print(f"❌ Error: {e}", file=sys.stderr)
+            print(f"[x] Error: {e}", file=sys.stderr)
             if args.verbose:
                 import traceback
 
