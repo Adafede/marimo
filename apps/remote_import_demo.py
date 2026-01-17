@@ -32,7 +32,7 @@ def _():
     import sys
 
     # === Import modules from /public ===
-    sys.path.insert(0, str(mo.notebook_location() / "public"))
+    sys.path.insert(0, str(mo.notebook_dir() / "public"))
 
     mo.show_code()
     return
