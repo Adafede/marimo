@@ -294,8 +294,7 @@ def _export_html_wasm(
     finally:
         # Clean up temp file if we created one
         if temp_path and temp_path.exists():
-            # temp_path.unlink()
-            pass
+            temp_path.unlink()
 
 
 def _generate_index(
