@@ -164,8 +164,8 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
         remaining -= set(no_deps)
 
     # Read and inline modules in dependency order
-    # Collect all module code
-    module_code_parts = []
+    # Build a map of module_name -> module_code for in-place replacement
+    module_code_map = {}
 
     for module_name in sorted_modules:
         module_file = public_path / f"{module_name.replace('.', '/')}.py"
@@ -180,23 +180,8 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
         # Convert relative imports to absolute
         module_code = convert_relative_to_absolute_imports(module_code, module_name)
 
-        module_code_parts.append(f"    # --- {module_name} ---")
-        # Indent all lines of module code by 4 spaces
-        indented_code = "\n".join(
-            "    " + line if line.strip() else "" for line in module_code.split("\n")
-        )
-        module_code_parts.append(indented_code)
-        module_code_parts.append("")
-
-    # Build the inlined code to append to existing app.setup block
-    inlined_cell = []
-    inlined_cell.append("")
-    inlined_cell.append("    # === AUTO-INLINED MODULES ===")
-    inlined_cell.append("    # This code was automatically inlined from modules/")
-    inlined_cell.append("")
-    inlined_cell.extend(module_code_parts)
-
-    inlined_code_str = "\n".join(inlined_cell)
+        # Store with the full module path as key
+        module_code_map[module_name] = module_code
 
     # Read original notebook
     with open(notebook_path, "r") as f:
@@ -210,64 +195,68 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
         flags=re.DOTALL,
     )
 
-    # Find the end of the existing app.setup block
-    # Look for "with app.setup:" and find where it ends (next @app.cell or @app.function)
-    app_setup_match = re.search(r"with\s+app\.setup:", notebook_code)
+    # Function to replace a single import with inlined code
+    def replace_import_with_inline(match):
+        full_match = match.group(0)
+        indent = match.group(1)  # Capture the indentation
+        module_path = match.group(2)  # e.g., "modules.text.strings.pluralize"
 
-    if app_setup_match:
-        # Find the next @app.cell or @app.function after the setup block
-        next_cell_match = re.search(
-            r"\n@app\.(cell|function)", notebook_code[app_setup_match.end() :]
-        )
+        # Convert module path to our key format
+        module_key = module_path
 
-        if next_cell_match:
-            # Insert before the next @app decorator
-            insert_pos = app_setup_match.end() + next_cell_match.start()
-            final_code = (
-                notebook_code[:insert_pos]
-                + inlined_code_str
-                + "\n"
-                + notebook_code[insert_pos:]
-            )
+        if module_key in module_code_map:
+            code = module_code_map[module_key]
+            # Indent all lines to match the import's indentation
+            indented_lines = []
+            indented_lines.append(f"{indent}# --- inlined from {module_path} ---")
+            for line in code.split("\n"):
+                if line.strip():
+                    indented_lines.append(f"{indent}{line}")
+                else:
+                    indented_lines.append("")
+            indented_lines.append("")
+            return "\n".join(indented_lines)
         else:
-            # No next cell found, append at end of file
-            final_code = notebook_code + inlined_code_str
-    else:
-        # No existing app.setup block, create one after app = marimo.App(...)
-        app_setup_pattern = r"(app\s*=\s*marimo\.App\([^)]*\))"
-        match = re.search(app_setup_pattern, notebook_code)
+            # Module not found in our map, keep the original import
+            # (will be removed later if it's a modules.* import)
+            return full_match
 
-        if match:
-            # Insert a new app.setup block after the app line
-            setup_block = (
-                "\n\nwith app.setup:\n    import marimo as mo\n" + inlined_code_str
-            )
-            insert_pos = match.end()
-            final_code = (
-                notebook_code[:insert_pos] + setup_block + notebook_code[insert_pos:]
-            )
-        else:
-            logger.warning("Could not find 'app = marimo.App()' line")
-            final_code = notebook_code
-
-    # Remove ALL 'from modules.*' and 'import modules.*' lines from final code
-    # This includes lines in the original notebook AND in inlined module code
-    # Handle both single-line and multi-line imports with parentheses
-    final_code = re.sub(
-        r"^\s*from\s+modules\.[\w.]+\s+import\s+\([^)]*\)\s*\n",
-        "",
-        final_code,
-        flags=re.MULTILINE | re.DOTALL,
-    )
-    final_code = re.sub(
-        r"^\s*from\s+modules\.[\w.]+\s+import\s+[^\n(]+\n",
-        "",
-        final_code,
+    # Replace single-line imports: from modules.x.y import z
+    # Pattern captures: (indent)(module_path) import (names)
+    notebook_code = re.sub(
+        r"^(\s*)from\s+(modules\.[\w.]+)\s+import\s+[^\n(]+\n",
+        replace_import_with_inline,
+        notebook_code,
         flags=re.MULTILINE,
     )
-    final_code = re.sub(
-        r"^\s*import\s+modules\.[\w.]+\s*\n", "", final_code, flags=re.MULTILINE
+
+    # Replace multi-line imports: from modules.x.y import (\n    z,\n)
+    notebook_code = re.sub(
+        r"^(\s*)from\s+(modules\.[\w.]+)\s+import\s+\([^)]*\)\s*\n",
+        replace_import_with_inline,
+        notebook_code,
+        flags=re.MULTILINE | re.DOTALL,
     )
+
+    # Remove any remaining 'from modules.*' lines that weren't replaced
+    # (e.g., modules we didn't have code for)
+    notebook_code = re.sub(
+        r"^\s*from\s+modules\.[\w.]+\s+import\s+\([^)]*\)\s*\n",
+        "",
+        notebook_code,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    notebook_code = re.sub(
+        r"^\s*from\s+modules\.[\w.]+\s+import\s+[^\n(]+\n",
+        "",
+        notebook_code,
+        flags=re.MULTILINE,
+    )
+    notebook_code = re.sub(
+        r"^\s*import\s+modules\.[\w.]+\s*\n", "", notebook_code, flags=re.MULTILINE
+    )
+
+    final_code = notebook_code
 
     # Write to output
     with open(output_path, "w") as f:
