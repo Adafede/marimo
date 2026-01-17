@@ -3,4 +3,4 @@
 __all__ = ["CDK_DEPICT_URL"]
 
 
-CDK_DEPICT_URL = "https://www.simolecule.com/cdkdepict"
+CDK_DEPICT_URL = "https://www.simolecule.com/cdkdepict/depict"
