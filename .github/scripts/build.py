@@ -62,6 +62,12 @@ def _export_html_wasm(
         cmd.extend(
             ["--mode", "run", "--no-show-code"],
         )  # Apps run in "run" mode with hidden code
+        
+        # Include public directory for apps
+        public_dir = notebook_path.parent / "public"
+        if public_dir.exists():
+            cmd.extend(["--sandbox-include", str(public_dir)])
+            logger.debug(f"Including public directory: {public_dir}")
     else:
         logger.info(f"Exporting {notebook_path} to {output_path} as notebook")
         cmd.extend(["--mode", "edit"])  # Notebooks run in "edit" mode
