@@ -33,7 +33,11 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import marimo
 
 __generated_with = "0.19.4"
-app = marimo.App(width="full", app_title="LOTUS Wikidata Explorer")
+app = marimo.App(
+    width="full",
+    app_title="LOTUS Wikidata Explorer",
+    layout_file="layouts/lotus_wikidata_explorer.slides.json",
+)
 
 with app.setup:
     import marimo as mo
@@ -42,18 +46,130 @@ with app.setup:
     import json
     import re
     import time
-    import gzip
     import hashlib
     import sys
     import urllib.request
     import urllib.parse
     from dataclasses import dataclass, field
     from datetime import datetime
-    from functools import lru_cache
-    from rdflib import Graph, Namespace, Literal, URIRef, BNode
+    from rdflib import Graph, Literal, URIRef, BNode
     from rdflib.namespace import RDF, RDFS, XSD, DCTERMS
-    from typing import Optional, Dict, Any, Tuple, List, Mapping
-    from urllib.parse import quote as url_quote
+    from typing import Any
+
+    # Toggle this flag for local vs remote development
+    _USE_LOCAL = False  # Set to True for local development
+
+    if _USE_LOCAL:
+        # Add your local module directory to the path
+        # Adjust this path to where your "modules" folder is located locally
+        sys.path.insert(0, ".")
+
+        def use(url):
+            pass
+    else:
+        ## === GITHUB MODULES IMPORT ===
+        import requests
+        from importlib.machinery import ModuleSpec
+        from importlib.abc import MetaPathFinder, Loader
+
+        _c = {}
+
+        class _L(Loader):
+            def __init__(s, b):
+                s.b = b
+                s.s = requests.Session()
+                s.s.headers.clear()
+                s.s.headers.update({"User-Agent": "marimo-remote-import"})
+
+            def create_module(s, _):
+                return None
+
+            def exec_module(s, m):
+                n, p = (
+                    m.__spec__.name,
+                    m.__spec__.submodule_search_locations is not None,
+                )
+                u = f"{s.b}/{n.replace('.', '/')}" + ("/__init__.py" if p else ".py")
+                if u not in _c:
+                    _c[u] = s.s.get(u).text
+                m.__file__, m.__path__, m.__package__ = (
+                    u,
+                    [u.rsplit("/", 1)[0]] if p else None,
+                    n if p else n.rpartition(".")[0],
+                )
+                exec(compile(_c[u], u, "exec"), m.__dict__)
+
+        class _F(MetaPathFinder):
+            def __init__(s, b, r):
+                s.r, s.l = r, _L(b)
+
+            def find_spec(s, n, *_):
+                if n != s.r and not n.startswith(s.r + "."):
+                    return None
+                p = f"{s.l.b}/{n.replace('.', '/')}"
+                py_url = p + ".py"
+                if py_url in _c or s.l.s.head(py_url).status_code == 200:
+                    return ModuleSpec(n, s.l, is_package=False)
+                init_url = p + "/__init__.py"
+                if init_url in _c or s.l.s.head(init_url).status_code == 200:
+                    return ModuleSpec(n, s.l, is_package=True)
+                return None
+
+        def use(url):
+            sys.meta_path.insert(0, _F(url.rsplit("/", 1)[0], url.rsplit("/", 1)[1]))
+
+    use("https://raw.githubusercontent.com/Adafede/marimo/main/modules")
+    # === END ===
+
+    from modules.text.formula.filters import FormulaFilters
+    from modules.text.formula.create_filters import create_filters
+    from modules.text.formula.serialize_filters import serialize_filters
+    from modules.text.formula.match_filters import match_filters
+    from modules.text.smiles.validate_and_escape import validate_and_escape
+    from modules.text.strings.pluralize import pluralize
+    from modules.knowledge.wikidata.entity.extract_from_url import extract_from_url
+    from modules.knowledge.wikidata.url.constants import (
+        ENTITY_PREFIX as WIKIDATA_ENTITY_PREFIX,
+    )
+    from modules.knowledge.wikidata.url.constants import (
+        STATEMENT_PREFIX as WIKIDATA_STATEMENT_PREFIX,
+    )
+    from modules.knowledge.wikidata.url.constants import WIKIDATA_HTTP_BASE
+    from modules.knowledge.wikidata.url.constants import WIKI_PREFIX
+    from modules.knowledge.wikidata.html.scholia import scholia_url
+    from modules.knowledge.wikidata.html.link_from_qid import link_from_qid
+    from modules.knowledge.wikidata.html.link_from_doi import link_from_doi
+    from modules.knowledge.wikidata.html.link_from_statement import (
+        link_from_statement as statement_link,
+    )
+
+    # Import from modules - knowledge/wikidata/sparql
+    from modules.knowledge.wikidata.sparql.query_taxon_search import query_taxon_search
+    from modules.knowledge.wikidata.sparql.query_taxon_details import (
+        query_taxon_details,
+    )
+    from modules.knowledge.wikidata.sparql.query_taxon_connectivity import (
+        query_taxon_connectivity,
+    )
+    from modules.knowledge.wikidata.sparql.query_sachem import query_sachem
+    from modules.knowledge.wikidata.sparql.query_compounds import (
+        query_compounds_by_taxon,
+        query_all_compounds,
+    )
+    from modules.net.sparql.execute_with_retry import execute_with_retry
+    from modules.net.sparql.values_clause import values_clause
+    from modules.chem.cdk.depict.html_from_smiles import html_from_smiles
+    from modules.data.filter.mass import filter_mass
+    from modules.data.filter.year import filter_year
+    from modules.data.filter.formula import filter_formula
+    from modules.knowledge.rdf.graph.add_literal import add_literal
+    from modules.knowledge.rdf.namespace.wikidata import WIKIDATA_NAMESPACES
+    from modules.text.formula.element_config import (
+        ELEMENT_DEFAULTS,
+    )
+    from modules.ui.marimo.wrap_html import wrap_html
+    from modules.ui.marimo.wrap_image import wrap_image
+    from modules.io.compress.if_large import compress_if_large
 
     # Patch urllib for Pyodide/WASM (browser) compatibility
     IS_PYODIDE = "pyodide" in sys.modules
@@ -63,46 +179,15 @@ with app.setup:
         pyodide_http.patch_all()
 
     # ====================================================================
-    # CENTRALIZED RDF NAMESPACES AND URLS
-    # ====================================================================
-
-    # RDF Namespaces wrapped in a dict to prevent marimo serialization issues
-    # Access via RDF_NS["WD"], RDF_NS["SCHEMA"], etc.
-    RDF_NS = {
-        "WD": Namespace("http://www.wikidata.org/entity/"),
-        "WDREF": Namespace("http://www.wikidata.org/reference/"),
-        "WDS": Namespace("http://www.wikidata.org/entity/statement/"),
-        "WDT": Namespace("http://www.wikidata.org/prop/direct/"),
-        "P": Namespace("http://www.wikidata.org/prop/"),
-        "PS": Namespace("http://www.wikidata.org/prop/statement/"),
-        "PR": Namespace("http://www.wikidata.org/prop/reference/"),
-        "PROV": Namespace("http://www.w3.org/ns/prov#"),
-        "SCHEMA": Namespace("http://schema.org/"),
-    }
-
-    # URLs (constants)
-    SCHOLIA_URL = "https://scholia.toolforge.org/"
-    WIKIDATA_URL = "https://www.wikidata.org/"
-    WIKIDATA_HTTP_URL = WIKIDATA_URL.replace("https://", "http://")
-    WIKIDATA_ENTITY_URL = WIKIDATA_HTTP_URL + "entity/"
-    WIKIDATA_STATEMENT_URL = WIKIDATA_ENTITY_URL + "statement/"
-    WIKIDATA_WIKI_URL = WIKIDATA_URL + "wiki/"
-
-    # ====================================================================
     # APPLICATION CONFIGURATION
-    # All magic numbers centralized here for easy maintenance.
     # ====================================================================
 
     CONFIG = {
-        "app_version": "0.0.1",
+        "app_version": "0.1.0",
         "app_name": "LOTUS Wikidata Explorer",
         "app_url": "https://github.com/Adafede/marimo/blob/main/apps/lotus_wikidata_explorer.py",
-        "cdk_base": "https://www.simolecule.com/cdkdepict/depict/cow/svg",
         "sparql_endpoint": "https://qlever.dev/api/wikidata",
         "idsm_endpoint": "https://idsm.elixir-czech.cz/sparql/endpoint/",
-        "max_retries": 3,
-        "retry_backoff": 2,
-        "query_timeout": 300,
         "table_row_limit": 1_000,
         "download_embed_threshold_bytes": 500_000,
         "color_hyperlink": "#3377c4",
@@ -116,125 +201,13 @@ with app.setup:
         "mass_default_min": 0,
         "mass_default_max": 2_000,
         "mass_ui_max": 10_000,
-        "element_c_max": 100,
-        "element_h_max": 200,
-        "element_n_max": 50,
-        "element_o_max": 50,
-        "element_p_max": 20,
-        "element_s_max": 20,
+        "default_search_type": "substructure",
         "default_similarity_threshold": 0.8,
+        "default_smiles": "",
+        "default_taxon": "Gentiana lutea",
     }
 
-    ELEMENT_CONFIGS = [
-        ("C", "carbon", "element_c_max"),
-        ("H", "hydrogen", "element_h_max"),
-        ("N", "nitrogen", "element_n_max"),
-        ("O", "oxygen", "element_o_max"),
-        ("P", "phosphorus", "element_p_max"),
-        ("S", "sulfur", "element_s_max"),
-    ]
-    HALOGEN_CONFIGS = [
-        ("F", "fluorine"),
-        ("Cl", "chlorine"),
-        ("Br", "bromine"),
-        ("I", "iodine"),
-    ]
-
-    SPARQL_PREFIXES = """
-    PREFIX p: <http://www.wikidata.org/prop/>
-    PREFIX pr: <http://www.wikidata.org/prop/reference/>
-    PREFIX prov: <http://www.w3.org/ns/prov#>
-    PREFIX ps: <http://www.wikidata.org/prop/statement/>
-    PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-    PREFIX schema: <http://schema.org/>
-    PREFIX wd: <http://www.wikidata.org/entity/>
-    PREFIX wdt: <http://www.wikidata.org/prop/direct/>
-    PREFIX wikibase: <http://wikiba.se/ontology#>
-    """
-
-    SACHEM_PREFIXES = """
-    PREFIX sachem: <http://bioinfo.uochb.cas.cz/rdf/v1.0/sachem#>
-    PREFIX idsm: <https://idsm.elixir-czech.cz/sparql/endpoint/>
-    PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
-    """
-
-    # Common SELECT clause for compound queries
-    COMPOUND_SELECT_VARS = """
-    ?compound ?compoundLabel ?compound_inchikey ?compound_smiles_conn
-    ?compound_smiles_iso ?compound_mass ?compound_formula
-    ?taxon_name ?taxon
-    ?ref_qid ?ref_title ?ref_doi ?ref_date
-    ?statement ?ref
-    """
-
-    COMPOUND_MINIMAL_VARS = """
-    ?compound ?compoundLabel ?compound_inchikey ?compound_smiles_conn
-    """
-
-    COMPOUND_INTERIM_VARS = (
-        COMPOUND_MINIMAL_VARS
-        + """
-    ?taxon ?taxon_name ?ref_qid ?statement ?ref
-    """
-    )
-
-    # Common compound identifier retrieval (used in subqueries)
-    COMPOUND_IDENTIFIERS = """
-    ?compound wdt:P235 ?compound_inchikey;
-              wdt:P233 ?compound_smiles_conn.
-    """
-
-    # Common taxon-reference association pattern (used in subqueries)
-    TAXON_REFERENCE_ASSOCIATION = """
-    ?compound p:P703 ?statement.
-    ?statement ps:P703 ?taxon;
-               prov:wasDerivedFrom ?ref.
-    ?ref pr:P248 ?ref_qid.
-    ?taxon wdt:P225 ?taxon_name.
-    """
-
-    # Common compound property optionals
-    COMPOUND_PROPERTIES_OPTIONAL = """
-    OPTIONAL { ?compound wdt:P2017 ?compound_smiles_iso. }
-    OPTIONAL { ?compound wdt:P2067 ?compound_mass. }
-    OPTIONAL { ?compound wdt:P274 ?compound_formula. }
-    OPTIONAL {
-        ?compound rdfs:label ?compoundLabel.
-        FILTER(LANG(?compoundLabel) = "en")
-    }
-    OPTIONAL {
-        ?compound rdfs:label ?compoundLabel.
-        FILTER(LANG(?compoundLabel) = "mul")
-    }
-    """
-
-    # Common taxonomic and reference optionals
-    TAXONOMIC_REFERENCE_OPTIONAL = """
-    OPTIONAL {
-        ?statement ps:P703 ?taxon;
-                   prov:wasDerivedFrom ?ref.
-        ?ref pr:P248 ?ref_qid.
-        ?compound p:P703 ?statement.
-        ?taxon wdt:P225 ?taxon_name.
-        OPTIONAL { ?ref_qid wdt:P1476 ?ref_title. }
-        OPTIONAL { ?ref_qid wdt:P356 ?ref_doi. }
-        OPTIONAL { ?ref_qid wdt:P577 ?ref_date. }
-    }
-    """
-
-    # Common reference metadata retrieval (after subquery)
-    REFERENCE_METADATA_OPTIONAL = """
-    OPTIONAL { ?ref_qid wdt:P1476 ?ref_title. }
-    OPTIONAL { ?ref_qid wdt:P356 ?ref_doi. }
-    OPTIONAL { ?ref_qid wdt:P577 ?ref_date. }
-    """
-
-    # Subscript translation map (constant for performance)
-    SUBSCRIPT_MAP = str.maketrans("₀₁₂₃₄₅₆₇₈₉", "0123456789")
-    # Regex pattern for molecular formula parsing (compiled once)
-    FORMULA_PATTERN = re.compile(r"([A-Z][a-z]?)(\d*)")
-
-    # Pluralization map (constant)
+    # Pluralization map for irregular forms
     PLURAL_MAP = {
         "Entry": "Entries",
         "entry": "entries",
@@ -244,114 +217,31 @@ with app.setup:
 
 
 @app.class_definition
-class SPARQLWrapper:
-    """Simple SPARQL wrapper using urllib (works in both native Python and Pyodide/WASM)."""
-
-    def __init__(
-        self,
-        sparql_endpoint: str = "https://qlever.dev/api/wikidata",
-        timeout: int = 120,
-    ):
-        self.endpoint = sparql_endpoint
-        self.timeout = timeout
-
-    def query_csv(self, query: str) -> bytes:
-        """Execute a SPARQL query. Returns raw CSV bytes (memory efficient)."""
-        headers = {
-            "Accept": "text/csv",
-            "Content-Type": "application/x-www-form-urlencoded",
-        }
-        data = urllib.parse.urlencode({"query": query}).encode("utf-8")
-
-        req = urllib.request.Request(
-            self.endpoint,
-            data=data,
-            headers=headers,
-            method="POST",
-        )
-
-        with urllib.request.urlopen(req, timeout=self.timeout) as response:
-            return response.read()
-
-
-@app.class_definition
-@dataclass(frozen=True)
-class ElementRange:
-    """Range for element count in molecular formula."""
-
-    min_val: Optional[int] = None
-    max_val: Optional[int] = None
-
-    def is_active(self) -> bool:
-        """Check if range filter is active."""
-        return self.min_val is not None or self.max_val is not None
-
-    def matches(self, count: int) -> bool:
-        """Check if count is within range."""
-        if not self.is_active():
-            return True
-        if self.min_val is not None and count < self.min_val:
-            return False
-        if self.max_val is not None and count > self.max_val:
-            return False
-        return True
-
-
-@app.class_definition
-@dataclass(frozen=True)
-class FormulaFilters:
-    """Molecular formula filtering criteria."""
-
-    exact_formula: Optional[str] = None
-    c: ElementRange = field(default_factory=ElementRange)
-    h: ElementRange = field(default_factory=ElementRange)
-    n: ElementRange = field(default_factory=ElementRange)
-    o: ElementRange = field(default_factory=ElementRange)
-    p: ElementRange = field(default_factory=ElementRange)
-    s: ElementRange = field(default_factory=ElementRange)
-    f_state: str = "allowed"
-    cl_state: str = "allowed"
-    br_state: str = "allowed"
-    i_state: str = "allowed"
-
-    def is_active(self) -> bool:
-        """Check if any filter is active."""
-        if self.exact_formula and self.exact_formula.strip():
-            return True
-        if any(r.is_active() for r in [self.c, self.h, self.n, self.o, self.p, self.s]):
-            return True
-        if any(
-            s != "allowed"
-            for s in [self.f_state, self.cl_state, self.br_state, self.i_state]
-        ):
-            return True
-        return False
-
-
-@app.class_definition
 @dataclass
 class SearchParams:
     """Consolidated search parameters - replaces 30+ individual state variables."""
 
-    # Core search
+    # Core search parameters
     taxon: str = "Gentiana lutea"
     smiles: str = ""
     smiles_search_type: str = "substructure"
     smiles_threshold: float = 0.8
 
-    # Mass filter
+    # Mass filter parameters
     mass_filter: bool = False
-    mass_min: float = field(default_factory=lambda: CONFIG["mass_default_min"])
-    mass_max: float = field(default_factory=lambda: CONFIG["mass_default_max"])
+    mass_min: float = 0.0
+    mass_max: float = 2000.0
 
-    # Year filter
+    # Year filter parameters
     year_filter: bool = False
-    year_start: int = field(default_factory=lambda: CONFIG["year_default_start"])
+    year_start: int = 1_900
     year_end: int = field(default_factory=lambda: datetime.now().year)
 
-    # Formula filter
+    # Formula filter parameters
     formula_filter: bool = False
     exact_formula: str = ""
+
+    # Element range parameters (min/max for C, H, N, O, P, S)
     c_min: int | None = None
     c_max: int | None = None
     h_min: int | None = None
@@ -364,12 +254,14 @@ class SearchParams:
     p_max: int | None = None
     s_min: int | None = None
     s_max: int | None = None
+
+    # Halogen filter states
     f_state: str = "allowed"
     cl_state: str = "allowed"
     br_state: str = "allowed"
     i_state: str = "allowed"
 
-    # Auto-run flag
+    # Auto-run flag (set when URL params are detected)
     auto_run: bool = False
 
     @classmethod
@@ -386,14 +278,19 @@ class SearchParams:
                 int(params[f"{e}_min"]) if f"{e}_min" in params else None
             )
             elem_vals[f"{e}_max"] = (
-                int(params.get(f"{e}_max", CONFIG[f"element_{e}_max"])) if ff else None
+                int(params[f"{e}_max"]) if f"{e}_max" in params else None
             )
 
         return cls(
-            taxon=params.get("taxon", "Gentiana lutea"),
-            smiles=params.get("smiles", ""),
-            smiles_search_type=params.get("smiles_search_type", "substructure"),
-            smiles_threshold=float(params.get("smiles_threshold", "0.8")),
+            taxon=params.get("taxon", CONFIG["default_taxon"]),
+            smiles=params.get("smiles", CONFIG["default_smiles"]),
+            smiles_search_type=params.get(
+                "smiles_search_type",
+                CONFIG["default_search_type"],
+            ),
+            smiles_threshold=float(
+                params.get("smiles_threshold", CONFIG["default_similarity_threshold"]),
+            ),
             mass_filter=params.get("mass_filter") == "true",
             mass_min=float(params.get("mass_min", CONFIG["mass_default_min"])),
             mass_max=float(params.get("mass_max", CONFIG["mass_default_max"])),
@@ -421,7 +318,7 @@ class SearchParams:
             elem_args[f"{e}_max"] = (
                 max_v if max_v is not None else CONFIG[f"element_{e}_max"]
             )
-        return create_formula_filters(
+        return create_filters(
             exact_formula=self.exact_formula,
             **elem_args,
             f_state=self.f_state,
@@ -432,353 +329,81 @@ class SearchParams:
 
 
 @app.function
-def validate_smiles(smiles: str) -> Tuple[bool, Optional[str]]:
-    """Validate SMILES string for common issues."""
-    # Empty is valid (means no SMILES search)
-    if not smiles or not smiles.strip():
-        return True, None
+def create_taxon_warning_html(
+    matches: list,
+    selected_qid: str,
+    is_exact: bool,
+) -> mo.Html:
+    """Create an HTML warning with clickable QID links and taxon details."""
 
-    smiles = smiles.strip()
-
-    # Length validation
-    if len(smiles) < 1:
-        return False, "SMILES string is empty after trimming whitespace"
-    if len(smiles) > 10000:
-        return False, (
-            f"SMILES string is too long ({len(smiles):,} characters). "
-            f"Maximum allowed: 10,000 characters. "
-            f"Please use a simpler structure or substructure."
-        )
-
-    # Check for null bytes or dangerous control characters
-    if "\x00" in smiles:
-        return (
-            False,
-            "SMILES contains null bytes (\\x00) which are not allowed",
-        )
-
-    invalid_chars = [c for c in smiles if ord(c) < 32 and c not in "\t\n\r"]
-    if invalid_chars:
-        chars_display = ", ".join(f"\\x{ord(c):02x}" for c in invalid_chars[:3])
-        return False, (
-            f"SMILES contains invalid control characters: {chars_display}. "
-            f"Only standard ASCII printable characters are allowed."
-        )
-
-    # Basic sanity check: should contain at least one atom symbol
-    # Common atom symbols in SMILES: C, N, O, S, P, F, Cl, Br, I, B, c (aromatic), etc.
-    if not any(c in smiles for c in "CNOSPFIBcnops"):
-        return False, (
-            "SMILES appears to be missing atom symbols. "
-            "A valid SMILES must contain at least one element (C, N, O, etc.). "
-            "Example: 'c1ccccc1' for benzene"
-        )
-
-    return True, None
-
-
-@app.function
-def escape_smiles_for_sparql(smiles: str) -> str:
-    """
-    Escape SMILES string for safe use in SPARQL queries.
-
-    SMILES strings can contain backslashes (e.g., /C=C\3/) which are escape
-    characters in SPARQL string literals and must be escaped.
-    """
-    if not smiles:
-        return smiles
-
-    # Validate SMILES
-    is_valid, error_msg = validate_smiles(smiles)
-    if not is_valid:
-        raise ValueError(f"Invalid SMILES: {error_msg}")
-
-    # Escape backslashes by doubling them
-    return smiles.replace("\\", "\\\\")
-
-
-@app.function
-def build_taxon_search_query(taxon_name: str) -> str:
-    """Build SPARQL query to find taxa by scientific name. Returns up to 10 results."""
-    return f"""
-    PREFIX wdt: <http://www.wikidata.org/prop/direct/>
-    SELECT ?taxon ?taxon_name WHERE {{
-        VALUES ?taxon_name {{ "{taxon_name}" }}
-        ?taxon wdt:P225 ?taxon_name .
-    }}
-    """
-
-
-@app.function
-def build_base_sachem_query(
-    smiles: str,
-    search_type: str = "substructure",
-    threshold: float = 0.8,
-    include_taxon_filter: bool = False,
-    taxon_qid: Optional[str] = None,
-) -> str:
-    """Build base SACHEM chemical search query."""
-    escaped_smiles = escape_smiles_for_sparql(smiles)
-
-    # Build SACHEM service clause based on search type
-    if search_type == "similarity":
-        sachem_clause = f"""
-        SERVICE idsm:wikidata {{
-            VALUES ?QUERY_SMILES {{ "{escaped_smiles}" }}
-            VALUES ?CUTOFF {{ "{threshold}"^^xsd:double }}
-            ?compound sachem:similarCompoundSearch[
-            sachem:query ?QUERY_SMILES;
-            sachem:cutoff ?CUTOFF
-            ].
-        }}
-        """
-    else:
-        # substructure
-        sachem_clause = f"""
-        SERVICE idsm:wikidata {{
-            VALUES ?SUBSTRUCTURE {{ "{escaped_smiles}" }}
-            ?compound sachem:substructureSearch [
-                sachem:query ?SUBSTRUCTURE
-            ].
-        }}
-        """
-
-    # Build taxon filter if requested
-    taxon_filter = ""
-    if include_taxon_filter and taxon_qid:
-        taxon_filter = f"""
-        {TAXON_REFERENCE_ASSOCIATION}
-        ?taxon (wdt:P171*) wd:{taxon_qid}
-        {REFERENCE_METADATA_OPTIONAL}
-        """
-    else:
-        taxon_filter = f"""
-        {TAXONOMIC_REFERENCE_OPTIONAL}
-        """
-
-    # Construct full query
-    return f"""
-    {SPARQL_PREFIXES}{SACHEM_PREFIXES}
-    SELECT {COMPOUND_SELECT_VARS} WHERE {{
-        {{
-            SELECT {COMPOUND_MINIMAL_VARS} WHERE {{
-                {sachem_clause}
-                {COMPOUND_IDENTIFIERS}
-            }}
-        }}
-        {taxon_filter}
-        {COMPOUND_PROPERTIES_OPTIONAL}
-    }}
-    """
-
-
-@app.function
-def build_compounds_query(qid: str) -> str:
-    """Build SPARQL query to find compounds in a specific taxon and its descendants."""
-    return f"""
-    {SPARQL_PREFIXES}
-    SELECT {COMPOUND_SELECT_VARS} WHERE {{
-      {{
-        SELECT {COMPOUND_INTERIM_VARS} WHERE {{
-          {COMPOUND_IDENTIFIERS}
-          {TAXON_REFERENCE_ASSOCIATION}
-        }}
-      }}
-      ?taxon (wdt:P171*) wd:{qid}.
-      {REFERENCE_METADATA_OPTIONAL}      
-      {COMPOUND_PROPERTIES_OPTIONAL}
-    }}
-    """
-
-
-@app.function
-def build_all_compounds_query() -> str:
-    """Build SPARQL query to retrieve all compounds."""
-    return f"""
-    {SPARQL_PREFIXES}
-    SELECT {COMPOUND_SELECT_VARS} WHERE {{
-        {{
-            SELECT {COMPOUND_INTERIM_VARS} WHERE {{
-                    {COMPOUND_IDENTIFIERS}
-                    {TAXON_REFERENCE_ASSOCIATION}
-            }}
-        }}
-      {REFERENCE_METADATA_OPTIONAL}
-      {COMPOUND_PROPERTIES_OPTIONAL}
-    }}
-    """
-
-
-@app.function
-def execute_sparql(query: str, max_retries: int = CONFIG["max_retries"]) -> bytes:
-    """Execute SPARQL query with retry logic. Returns CSV bytes for memory efficiency."""
-    if not query or not query.strip():
-        raise ValueError("SPARQL query cannot be empty")
-
-    def _wait(a):
-        time.sleep(CONFIG["retry_backoff"] * (2**a))
-
-    # Get wrapper once before retry loop
-    sparql = SPARQLWrapper()
-
-    for attempt in range(max_retries):
-        try:
-            return sparql.query_csv(query)
-        except Exception as e:
-            error_name = type(e).__name__
-            error_msg = str(e)
-
-            # Handle timeout errors (both httpx and urllib)
-            if "timeout" in error_name.lower() or "timeout" in error_msg.lower():
-                if attempt == max_retries - 1:
-                    raise TimeoutError(
-                        f"⏱️ Query timed out after {max_retries} attempts. Try adding filters."
-                    ) from e
-                _wait(attempt)
-            # Handle HTTP errors
-            elif "http" in error_name.lower() or "urlerror" in error_name.lower():
-                if attempt == max_retries - 1:
-                    raise ConnectionError(f"🌐 HTTP error: {error_msg[:200]}") from e
-                _wait(attempt)
-            # Handle network errors
-            elif "network" in error_name.lower() or "connection" in error_name.lower():
-                if attempt == max_retries - 1:
-                    raise ConnectionError(f"🌐 Network error: {e}") from e
-                _wait(attempt)
-            # Other errors
-            else:
-                if attempt == max_retries - 1:
-                    raise RuntimeError(f"❌ {error_name}: {e}") from e
-                _wait(attempt)
-    raise RuntimeError("Max retries exceeded")
-
-
-@app.function
-@lru_cache(maxsize=256)
-def extract_qid(url: Optional[str]) -> Optional[str]:
-    """Extract QID from Wikidata entity URL. Cached for performance."""
-    if url is None:
-        return None
-    return url.replace(WIKIDATA_ENTITY_URL, "")
-
-
-@app.function
-@lru_cache(maxsize=256)
-def create_structure_image_url(smiles: Optional[str]) -> Optional[str]:
-    if smiles is None:
-        return None
-    encoded_smiles = url_quote(smiles)
-    return f"{CONFIG['cdk_base']}?smi={encoded_smiles}&annotate=cip"
-
-
-@app.function
-def create_lazy_structure_image(smiles: Optional[str]) -> mo.Html:
-    """Create a lazy-loading structure image to reduce memory usage on mobile devices."""
-    if smiles is None:
-        return mo.Html("")
-    url = create_structure_image_url(smiles)
-    if url is None:
-        return mo.Html("")
-    # Use loading="lazy" and decoding="async" for better mobile performance
-    return mo.Html(
-        f'<img src="{url}" loading="lazy" decoding="async" '
-        f'alt="Structure" style="max-width:200px;max-height:150px;" />'
+    match_type = "exact matches" if is_exact else "similar taxa"
+    intro = (
+        f"Ambiguous taxon name. Multiple {match_type} found:"
+        if is_exact
+        else "No exact match. Similar taxa found:"
     )
 
+    # Build HTML list of matches
+    items = []
+    for match_data in matches:
+        qid = match_data[0]
+        name = match_data[1]
+        description = match_data[2] if len(match_data) > 2 else None
+        parent = match_data[3] if len(match_data) > 3 else None
+        compound_count = match_data[4] if len(match_data) > 4 else None
 
-@app.function
-def build_sparql_values_clause(
-    variable: str, values: list, use_wd_prefix: bool = True
-) -> str:
-    """Build a SPARQL VALUES clause for a list of values."""
-    if use_wd_prefix:
-        values_str = " ".join(f"wd:{v}" for v in values)
-    else:
-        values_str = " ".join(f"<{v}>" for v in values)
+        # Create clickable link using module function with custom styling
+        link_html = f'<a href="{scholia_url(qid)}" target="_blank" rel="noopener noreferrer" style="color: {CONFIG["color_hyperlink"]}; font-weight: bold;">{qid}</a>'
 
-    return f"VALUES ?{variable} {{ {values_str} }}"
+        # Build details string
+        details = []
+        if name:
+            details.append(f"<em>{name}</em>")
+        if description:
+            details.append(f"{description}")
+        if parent:
+            details.append(f"parent: {parent}")
+        if compound_count is not None:
+            details.append(f"<strong>{compound_count:,} compounds</strong>")
 
+        details_str = " - ".join(details) if details else ""
 
-@app.function
-def build_taxon_details_query(qids: List[str]) -> str:
-    values_clause = build_sparql_values_clause("taxon", qids)
-    return f"""
-    {SPARQL_PREFIXES}
+        # Highlight the selected one
+        if qid == selected_qid:
+            items.append(
+                f"<li>{link_html} {details_str} <strong>< USING THIS ONE (most compounds)</strong></li>",
+            )
+        else:
+            items.append(f"<li>{link_html} {details_str}</li>")
 
-    SELECT ?taxon ?taxonLabel ?taxonDescription ?taxon_parent ?taxon_parentLabel 
-    WHERE {{
-      {values_clause}
+    items_html = "".join(items)
 
-      # Parent taxon
-      OPTIONAL {{ ?taxon wdt:P171 ?taxon_parent }}
-
-      # Taxon labels (English preferred)
-      OPTIONAL {{
-        ?taxon rdfs:label ?taxonLabel .
-        FILTER(LANG(?taxonLabel) = "en")
-      }}
-      OPTIONAL {{
-        ?taxon rdfs:label ?taxonLabel .
-        FILTER(LANG(?taxonLabel) = "mul")
-      }}
-
-      # Taxon descriptions
-      OPTIONAL {{
-        ?taxon schema:description ?taxonDescription .
-        FILTER(LANG(?taxonDescription) = "en")
-      }}
-      OPTIONAL {{
-        ?taxon schema:description ?taxonDescription .
-        FILTER(LANG(?taxonDescription) = "mul")
-      }}
-
-      # Parent labels
-      OPTIONAL {{
-        ?taxon_parent rdfs:label ?taxon_parentLabel .
-        FILTER(LANG(?taxon_parentLabel) = "en")
-      }}
-      OPTIONAL {{
-        ?taxon_parent rdfs:label ?taxon_parentLabel .
-        FILTER(LANG(?taxon_parentLabel) = "mul")
-      }}
-    }}
+    html = f"""
+    <div style="line-height: 1.6;">
+        {intro}
+        <ul style="margin: 0.5em 0; padding-left: 1.5em;">
+            {items_html}
+        </ul>
+        <em>For precision, please use a specific QID directly in the search box. When ambiguous, the taxon with the most compound links is automatically selected.</em>
+    </div>
     """
 
-
-@app.function
-def build_taxon_connectivity_query(qids: List[str]) -> str:
-    """Build query to count compound connections for each taxon."""
-    values_clause = build_sparql_values_clause("taxon", qids)
-    return f"""
-    {SPARQL_PREFIXES}
-
-    SELECT ?taxon (COUNT(DISTINCT ?compound) AS ?compound_count) WHERE {{
-      {values_clause}
-
-      # Count compounds directly linked to this taxon or its descendants
-      {{
-        SELECT ?taxon ?compound WHERE {{
-          {values_clause}
-          ?descendant (wdt:P171*) ?taxon .
-          ?compound wdt:P235 ?inchikey ;
-                    p:P703/ps:P703 ?descendant .
-        }}
-      }}
-    }}
-    GROUP BY ?taxon
-    ORDER BY DESC(?compound_count)
-    """
+    return mo.Html(html)
 
 
 @app.function
 def resolve_ambiguous_matches(
-    matches: List[Tuple[str, str]], is_exact: bool
-) -> Tuple[str, mo.Html]:
-    """Helper to resolve ambiguous taxon matches by connectivity. Returns (selected_qid, warning_html)."""
-    qids = [qid for qid, _ in matches[:5]]  # Limit to 5 for performance
+    matches: list[tuple[str, str]],
+    is_exact: bool,
+) -> tuple[str, mo.Html]:
+    """Resolve ambiguous taxon matches by connectivity. Returns (selected_qid, warning_html)."""
+    qids = [qid for qid, _ in matches]
 
     # Query connectivity to find the most connected taxon (CSV for memory efficiency)
-    csv_bytes = execute_sparql(build_taxon_connectivity_query(qids))
+    csv_bytes = execute_with_retry(
+        query_taxon_connectivity(values_clause("taxon", qids, prefix="wd:")),
+        endpoint=CONFIG["sparql_endpoint"],
+    )
     connectivity_map = {}
     if csv_bytes and csv_bytes.strip():
         conn_df = pl.read_csv(io.BytesIO(csv_bytes))
@@ -786,27 +411,30 @@ def resolve_ambiguous_matches(
             taxon_url = row.get("taxon", "")
             count = row.get("compound_count", 0)
             if taxon_url:
-                qid = extract_qid(taxon_url)
+                qid = extract_from_url(taxon_url, WIKIDATA_ENTITY_PREFIX)
                 connectivity_map[qid] = int(count) if count else 0
         del conn_df
     del csv_bytes
 
     # Sort by connectivity (descending)
     sorted_matches = sorted(
-        matches[:5],
+        matches,
         key=lambda x: connectivity_map.get(x[0], 0),
         reverse=True,
     )
 
     # Get details for display (CSV for memory efficiency)
-    csv_bytes = execute_sparql(build_taxon_details_query(qids))
+    csv_bytes = execute_with_retry(
+        query_taxon_details(values_clause("taxon", qids, prefix="wd:")),
+        endpoint=CONFIG["sparql_endpoint"],
+    )
     details_map = {}
     if csv_bytes and csv_bytes.strip():
         details_df = pl.read_csv(io.BytesIO(csv_bytes))
         for row in details_df.iter_rows(named=True):
             taxon_url = row.get("taxon", "")
             if taxon_url:
-                qid = extract_qid(taxon_url)
+                qid = extract_from_url(taxon_url, WIKIDATA_ENTITY_PREFIX)
                 details_map[qid] = (
                     row.get("taxonLabel", ""),
                     row.get("taxonDescription", ""),
@@ -836,69 +464,6 @@ def resolve_ambiguous_matches(
 
 
 @app.function
-def create_taxon_warning_html(
-    matches: list,
-    selected_qid: str,
-    is_exact: bool,
-) -> mo.Html:
-    """Create an HTML warning with clickable QID links and taxon details."""
-
-    match_type = "exact matches" if is_exact else "similar taxa"
-    intro = (
-        f"Ambiguous taxon name. Multiple {match_type} found:"
-        if is_exact
-        else "No exact match. Similar taxa found:"
-    )
-
-    # Build HTML list of matches
-    items = []
-    for match_data in matches:
-        qid = match_data[0]
-        name = match_data[1]
-        description = match_data[2] if len(match_data) > 2 else None
-        parent = match_data[3] if len(match_data) > 3 else None
-        compound_count = match_data[4] if len(match_data) > 4 else None
-
-        # Create clickable link
-        link = f'<a href="{SCHOLIA_URL}{qid}" target="_blank" rel="noopener noreferrer" style="color: {CONFIG["color_hyperlink"]}; text-decoration: none; border-bottom: 1px solid transparent; font-weight: bold;">{qid}</a>'
-
-        # Build details string
-        details = []
-        if name:
-            details.append(f"<em>{name}</em>")
-        if description:
-            details.append(f"{description}")
-        if parent:
-            details.append(f"parent: {parent}")
-        if compound_count is not None:
-            details.append(f"<strong>{compound_count:,} compounds</strong>")
-
-        details_str = " - ".join(details) if details else ""
-
-        # Highlight the selected one
-        if qid == selected_qid:
-            items.append(
-                f"<li>{link} {details_str} <strong>← USING THIS ONE (most compounds)</strong></li>"
-            )
-        else:
-            items.append(f"<li>{link} {details_str}</li>")
-
-    items_html = "".join(items)
-
-    html = f"""
-    <div style="line-height: 1.6;">
-        {intro}
-        <ul style="margin: 0.5em 0; padding-left: 1.5em;">
-            {items_html}
-        </ul>
-        <em>For precision, please use a specific QID directly in the search box. When ambiguous, the taxon with the most compound links is automatically selected.</em>
-    </div>
-    """
-
-    return mo.Html(html)
-
-
-@app.function
 def resolve_taxon_to_qid(
     taxon_input: str,
 ) -> tuple[str | None, mo.Html | None]:
@@ -915,8 +480,8 @@ def resolve_taxon_to_qid(
 
     # Search for taxon by name (CSV for memory efficiency)
     try:
-        query = build_taxon_search_query(taxon_input)
-        csv_bytes = execute_sparql(query)
+        query = query_taxon_search(taxon_input)
+        csv_bytes = execute_with_retry(query, endpoint=CONFIG["sparql_endpoint"])
 
         if not csv_bytes or not csv_bytes.strip():
             return None, None
@@ -933,7 +498,12 @@ def resolve_taxon_to_qid(
             taxon_url = row.get("taxon", "")
             taxon_name = row.get("taxon_name", "")
             if taxon_url and taxon_name:
-                matches.append((extract_qid(taxon_url), taxon_name))
+                matches.append(
+                    (
+                        extract_from_url(taxon_url, WIKIDATA_ENTITY_PREFIX),
+                        taxon_name,
+                    ),
+                )
         del df
 
         if not matches:
@@ -961,122 +531,6 @@ def resolve_taxon_to_qid(
 
     except Exception:
         return None, None
-
-
-@app.function
-def pluralize(singular: str, count: int) -> str:
-    """Return singular or plural form based on count with special cases."""
-    return singular if count == 1 else PLURAL_MAP.get(singular, f"{singular}s")
-
-
-@app.function
-def serialize_element_range(
-    element_range: ElementRange,
-) -> Optional[Dict[str, int]]:
-    """Convert ElementRange to dictionary for export, returns None if not active."""
-    if not element_range.is_active():
-        return None
-    return {
-        "min": element_range.min_val,
-        "max": element_range.max_val,
-    }
-
-
-@app.function
-def serialize_formula_filters(
-    filters: Optional[FormulaFilters],
-) -> Optional[Dict[str, Any]]:
-    """Convert FormulaFilters to dictionary for metadata export."""
-    if not filters or not filters.is_active():
-        return None
-
-    result = {}
-
-    # Exact formula
-    if filters.exact_formula and filters.exact_formula.strip():
-        result["exact_formula"] = filters.exact_formula.strip()
-
-    # Element ranges
-    element_attrs = [
-        filters.c,
-        filters.h,
-        filters.n,
-        filters.o,
-        filters.p,
-        filters.s,
-    ]
-    for (_, element_name, _), element_range in zip(ELEMENT_CONFIGS, element_attrs):
-        range_dict = serialize_element_range(element_range)
-        if range_dict:
-            result[element_name] = range_dict
-
-    # Halogen states
-    halogen_attrs = [
-        filters.f_state,
-        filters.cl_state,
-        filters.br_state,
-        filters.i_state,
-    ]
-    halogen_states = {}
-    for (_, halogen_name), state in zip(HALOGEN_CONFIGS, halogen_attrs):
-        if state != "allowed":
-            halogen_states[halogen_name] = state
-
-    if halogen_states:
-        result["halogens"] = halogen_states
-
-    return result if result else None
-
-
-@app.function
-def normalize_element_value(val: int, default: int) -> Optional[int]:
-    """Normalize element value by converting default values to None."""
-    return None if val == default else val
-
-
-@app.function
-def create_formula_filters(
-    exact_formula: str,
-    c_min: int,
-    c_max: int,
-    h_min: int,
-    h_max: int,
-    n_min: int,
-    n_max: int,
-    o_min: int,
-    o_max: int,
-    p_min: int,
-    p_max: int,
-    s_min: int,
-    s_max: int,
-    f_state: str,
-    cl_state: str,
-    br_state: str,
-    i_state: str,
-) -> FormulaFilters:
-    """Factory function to create FormulaFilters from UI values."""
-    elem_vals = {
-        "c": (c_min, c_max),
-        "h": (h_min, h_max),
-        "n": (n_min, n_max),
-        "o": (o_min, o_max),
-        "p": (p_min, p_max),
-        "s": (s_min, s_max),
-    }
-    ranges = {
-        k: ElementRange(mn, normalize_element_value(mx, CONFIG[f"element_{k}_max"]))
-        for k, (mn, mx) in elem_vals.items()
-    }
-    return FormulaFilters(
-        exact_formula=exact_formula.strip()
-        if exact_formula and exact_formula.strip()
-        else None,
-        **ranges,
-        f_state=f_state,
-        cl_state=cl_state,
-        br_state=br_state,
-        i_state=i_state,
-    )
 
 
 @app.function
@@ -1120,7 +574,7 @@ def build_active_filters_dict(
         }
 
     # Formula filter
-    formula_dict = serialize_formula_filters(formula_filters)
+    formula_dict = serialize_filters(formula_filters)
     if formula_dict:
         filters["molecular_formula"] = formula_dict
 
@@ -1232,19 +686,13 @@ def build_api_url(
         if exact_formula and exact_formula.strip():
             params["exact_formula"] = exact_formula.strip()
 
-        # Element ranges (only add non-default values) - use loop to reduce repetition
-        element_vals = [
-            ("c", c_min, c_max, "element_c_max"),
-            ("h", h_min, h_max, "element_h_max"),
-            ("n", n_min, n_max, "element_n_max"),
-            ("o", o_min, o_max, "element_o_max"),
-            ("p", p_min, p_max, "element_p_max"),
-            ("s", s_min, s_max, "element_s_max"),
-        ]
-        for elem, min_val, max_val, max_key in element_vals:
+        # Element ranges (only add non-default values)
+        for elem in ["c", "h", "n", "o", "p", "s"]:
+            min_val = locals()[f"{elem}_min"]
+            max_val = locals()[f"{elem}_max"]
             if min_val > 0:
                 params[f"{elem}_min"] = str(min_val)
-            if max_val != CONFIG[max_key]:
+            if max_val != ELEMENT_DEFAULTS[elem]:
                 params[f"{elem}_max"] = str(max_val)
 
         # Halogen states (only add non-default)
@@ -1266,183 +714,29 @@ def build_api_url(
 
 
 @app.function
-def compress_if_large(
-    data: str, filename: str, threshold_bytes: int = None
-) -> tuple[str, str, str]:
-    """Compress data with gzip if it exceeds the threshold."""
-    if threshold_bytes is None:
-        threshold_bytes = CONFIG["download_embed_threshold_bytes"]
-
-    data_bytes = data.encode("utf-8")
-    data_size = len(data_bytes)
-
-    # Compress if data exceeds threshold
-    if data_size > threshold_bytes:
-        compressed_data = gzip.compress(data_bytes)
-        return (compressed_data, f"{filename}.gz", "application/gzip")
-    else:
-        return (data, filename, None)
-
-
-@app.function
 def create_download_button(data: str, filename: str, label: str, base_mimetype: str):
-    """Create a download button with automatic compression for large files.
-
-    Uses mo.download normally, with iOS-specific fallback that opens content in new tab.
-    """
-    compressed_data, final_filename, final_mimetype = compress_if_large(data, filename)
-
-    # Add compression indicator to label
-    display_label = label + (
-        " (gzipped)" if final_mimetype == "application/gzip" else ""
+    """Create a download button with automatic compression for large files."""
+    # Convert to bytes if needed
+    data_bytes = data.encode("utf-8") if isinstance(data, str) else data
+    compressed_data, was_compressed = compress_if_large(
+        data_bytes,
+        CONFIG["download_embed_threshold_bytes"],
     )
 
-    mimetype = final_mimetype if final_mimetype else base_mimetype
+    # Add compression indicator to label
+    display_label = label + (" (gzipped)" if was_compressed else "")
+
+    # Update filename extension if compressed
+    final_filename = filename + ".gz" if was_compressed else filename
+    final_mimetype = "application/gzip" if was_compressed else base_mimetype
 
     # Use standard mo.download - works on desktop and most mobile
     return mo.download(
         data=compressed_data,
         filename=final_filename,
         label=display_label,
-        mimetype=mimetype,
+        mimetype=final_mimetype,
     )
-
-
-@app.function
-def apply_range_filter(
-    df: pl.DataFrame,
-    column: str,
-    min_val: Optional[float],
-    max_val: Optional[float],
-    extract_func=None,
-) -> pl.DataFrame:
-    """Generic range filter for DataFrame columns."""
-    if (min_val is None and max_val is None) or column not in df.columns:
-        return df
-
-    col_expr = pl.col(column)
-    if extract_func:
-        col_expr = extract_func(col_expr)
-
-    # Build filter condition based on which bounds are set
-    if min_val is not None and max_val is not None:
-        # Both bounds set
-        condition = (col_expr >= min_val) & (col_expr <= max_val)
-    elif min_val is not None:
-        # Only minimum bound set
-        condition = col_expr >= min_val
-    else:
-        # Only maximum bound set
-        condition = col_expr <= max_val
-
-    return df.filter(pl.col(column).is_null() | condition)
-
-
-@app.function
-def apply_year_filter(
-    df: pl.DataFrame, year_start: Optional[int], year_end: Optional[int]
-) -> pl.DataFrame:
-    """Apply year range filter to publication dates."""
-    return apply_range_filter(
-        df,
-        "pub_date",
-        year_start,
-        year_end,
-        extract_func=lambda col: col.dt.year(),
-    )
-
-
-@app.function
-def apply_mass_filter(
-    df: pl.DataFrame, mass_min: Optional[float], mass_max: Optional[float]
-) -> pl.DataFrame:
-    """Apply mass range filter."""
-    return apply_range_filter(df, "mass", mass_min, mass_max)
-
-
-@app.function
-@lru_cache(maxsize=256)
-def parse_molecular_formula(formula: str) -> tuple:
-    """Parse molecular formula and extract atom counts. Returns tuple for caching."""
-    if not formula:
-        return ()
-
-    # Normalize formula by converting subscripts to regular numbers
-    normalized_formula = formula.translate(SUBSCRIPT_MAP)
-
-    # Pattern to match element followed by optional number
-    matches = FORMULA_PATTERN.findall(normalized_formula)
-
-    # Return tuple of (element, count) pairs for immutability and caching
-    return tuple(
-        (element, int(count) if count else 1) for element, count in matches if element
-    )
-
-
-@app.function
-def formula_matches_criteria(formula: str, filters: FormulaFilters) -> bool:
-    """Check if a molecular formula matches the specified criteria."""
-    # Early return: no formula means keep it (common case)
-    if not formula:
-        return True
-
-    # Normalize formula once
-    normalized_formula = formula.translate(SUBSCRIPT_MAP)
-
-    # Early return: exact formula match (fast path)
-    if filters.exact_formula and filters.exact_formula.strip():
-        normalized_exact = filters.exact_formula.strip().translate(SUBSCRIPT_MAP)
-        return normalized_formula == normalized_exact
-
-    # Parse formula (cached for performance)
-    atom_tuple = parse_molecular_formula(formula)
-    atoms = dict(atom_tuple)
-
-    # Check element ranges with early termination
-    # Note: Using tuple for iteration efficiency
-    elements_to_check = (
-        ("C", filters.c),
-        ("H", filters.h),
-        ("N", filters.n),
-        ("O", filters.o),
-        ("P", filters.p),
-        ("S", filters.s),
-    )
-
-    for element, elem_range in elements_to_check:
-        if not elem_range.matches(atoms.get(element, 0)):
-            return False  # Early termination
-
-    # Check halogens with early termination
-    halogens = (
-        ("F", filters.f_state),
-        ("Cl", filters.cl_state),
-        ("Br", filters.br_state),
-        ("I", filters.i_state),
-    )
-
-    for halogen, state in halogens:
-        count = atoms.get(halogen, 0)
-        if (state == "required" and count == 0) or (state == "excluded" and count > 0):
-            return False  # Early termination
-
-    return True
-
-
-@app.function
-def apply_formula_filter(df: pl.DataFrame, filters: FormulaFilters) -> pl.DataFrame:
-    """Apply molecular formula filters to the dataframe."""
-    # Early return for efficiency
-    if "mf" not in df.columns or not filters.is_active():
-        return df
-
-    # List comprehension is more efficient than building list with append
-    mask = [
-        formula_matches_criteria(row.get("mf", ""), filters)
-        for row in df.iter_rows(named=True)
-    ]
-
-    return df.filter(pl.Series(mask))
 
 
 @app.function
@@ -1454,7 +748,6 @@ def query_wikidata(
     mass_max: float | None = None,
     formula_filters: FormulaFilters | None = None,
     smiles: str | None = None,
-    search_mode: str = "taxon",
     smiles_search_type: str = "substructure",
     smiles_threshold: float = 0.8,
 ) -> pl.DataFrame:
@@ -1467,12 +760,6 @@ def query_wikidata(
     3. Combined: Find structures within a specific taxonomic group
     """
     # Input validation
-    if search_mode not in ("taxon", "smiles", "combined"):
-        raise ValueError(
-            f"Invalid search_mode: '{search_mode}'. "
-            f"Must be one of: 'taxon', 'smiles', 'combined'",
-        )
-
     if smiles_search_type not in ("substructure", "similarity"):
         raise ValueError(
             f"Invalid smiles_search_type: '{smiles_search_type}'. "
@@ -1498,19 +785,20 @@ def query_wikidata(
         )
 
     # Build query based on search mode
-    if search_mode == "combined" and smiles and qid:
-        query = build_base_sachem_query(
-            smiles, smiles_search_type, smiles_threshold, True, qid
+    if smiles:
+        query = query_sachem(
+            validate_and_escape(smiles),
+            smiles_search_type,
+            smiles_threshold,
+            qid,
         )
-    elif search_mode == "smiles" and smiles:
-        query = build_base_sachem_query(smiles, smiles_search_type, smiles_threshold)
     elif qid == "*" or qid is None:
-        query = build_all_compounds_query()
+        query = query_all_compounds()
     else:
-        query = build_compounds_query(qid)
+        query = query_compounds_by_taxon(qid)
 
     # Execute query and get CSV bytes (memory efficient)
-    csv_bytes = execute_sparql(query)
+    csv_bytes = execute_with_retry(query, endpoint=CONFIG["sparql_endpoint"])
 
     # Early return for empty results
     if not csv_bytes or csv_bytes.strip() == b"":
@@ -1584,8 +872,12 @@ def query_wikidata(
             pl.when(pl.col("pub_date").is_not_null() & (pl.col("pub_date") != ""))
             .then(
                 pl.col("pub_date")
-                .str.strptime(pl.Datetime, format="%Y-%m-%dT%H:%M:%SZ", strict=False)
-                .dt.date()
+                .str.strptime(
+                    pl.Datetime,
+                    format="%Y-%m-%dT%H:%M:%SZ",
+                    strict=False,
+                )
+                .dt.date(),
             )
             .otherwise(None)
             .alias("pub_date"),
@@ -1596,11 +888,11 @@ def query_wikidata(
         df = df.with_columns(pl.col("mass").cast(pl.Float64, strict=False))
 
     # Chain filters for efficiency (Polars optimizes the execution plan)
-    df = apply_year_filter(df, year_start, year_end)
-    df = apply_mass_filter(df, mass_min, mass_max)
+    df = filter_year(df, year_start, year_end)
+    df = filter_mass(df, mass_min, mass_max)
 
     if formula_filters:
-        df = apply_formula_filter(df, formula_filters)
+        df = filter_formula(df, formula_filters, match_func=match_filters)
 
     # Ensure required columns exist (fill with None if missing)
     required_columns = [
@@ -1631,53 +923,36 @@ def query_wikidata(
 
 
 @app.function
-def html_structure_image(smiles: str) -> str:
-    """Return HTML img tag for 2D structure."""
-    if not smiles:
-        return ""
-    img_url = f"{CONFIG['cdk_base']}?smi={url_quote(smiles)}&annotate=cip"
-    return f'<img src="{img_url}" loading="lazy" style="max-width:150px;max-height:100px;border-radius:8px;"/>'
-
-
-@app.function
-def html_doi_link(doi: str) -> str:
-    """Return HTML link for DOI."""
-    if not doi:
-        return ""
-    return f'<a href="https://doi.org/{doi}" target="_blank" style="color:{CONFIG["color_hyperlink"]};">{doi}</a>'
-
-
-@app.function
-def html_qid_link(url: str, color: str) -> str:
-    """Return HTML link for Wikidata QID."""
-    if not url:
-        return ""
-    qid = url.replace(WIKIDATA_ENTITY_URL, "")
-    return (
-        f'<a href="{SCHOLIA_URL}{qid}" target="_blank" style="color:{color};">{qid}</a>'
-    )
-
-
-@app.function
-def html_statement_link(url: str) -> str:
-    """Return HTML link for statement."""
-    if not url:
-        return ""
-    statement_id = url.split("/")[-1] if url else ""
-    return f'<a href="{url}" target="_blank" style="color:{CONFIG["color_hyperlink"]};">{statement_id}</a>'
-
-
-@app.function
 def build_display_dataframe(df: pl.DataFrame) -> pl.DataFrame:
     """Build display DataFrame with HTML-formatted columns.
 
     Returns a DataFrame with renamed columns and HTML strings for links/images.
     This can be used for both WASM (plain HTML) and native (mo.ui.table).
     """
+
+    # Create wrapper functions that use CONFIG values
+    def _structure_img(smiles):
+        return html_from_smiles(smiles) if smiles else ""
+
+    def _doi_lnk(doi):
+        return link_from_doi(doi, CONFIG["color_hyperlink"]) if doi else ""
+
+    def _compound_qid_lnk(url):
+        return link_from_qid(url, CONFIG["color_wikidata_red"]) if url else ""
+
+    def _taxon_qid_lnk(url):
+        return link_from_qid(url, CONFIG["color_wikidata_green"]) if url else ""
+
+    def _ref_qid_lnk(url):
+        return link_from_qid(url, CONFIG["color_wikidata_blue"]) if url else ""
+
+    def _stmt_lnk(url):
+        return statement_link(url, CONFIG["color_hyperlink"]) if url else ""
+
     return df.select(
         [
             pl.col("smiles")
-            .map_elements(html_structure_image, return_dtype=pl.String)
+            .map_elements(_structure_img, return_dtype=pl.String)
             .alias("Compound Depiction"),
             pl.col("name").alias("Compound Name"),
             pl.col("smiles").alias("Compound SMILES"),
@@ -1688,49 +963,22 @@ def build_display_dataframe(df: pl.DataFrame) -> pl.DataFrame:
             pl.col("ref_title").alias("Reference Title"),
             pl.col("pub_date").alias("Reference Date"),
             pl.col("ref_doi")
-            .map_elements(html_doi_link, return_dtype=pl.String)
+            .map_elements(_doi_lnk, return_dtype=pl.String)
             .alias("Reference DOI"),
             pl.col("compound")
-            .map_elements(
-                lambda x: html_qid_link(x, CONFIG["color_wikidata_red"]),
-                return_dtype=pl.String,
-            )
+            .map_elements(_compound_qid_lnk, return_dtype=pl.String)
             .alias("Compound QID"),
             pl.col("taxon")
-            .map_elements(
-                lambda x: html_qid_link(x, CONFIG["color_wikidata_green"]),
-                return_dtype=pl.String,
-            )
+            .map_elements(_taxon_qid_lnk, return_dtype=pl.String)
             .alias("Taxon QID"),
             pl.col("reference")
-            .map_elements(
-                lambda x: html_qid_link(x, CONFIG["color_wikidata_blue"]),
-                return_dtype=pl.String,
-            )
+            .map_elements(_ref_qid_lnk, return_dtype=pl.String)
             .alias("Reference QID"),
             pl.col("statement")
-            .map_elements(html_statement_link, return_dtype=pl.String)
+            .map_elements(_stmt_lnk, return_dtype=pl.String)
             .alias("Statement"),
-        ]
+        ],
     )
-
-
-@app.function
-def wrap_html(html_str: str) -> mo.Html:
-    """Wrap HTML string in mo.Html for mo.ui.table."""
-    return mo.Html(html_str) if html_str else mo.Html("")
-
-
-@app.function
-def wrap_image(html_str: str):
-    """Wrap image HTML in mo.image for mo.ui.table, or return mo.Html as fallback."""
-    if not html_str:
-        return mo.Html("")
-    # Extract src from img tag and use mo.image
-    match = re.search(r'src="([^"]+)"', html_str)
-    if match:
-        return mo.image(src=match.group(1), width=150, height=100, rounded=True)
-    return mo.Html(html_str)
 
 
 @app.function
@@ -1749,18 +997,18 @@ def prepare_export_dataframe(
     df_with_qids: pl.DataFrame = df.with_columns(
         [
             pl.col("compound")
-            .str.replace(WIKIDATA_ENTITY_URL, "", literal=True)
+            .str.replace(WIKIDATA_ENTITY_PREFIX, "", literal=True)
             .alias("compound_qid"),
             pl.col("taxon")
-            .str.replace(WIKIDATA_ENTITY_URL, "", literal=True)
+            .str.replace(WIKIDATA_ENTITY_PREFIX, "", literal=True)
             .alias("taxon_qid"),
             pl.col("reference")
-            .str.replace(WIKIDATA_ENTITY_URL, "", literal=True)
+            .str.replace(WIKIDATA_ENTITY_PREFIX, "", literal=True)
             .alias("reference_qid"),
             pl.col("statement")
-            .str.replace(WIKIDATA_STATEMENT_URL, "", literal=True)
+            .str.replace(WIKIDATA_STATEMENT_PREFIX, "", literal=True)
             .alias("statement_id"),
-        ]
+        ],
     )
 
     select_cols: list[pl.Expr | str] = [
@@ -1852,8 +1100,8 @@ def create_export_metadata(
         "provider": [
             {"@type": "Organization", "name": n, "url": u}
             for n, u in [
-                ("LOTUS Initiative", WIKIDATA_WIKI_URL + "Q104225190"),
-                ("Wikidata", WIKIDATA_URL),
+                ("LOTUS Initiative", WIKI_PREFIX + "Q104225190"),
+                ("Wikidata", WIKIDATA_HTTP_BASE),
                 ("IDSM", "https://idsm.elixir-czech.cz/"),
             ]
         ],
@@ -1970,7 +1218,11 @@ def compute_provenance_hashes(
     if compound_col in df.columns:
         compound_ids = sorted(
             df.select(
-                pl.col(compound_col).str.replace(WIKIDATA_ENTITY_URL, "", literal=True)
+                pl.col(compound_col).str.replace(
+                    WIKIDATA_ENTITY_PREFIX,
+                    "",
+                    literal=True,
+                ),
             )
             .to_series()
             .drop_nulls()
@@ -2054,8 +1306,8 @@ def add_dataset_metadata(
     result_hash: str,
 ) -> None:
     """Add core dataset metadata to RDF graph (mutates graph in-place)."""
-    SCHEMA = RDF_NS["SCHEMA"]
-    WD = RDF_NS["WD"]
+    SCHEMA = WIKIDATA_NAMESPACES["SCHEMA"]
+    WD = WIKIDATA_NAMESPACES["WD"]
 
     # Dataset type and basic metadata
     g.add((dataset_uri, RDF.type, SCHEMA.Dataset))
@@ -2077,7 +1329,7 @@ def add_dataset_metadata(
         ),
     )
     g.add((dataset_uri, SCHEMA.provider, URIRef(CONFIG["app_url"])))
-    g.add((dataset_uri, DCTERMS.source, URIRef(WIKIDATA_URL)))
+    g.add((dataset_uri, DCTERMS.source, URIRef(WIKIDATA_HTTP_BASE)))
 
     # Dataset statistics and versioning
     g.add(
@@ -2100,7 +1352,7 @@ def add_dataset_metadata(
         (
             dataset_uri,
             SCHEMA.isBasedOn,
-            URIRef(WIKIDATA_WIKI_URL + "Q104225190"),
+            URIRef(WIKI_PREFIX + "Q104225190"),
         ),
     )
 
@@ -2132,19 +1384,6 @@ def add_dataset_metadata(
 
 
 @app.function
-def add_optional_literal(
-    g: Graph,
-    subject: URIRef,
-    predicate: URIRef,
-    value: Any,
-    datatype=XSD.string,
-) -> None:
-    """Add optional literal triple to graph if value exists (DRY helper)."""
-    if value is not None and value != "":
-        g.add((subject, predicate, Literal(value, datatype=datatype)))
-
-
-@app.function
 def add_compound_triples(
     g: Graph,
     row: dict[str, Any],
@@ -2153,13 +1392,13 @@ def add_compound_triples(
     processed_refs: set,
 ) -> None:
     """Add all triples for a single compound using Wikidata's full RDF structure."""
-    WD = RDF_NS["WD"]
-    WDT = RDF_NS["WDT"]
-    P = RDF_NS["P"]
-    PS = RDF_NS["PS"]
-    PR = RDF_NS["PR"]
-    PROV = RDF_NS["PROV"]
-    SCHEMA = RDF_NS["SCHEMA"]
+    WD = WIKIDATA_NAMESPACES["WD"]
+    WDT = WIKIDATA_NAMESPACES["WDT"]
+    P = WIKIDATA_NAMESPACES["P"]
+    PS = WIKIDATA_NAMESPACES["PS"]
+    PR = WIKIDATA_NAMESPACES["PR"]
+    PROV = WIKIDATA_NAMESPACES["PROV"]
+    SCHEMA = WIKIDATA_NAMESPACES["SCHEMA"]
 
     compound_qid = row.get("compound_qid", "")
     if not compound_qid:
@@ -2171,24 +1410,37 @@ def add_compound_triples(
     g.add((dataset_uri, SCHEMA.hasPart, compound_uri))
 
     # Compound identifiers using Wikidata properties (direct properties)
-    add_optional_literal(
-        g, compound_uri, WDT.P235, row.get("compound_inchikey")
+    add_literal(
+        g,
+        compound_uri,
+        WDT.P235,
+        row.get("compound_inchikey"),
     )  # InChIKey
-    add_optional_literal(
-        g, compound_uri, WDT.P233, row.get("compound_smiles")
+    add_literal(
+        g,
+        compound_uri,
+        WDT.P233,
+        row.get("compound_smiles"),
     )  # Canonical SMILES
-    add_optional_literal(
-        g, compound_uri, WDT.P274, row.get("molecular_formula")
+    add_literal(
+        g,
+        compound_uri,
+        WDT.P274,
+        row.get("molecular_formula"),
     )  # Molecular formula
 
     # Mass (P2067)
     if row.get("compound_mass") is not None:
-        add_optional_literal(
-            g, compound_uri, WDT.P2067, row["compound_mass"], XSD.float
+        add_literal(
+            g,
+            compound_uri,
+            WDT.P2067,
+            row["compound_mass"],
+            XSD.float,
         )
 
     # Compound label
-    add_optional_literal(g, compound_uri, RDFS.label, row.get("compound_name"))
+    add_literal(g, compound_uri, RDFS.label, row.get("compound_name"))
 
     # Taxonomic association using P703 (found in taxon) with FULL STATEMENT STRUCTURE
     # This mirrors the SPARQL query pattern:
@@ -2235,16 +1487,31 @@ def add_compound_triples(
             # Add reference metadata once per unique reference
             if ref_qid not in processed_refs:
                 # P1476: title
-                add_optional_literal(g, ref_uri, WDT.P1476, row.get("reference_title"))
-                add_optional_literal(g, ref_uri, RDFS.label, row.get("reference_title"))
+                add_literal(
+                    g,
+                    ref_uri,
+                    WDT.P1476,
+                    row.get("reference_title"),
+                )
+                add_literal(
+                    g,
+                    ref_uri,
+                    RDFS.label,
+                    row.get("reference_title"),
+                )
 
                 # P356: DOI
                 if row.get("reference_doi"):
-                    add_optional_literal(g, ref_uri, WDT.P356, row.get("reference_doi"))
+                    add_literal(
+                        g,
+                        ref_uri,
+                        WDT.P356,
+                        row.get("reference_doi"),
+                    )
 
                 # P577: publication date
                 if row.get("reference_date"):
-                    add_optional_literal(
+                    add_literal(
                         g,
                         ref_uri,
                         WDT.P577,
@@ -2260,8 +1527,8 @@ def add_compound_triples(
         # Add taxon metadata once per unique taxon
         if taxon_qid not in processed_taxa:
             # P225: taxon name
-            add_optional_literal(g, taxon_uri, WDT.P225, row.get("taxon_name"))
-            add_optional_literal(g, taxon_uri, RDFS.label, row.get("taxon_name"))
+            add_literal(g, taxon_uri, WDT.P225, row.get("taxon_name"))
+            add_literal(g, taxon_uri, RDFS.label, row.get("taxon_name"))
             processed_taxa.add(taxon_qid)
 
 
@@ -2276,16 +1543,16 @@ def export_to_rdf_turtle(
     # Initialize graph
     g = Graph()
 
-    # Bind namespaces from RDF_NS
-    g.bind("wd", RDF_NS["WD"])
-    g.bind("wdref", RDF_NS["WDREF"])
-    g.bind("wds", RDF_NS["WDS"])
-    g.bind("wdt", RDF_NS["WDT"])
-    g.bind("p", RDF_NS["P"])
-    g.bind("ps", RDF_NS["PS"])
-    g.bind("pr", RDF_NS["PR"])
-    g.bind("prov", RDF_NS["PROV"])
-    g.bind("schema", RDF_NS["SCHEMA"])
+    # Bind namespaces from WIKIDATA_NAMESPACES
+    g.bind("wd", WIKIDATA_NAMESPACES["WD"])
+    g.bind("wdref", WIKIDATA_NAMESPACES["WDREF"])
+    g.bind("wds", WIKIDATA_NAMESPACES["WDS"])
+    g.bind("wdt", WIKIDATA_NAMESPACES["WDT"])
+    g.bind("p", WIKIDATA_NAMESPACES["P"])
+    g.bind("ps", WIKIDATA_NAMESPACES["PS"])
+    g.bind("pr", WIKIDATA_NAMESPACES["PR"])
+    g.bind("prov", WIKIDATA_NAMESPACES["PROV"])
+    g.bind("schema", WIKIDATA_NAMESPACES["SCHEMA"])
     g.bind("rdfs", RDFS)
     g.bind("xsd", XSD)
     g.bind("dcterms", DCTERMS)
@@ -2531,30 +1798,31 @@ def ui_search_params(search_params):
     )
 
     # Element min/max inputs
-    def _mk(e, mn, mx, k):
+    def _mk(element: str, min_val, max_val):
+        default_max = ELEMENT_DEFAULTS[element.lower()]
         return (
             mo.ui.number(
-                value=mn,
+                value=min_val,
                 start=0,
-                stop=CONFIG[k],
-                label=f"{e} min",
+                stop=default_max,
+                label=f"{element} min",
                 full_width=True,
             ),
             mo.ui.number(
-                value=mx if mx is not None else CONFIG[k],
+                value=max_val if max_val is not None else default_max,
                 start=0,
-                stop=CONFIG[k],
-                label=f"{e} max",
+                stop=default_max,
+                label=f"{element} max",
                 full_width=True,
             ),
         )
 
-    c_min, c_max = _mk("C", search_params.c_min, search_params.c_max, "element_c_max")
-    h_min, h_max = _mk("H", search_params.h_min, search_params.h_max, "element_h_max")
-    n_min, n_max = _mk("N", search_params.n_min, search_params.n_max, "element_n_max")
-    o_min, o_max = _mk("O", search_params.o_min, search_params.o_max, "element_o_max")
-    p_min, p_max = _mk("P", search_params.p_min, search_params.p_max, "element_p_max")
-    s_min, s_max = _mk("S", search_params.s_min, search_params.s_max, "element_s_max")
+    c_min, c_max = _mk("C", search_params.c_min, search_params.c_max)
+    h_min, h_max = _mk("H", search_params.h_min, search_params.h_max)
+    n_min, n_max = _mk("N", search_params.n_min, search_params.n_max)
+    o_min, o_max = _mk("O", search_params.o_min, search_params.o_max)
+    p_min, p_max = _mk("P", search_params.p_min, search_params.p_max)
+    s_min, s_max = _mk("S", search_params.s_min, search_params.s_max)
 
     # Halogen selectors
     _ho = ["allowed", "required", "excluded"]
@@ -2797,11 +2065,11 @@ def launch_query(
         if use_smiles and use_taxon:
             # Both present - search by structure within taxon
             spinner_message = (
-                f"Searching for SMILES '{smiles_str[:30]}...' in {taxon_input_str}"
+                f"Searching for SMILES '{smiles_str}' in {taxon_input_str}"
             )
         elif use_smiles:
             # SMILES only
-            spinner_message = f"Searching for SMILES: {smiles_str[:50]}..."
+            spinner_message = f"Searching for SMILES: {smiles_str}"
         else:
             # Taxon only
             if taxon_input_str == "*":
@@ -2843,7 +2111,7 @@ def launch_query(
                 # Build formula filters using factory function (DRY)
                 formula_filt = None
                 if formula_filter.value:
-                    formula_filt = create_formula_filters(
+                    formula_filt = create_filters(
                         exact_formula=exact_formula.value,
                         c_min=c_min.value,
                         c_max=c_max.value,
@@ -2864,40 +2132,17 @@ def launch_query(
                     )
 
                 # Execute query based on what inputs are provided
-                if use_smiles and use_taxon:
-                    # Both SMILES and taxon - search for structure within taxon
-                    results_df = query_wikidata(
-                        qid=qid,
-                        mass_min=m_min,
-                        mass_max=m_max,
-                        formula_filters=formula_filt,
-                        smiles=smiles_str,
-                        search_mode="combined",
-                        smiles_search_type=smiles_search_type.value,
-                        smiles_threshold=smiles_threshold.value,
-                    )
-                elif use_smiles:
-                    # SMILES only
-                    results_df = query_wikidata(
-                        qid="",
-                        mass_min=m_min,
-                        mass_max=m_max,
-                        formula_filters=formula_filt,
-                        smiles=smiles_str,
-                        search_mode="smiles",
-                        smiles_search_type=smiles_search_type.value,
-                        smiles_threshold=smiles_threshold.value,
-                    )
-                else:
-                    # Taxon only
-                    results_df = query_wikidata(
-                        qid,
-                        y_start,
-                        y_end,
-                        m_min,
-                        m_max,
-                        formula_filt,
-                    )
+                results_df = query_wikidata(
+                    qid=qid if qid else "",
+                    year_start=y_start,
+                    year_end=y_end,
+                    mass_min=m_min,
+                    mass_max=m_max,
+                    formula_filters=formula_filt,
+                    smiles=smiles_str,
+                    smiles_search_type=smiles_search_type.value,
+                    smiles_threshold=smiles_threshold.value,
+                )
             except Exception as e:
                 mo.stop(
                     True,
@@ -3010,7 +2255,7 @@ def display_summary(
         if qid == "*":
             taxon_info = "All taxa"
         else:
-            taxon_info = f"{taxon_input.value} [{qid}]({SCHOLIA_URL}{qid})"
+            taxon_info = f"{taxon_input.value} [{qid}]({scholia_url(qid)})"
 
         # Add SMILES search info if present
         if smiles_input.value and smiles_input.value.strip():
@@ -3041,19 +2286,19 @@ def display_summary(
 
         # Stats cards - use list comprehension for DRY
         stats_data = [
-            (n_compounds, "Compounds"),
-            (n_taxa, "Taxa"),
-            (n_refs, "References"),
-            (n_entries, "Entries"),
+            (n_compounds, "Compound"),
+            (n_taxa, "Taxon"),
+            (n_refs, "Reference"),
+            (n_entries, "Entry"),
         ]
         stats_cards = mo.hstack(
             [
                 mo.stat(
                     value=f"{n:,}",
-                    label=f"{icon} {pluralize(name, n)}",
+                    label=f"{pluralize(name, n,irregular=PLURAL_MAP)}",
                     bordered=True,
                 )
-                for n, icon, name in stats_data
+                for n, name in stats_data
             ],
             gap=2,
             justify="start",
@@ -3223,7 +2468,7 @@ def generate_results(
         # Build filters for metadata (needed for hash computation)
         _formula_filt = None
         if formula_filter.value:
-            _formula_filt = create_formula_filters(
+            _formula_filt = create_filters(
                 exact_formula=exact_formula.value,
                 c_min=c_min.value,
                 c_max=c_max.value,
@@ -3531,14 +2776,26 @@ def generate_downloads(
             # Prepare export dataframe on-demand
             export_df = get_export_df(generation_data, include_rdf_ref)
             raw_data = data_generator_fn(export_df, generation_data)
-            compressed_data, final_filename, final_mimetype = compress_if_large(
-                raw_data,
-                generate_filename(
-                    taxon_name,
-                    format_ext,
-                    filters=generation_data["active_filters"],
-                ),
+
+            # Convert to bytes if needed
+            raw_bytes = (
+                raw_data if isinstance(raw_data, bytes) else raw_data.encode("utf-8")
             )
+
+            # Compress if needed - returns (data, was_compressed)
+            compressed_data, was_compressed = compress_if_large(
+                raw_bytes,
+                CONFIG["download_embed_threshold_bytes"],
+            )
+
+            final_filename = generate_filename(
+                taxon_name,
+                format_ext,
+                filters=generation_data["active_filters"],
+            )
+            if was_compressed:
+                final_filename += ".gz"
+            final_mimetype = "application/gzip" if was_compressed else None
 
         mimetype = final_mimetype if final_mimetype else base_mimetype
         display_label = f"Download {format_name}"
@@ -3624,7 +2881,9 @@ def ui_tables(tables_ui):
 @app.cell
 def ui_params():
     # URL parameter detection and state initialization using SearchParams dataclass
-    _url_params = mo.query_params()
+    _query_params = mo.query_params()
+    # Convert QueryParams to dict for SearchParams
+    _url_params = {k: _query_params[k] for k in _query_params} if _query_params else {}
     search_params = SearchParams.from_url_params(_url_params)
 
     # Display auto-search message if URL parameters detected
@@ -3651,6 +2910,7 @@ def main():
     if len(sys.argv) > 1 and sys.argv[1] == "export":
         # CLI mode - extract and reuse app.setup functions
         import argparse
+        import gzip
         from pathlib import Path
 
         # Parse CLI arguments
@@ -3823,15 +3083,9 @@ def main():
                 print(f"[x] Taxon not found: {args.taxon}", file=sys.stderr)
                 sys.exit(1)
 
-            # Determine search mode based on whether SMILES is provided
-            search_mode = "taxon"
-            if args.smiles:
-                search_mode = "combined" if qid and qid != "*" else "smiles"
-
             # Improved verbose logging
             if args.verbose:
                 print("Search Configuration:", file=sys.stderr)
-                print(f"   Mode: {search_mode}", file=sys.stderr)
                 print(f"   Taxon: {args.taxon} (QID: {qid})", file=sys.stderr)
 
                 if args.smiles:
@@ -3889,20 +3143,20 @@ def main():
                 args.o_max,
             ]
             if args.formula or any(elem_args):
-                formula_filt = create_formula_filters(
+                formula_filt = create_filters(
                     exact_formula=args.formula or "",
                     c_min=args.c_min or 0,
-                    c_max=args.c_max or CONFIG["element_c_max"],
+                    c_max=args.c_max or ELEMENT_DEFAULTS["c"],
                     h_min=args.h_min or 0,
-                    h_max=args.h_max or CONFIG["element_h_max"],
+                    h_max=args.h_max or ELEMENT_DEFAULTS["h"],
                     n_min=args.n_min or 0,
-                    n_max=args.n_max or CONFIG["element_n_max"],
+                    n_max=args.n_max or ELEMENT_DEFAULTS["n"],
                     o_min=args.o_min or 0,
-                    o_max=args.o_max or CONFIG["element_o_max"],
+                    o_max=args.o_max or ELEMENT_DEFAULTS["o"],
                     p_min=0,
-                    p_max=CONFIG["element_p_max"],
+                    p_max=ELEMENT_DEFAULTS["p"],
                     s_min=0,
-                    s_max=CONFIG["element_s_max"],
+                    s_max=ELEMENT_DEFAULTS["s"],
                     f_state="allowed",
                     cl_state="allowed",
                     br_state="allowed",
@@ -3918,7 +3172,6 @@ def main():
                 mass_max=args.mass_max,
                 formula_filters=formula_filt,
                 smiles=args.smiles,
-                search_mode=search_mode,
                 smiles_search_type=args.smiles_search_type or "substructure",
                 smiles_threshold=args.smiles_threshold,
             )
@@ -3982,28 +3235,15 @@ def main():
 
             # Molecular formula filter
             if formula_filt and formula_filt.is_active():
-                filters["molecular_formula"] = serialize_formula_filters(formula_filt)
+                filters["molecular_formula"] = serialize_filters(formula_filt)
 
-            # Compute hashes for provenance (before showing metadata or exporting)
-            # Query hash - based on search parameters (what was asked)
-            query_components = [qid or "", args.taxon or ""]
-            if filters:
-                query_components.append(json.dumps(filters, sort_keys=True))
-            query_hash = hashlib.sha256(
-                "|".join(query_components).encode("utf-8"),
-            ).hexdigest()
-
-            # Result hash - based on actual compound identifiers (what was found)
-            compound_qids = sorted(
-                [
-                    extract_qid(row["compound"])
-                    for row in df.iter_rows(named=True)
-                    if row.get("compound")
-                ],
+            # Compute hashes for provenance using centralized helper
+            query_hash, result_hash = compute_provenance_hashes(
+                qid,
+                args.taxon,
+                filters if filters else None,
+                df,
             )
-            result_hash = hashlib.sha256(
-                "|".join(compound_qids).encode("utf-8"),
-            ).hexdigest()
 
             # Show metadata mode - use the REAL create_export_metadata function
             if args.show_metadata:

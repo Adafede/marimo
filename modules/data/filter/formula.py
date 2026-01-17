@@ -28,5 +28,5 @@ def filter_formula(
         pl.col(column).map_elements(
             lambda formula: match_func(formula or "", filters),
             return_dtype=pl.Boolean,
-        )
+        ),
     )

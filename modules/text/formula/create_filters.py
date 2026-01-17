@@ -28,12 +28,12 @@ def create_filters(
     """Factory function to create FormulaFilters from individual values."""
     return FormulaFilters(
         exact_formula=exact_formula.strip() if exact_formula else None,
-        c=ElementRange(c_min or None, c_max),
-        h=ElementRange(h_min or None, h_max),
-        n=ElementRange(n_min or None, n_max),
-        o=ElementRange(o_min or None, o_max),
-        p=ElementRange(p_min or None, p_max),
-        s=ElementRange(s_min or None, s_max),
+        c=ElementRange(c_min, c_max),
+        h=ElementRange(h_min, h_max),
+        n=ElementRange(n_min, n_max),
+        o=ElementRange(o_min, o_max),
+        p=ElementRange(p_min, p_max),
+        s=ElementRange(s_min, s_max),
         f_state=f_state,
         cl_state=cl_state,
         br_state=br_state,
