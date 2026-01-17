@@ -165,10 +165,9 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
         remaining -= set(no_deps)
 
     # Read and inline modules in dependency order
-    inlined_code = []
-    inlined_code.append("# === AUTO-INLINED MODULES ===")
-    inlined_code.append("# This code was automatically inlined from public/modules")
-    inlined_code.append("")
+    # Collect all module code and extract function/class names for return statement
+    module_code_parts = []
+    exported_names = set()
 
     for module_name in sorted_modules:
         module_file = public_path / f"{module_name.replace('.', '/')}.py"
@@ -183,9 +182,75 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
         # Convert relative imports to absolute
         module_code = convert_relative_to_absolute_imports(module_code, module_name)
 
-        inlined_code.append(f"# --- {module_name} ---")
-        inlined_code.append(module_code)
-        inlined_code.append("")
+        # Add @app.function decorator before each top-level function definition
+        module_code = re.sub(
+            r"^(def\s+(\w+)\s*\()",
+            r"@app.function\n\1",
+            module_code,
+            flags=re.MULTILINE
+        )
+
+        # Add @app.class_ decorator before each top-level class definition
+        module_code = re.sub(
+            r"^(class\s+(\w+)\s*[:\(])",
+            r"@app.class_\n\1",
+            module_code,
+            flags=re.MULTILINE
+        )
+
+        # Extract function and class names defined in this module (after adding decorators)
+        func_pattern = r"^def\s+(\w+)\s*\("
+        class_pattern = r"^class\s+(\w+)\s*[:\(]"
+        var_pattern = r"^([A-Z_][A-Z0-9_]*)\s*[:=]"  # Constants like CONFIG, RDF_NS
+
+        for match in re.finditer(func_pattern, module_code, re.MULTILINE):
+            name = match.group(1)
+            if not name.startswith("_"):
+                exported_names.add(name)
+
+        for match in re.finditer(class_pattern, module_code, re.MULTILINE):
+            name = match.group(1)
+            if not name.startswith("_"):
+                exported_names.add(name)
+
+        for match in re.finditer(var_pattern, module_code, re.MULTILINE):
+            name = match.group(1)
+            if not name.startswith("_"):
+                exported_names.add(name)
+
+        module_code_parts.append(f"    # --- {module_name} ---")
+        # Indent all lines of module code by 4 spaces
+        indented_code = "\n".join("    " + line if line.strip() else "" for line in module_code.split("\n"))
+        module_code_parts.append(indented_code)
+        module_code_parts.append("")
+
+    # Build the inlined cell with proper marimo decorator
+    inlined_cell = []
+    inlined_cell.append("")
+    inlined_cell.append("")
+    inlined_cell.append("@app.cell")
+    inlined_cell.append("def _inlined_modules():")
+    inlined_cell.append("    # === AUTO-INLINED MODULES ===")
+    inlined_cell.append("    # This code was automatically inlined from modules/")
+    inlined_cell.append("")
+    inlined_cell.extend(module_code_parts)
+
+    # Build return statement with all exported names
+    if exported_names:
+        sorted_names = sorted(exported_names)
+        # Format return statement nicely if many names
+        if len(sorted_names) > 5:
+            return_items = ",\n        ".join(sorted_names)
+            inlined_cell.append(f"    return (\n        {return_items},\n    )")
+        else:
+            return_items = ", ".join(sorted_names)
+            inlined_cell.append(f"    return {return_items},")
+    else:
+        inlined_cell.append("    return")
+
+    inlined_cell.append("")
+
+    inlined_code_str = "\n".join(inlined_cell)
 
     # Read original notebook
     with open(notebook_path, "r") as f:
@@ -203,8 +268,19 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
     notebook_code = re.sub(r"^\s*from\s+modules\.[\w.]+\s+import\s+[^\n]+\n", "", notebook_code, flags=re.MULTILINE)
     notebook_code = re.sub(r"^\s*import\s+modules\.[\w.]+\s*\n", "", notebook_code, flags=re.MULTILINE)
 
-    # Combine inlined modules with notebook
-    final_code = "\n".join(inlined_code) + "\n\n" + notebook_code
+    # Insert the inlined modules cell right after the app = marimo.App(...) line
+    # Find the app setup line pattern
+    app_setup_pattern = r"(app\s*=\s*marimo\.App\([^)]*\))"
+    match = re.search(app_setup_pattern, notebook_code)
+
+    if match:
+        # Insert inlined code after the app setup line
+        insert_pos = match.end()
+        final_code = notebook_code[:insert_pos] + inlined_code_str + notebook_code[insert_pos:]
+    else:
+        # Fallback: just prepend (shouldn't happen for valid marimo notebooks)
+        logger.warning("Could not find 'app = marimo.App()' line, prepending inlined code")
+        final_code = inlined_code_str + "\n\n" + notebook_code
 
     # Write to output
     with open(output_path, "w") as f:
