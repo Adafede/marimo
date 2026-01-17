@@ -24,7 +24,7 @@ DEFAULT_HALOGEN_NAMES: dict[str, str] = {
 }
 
 # Element filter configuration: (key, attribute_name)
-_ELEMENT_ATTRS = (
+ELEMENT_ATTRS = (
     ("c", "c"),
     ("h", "h"),
     ("n", "n"),
@@ -34,7 +34,7 @@ _ELEMENT_ATTRS = (
 )
 
 # Halogen filter configuration: (key, attribute_name)
-_HALOGEN_ATTRS = (
+HALOGEN_ATTRS = (
     ("f", "f_state"),
     ("cl", "cl_state"),
     ("br", "br_state"),
@@ -61,7 +61,7 @@ def serialize_halogens(
     """Serialize active halogen filters to dictionary."""
     return {
         halogen_names.get(key, key): getattr(filters, attr)
-        for key, attr in _HALOGEN_ATTRS
+        for key, attr in HALOGEN_ATTRS
         if getattr(filters, attr) != "allowed"
     }
 

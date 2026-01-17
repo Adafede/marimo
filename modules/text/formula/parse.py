@@ -6,7 +6,7 @@ import re
 
 from .normalize import normalize
 
-_ELEMENT_PATTERN = re.compile(pattern=r"([A-Z][a-z]?)(\d*)")
+ELEMENT_PATTERN = re.compile(pattern=r"([A-Z][a-z]?)(\d*)")
 
 
 def parse(formula: str) -> dict[str, int]:
@@ -14,5 +14,5 @@ def parse(formula: str) -> dict[str, int]:
     if not formula:
         return {}
     normalized = normalize(formula)
-    matches = _ELEMENT_PATTERN.findall(normalized)
+    matches = ELEMENT_PATTERN.findall(normalized)
     return {elem: int(count) if count else 1 for elem, count in matches if elem}

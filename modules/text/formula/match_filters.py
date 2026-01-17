@@ -8,7 +8,7 @@ from .match_halogen import match_halogen
 from .normalize import normalize
 
 # Element filter configuration: (element_symbol, filter_attribute)
-_ELEMENT_FILTERS = (
+ELEMENT_FILTERS = (
     ("C", "c"),
     ("H", "h"),
     ("N", "n"),
@@ -18,7 +18,7 @@ _ELEMENT_FILTERS = (
 )
 
 # Halogen filter configuration: (halogen_symbol, state_attribute)
-_HALOGEN_FILTERS = (
+HALOGEN_FILTERS = (
     ("F", "f_state"),
     ("Cl", "cl_state"),
     ("Br", "br_state"),
@@ -36,7 +36,7 @@ def check_element_filters(formula: str, filters: FormulaFilters) -> bool:
             min_count=getattr(filters, attr).min_val,
             max_count=getattr(filters, attr).max_val,
         )
-        for elem, attr in _ELEMENT_FILTERS
+        for elem, attr in ELEMENT_FILTERS
     )
 
 
@@ -48,7 +48,7 @@ def check_halogen_filters(formula: str, filters: FormulaFilters) -> bool:
             halogen=halogen,
             constraint=getattr(filters, attr),
         )
-        for halogen, attr in _HALOGEN_FILTERS
+        for halogen, attr in HALOGEN_FILTERS
     )
 
 

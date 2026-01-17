@@ -9,11 +9,11 @@ from ..smiles.parse import parse as parse_smiles
 from .collect_highlights import SmartsEntry, collect_highlights
 from .to_svg import to_svg
 
-_INVALID_SMILES_TEMPLATE: str = (
+INVALID_SMILES_TEMPLATE: str = (
     "<div style='color:red;'>[x] Invalid SMILES: <code>{smi}</code></div>"
 )
 
-_CONTAINER_STYLE: str = (
+CONTAINER_STYLE: str = (
     "display:inline-block; margin:12px; text-align:center; "
     "border:1px solid #eee; padding:10px; border-radius:8px; "
     "box-shadow: 2px 2px 5px rgba(0,0,0,0.1);"
@@ -31,7 +31,7 @@ def wrap_in_container(svg: str, label: str, tooltips: list[str]) -> str:
     """Wrap SVG and metadata in styled HTML container."""
     tooltips_html = "<br>".join(tooltips)
     return (
-        f"<div style='{_CONTAINER_STYLE}'>"
+        f"<div style='{CONTAINER_STYLE}'>"
         f"{svg}<br>{label}<br>"
         f"<small>{tooltips_html}</small></div>"
     )
@@ -61,7 +61,7 @@ def with_highlights(
     """
     mol = parse_smiles(smiles=smiles)
     if not mol:
-        return _INVALID_SMILES_TEMPLATE.format(smi=smiles)
+        return INVALID_SMILES_TEMPLATE.format(smi=smiles)
 
     compute_2d_coords(mol=mol)
 

@@ -7,7 +7,7 @@ import re
 import marimo as mo
 
 # Pre-compiled regex for performance
-_SRC_PATTERN = re.compile(r'src="([^"]+)"')
+SRC_PATTERN = re.compile(r'src="([^"]+)"')
 
 
 def wrap_image(
@@ -26,7 +26,7 @@ def wrap_image(
         return mo.Html("")
 
     # If it's already an img tag, extract src and rebuild with consistent styling
-    match = _SRC_PATTERN.search(html_str)
+    match = SRC_PATTERN.search(html_str)
     if match:
         src = match.group(1)
         border_radius = "border-radius: 8px;" if rounded else ""
