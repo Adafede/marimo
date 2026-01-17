@@ -62,12 +62,6 @@ def _export_html_wasm(
         cmd.extend(
             ["--mode", "run", "--no-show-code"],
         )  # Apps run in "run" mode with hidden code
-        
-        # Include public directory for apps
-        public_dir = notebook_path.parent / "public"
-        if public_dir.exists():
-            cmd.extend(["--sandbox-include", str(public_dir)])
-            logger.debug(f"Including public directory: {public_dir}")
     else:
         logger.info(f"Exporting {notebook_path} to {output_path} as notebook")
         cmd.extend(["--mode", "edit"])  # Notebooks run in "edit" mode
@@ -173,16 +167,19 @@ def _export(folder: Path, output_dir: Path, as_app: bool = False) -> List[dict]:
 
     # Find all Python files recursively in the folder
     all_notebooks = list(folder.rglob("*.py"))
-    
+
     # Filter out .py files from apps/public directory
     notebooks = [
-        nb for nb in all_notebooks 
+        nb
+        for nb in all_notebooks
         if not any(part == "public" and "apps" in nb.parts for part in nb.parts)
     ]
-    
+
     if len(all_notebooks) != len(notebooks):
-        logger.debug(f"Filtered out {len(all_notebooks) - len(notebooks)} .py files from apps/public")
-    
+        logger.debug(
+            f"Filtered out {len(all_notebooks) - len(notebooks)} .py files from apps/public"
+        )
+
     logger.debug(f"Found {len(notebooks)} Python files in {folder}")
 
     # Exit if no notebooks were found
