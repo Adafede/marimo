@@ -26,7 +26,7 @@ _HALOGEN_FILTERS = (
 )
 
 
-def _check_element_filters(formula: str, filters: FormulaFilters) -> bool:
+def check_element_filters(formula: str, filters: FormulaFilters) -> bool:
     """Check all element range filters."""
     return all(
         not getattr(filters, attr).is_active()
@@ -40,7 +40,7 @@ def _check_element_filters(formula: str, filters: FormulaFilters) -> bool:
     )
 
 
-def _check_halogen_filters(formula: str, filters: FormulaFilters) -> bool:
+def check_halogen_filters(formula: str, filters: FormulaFilters) -> bool:
     """Check all halogen state filters."""
     return all(
         match_halogen(
@@ -60,7 +60,7 @@ def match_filters(formula: str, filters: FormulaFilters) -> bool:
     if filters.exact_formula and filters.exact_formula.strip():
         return normalize(formula) == normalize(filters.exact_formula.strip())
 
-    return _check_element_filters(formula, filters) and _check_halogen_filters(
+    return check_element_filters(formula, filters) and check_halogen_filters(
         formula,
         filters,
     )

@@ -20,14 +20,14 @@ _CONTAINER_STYLE: str = (
 )
 
 
-def _create_label(name: str, smiles: str) -> str:
+def create_label(name: str, smiles: str) -> str:
     """Create HTML label for molecule display."""
     if name != smiles:
         return f"<strong>{name}</strong><br><code>{smiles}</code>"
     return f"<code>{smiles}</code>"
 
 
-def _wrap_in_container(svg: str, label: str, tooltips: list[str]) -> str:
+def wrap_in_container(svg: str, label: str, tooltips: list[str]) -> str:
     """Wrap SVG and metadata in styled HTML container."""
     tooltips_html = "<br>".join(tooltips)
     return (
@@ -79,6 +79,6 @@ def with_highlights(
         highlight_colors=colors,
     )
 
-    label = _create_label(name=name, smiles=smiles)
+    label = create_label(name=name, smiles=smiles)
 
-    return _wrap_in_container(svg=svg, label=label, tooltips=tooltips)
+    return wrap_in_container(svg=svg, label=label, tooltips=tooltips)

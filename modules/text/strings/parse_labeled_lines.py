@@ -3,7 +3,7 @@
 __all__ = ["parse_labeled_lines"]
 
 
-def _parse_line(line: str) -> tuple[str, str]:
+def parse_line(line: str) -> tuple[str, str]:
     """Parse a single line into (label, value) tuple."""
     if " " in line:
         value, label = line.split(sep=" ", maxsplit=1)
@@ -14,5 +14,5 @@ def _parse_line(line: str) -> tuple[str, str]:
 def parse_labeled_lines(text: str) -> list[tuple[str, str]]:
     """Parse lines with optional labels (value label format)."""
     return [
-        _parse_line(line=line.strip()) for line in text.splitlines() if line.strip()
+        parse_line(line=line.strip()) for line in text.splitlines() if line.strip()
     ]

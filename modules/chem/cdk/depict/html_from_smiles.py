@@ -10,7 +10,7 @@ DEFAULT_MAX_HEIGHT: str = "100px"
 DEFAULT_BORDER_RADIUS: str = "8px"
 
 
-def _build_style(
+def build_style(
     max_width: str,
     max_height: str,
     rounded: bool,
@@ -47,7 +47,7 @@ def html_from_smiles(
         annotate=annotate,
     )
 
-    style = _build_style(max_width=max_width, max_height=max_height, rounded=rounded)
+    style = build_style(max_width=max_width, max_height=max_height, rounded=rounded)
     loading_attr = 'loading="lazy" ' if lazy else ""
 
     return f'<img src="{img_url}" {loading_attr}style="{style};" />'
