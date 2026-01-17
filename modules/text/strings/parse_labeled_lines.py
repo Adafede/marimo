@@ -13,6 +13,4 @@ def parse_line(line: str) -> tuple[str, str]:
 
 def parse_labeled_lines(text: str) -> list[tuple[str, str]]:
     """Parse lines with optional labels (value label format)."""
-    return [
-        parse_line(line=line.strip()) for line in text.splitlines() if line.strip()
-    ]
+    return [parse_line(line=line.strip()) for line in text.splitlines() if line.strip()]
