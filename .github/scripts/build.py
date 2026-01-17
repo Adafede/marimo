@@ -273,6 +273,9 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
         # Mark this module as inlined
         inlined_modules.add(module_path)
 
+        # Normalize line endings (convert \r\n to \n)
+        code = code.replace("\r\n", "\n").replace("\r", "\n")
+
         # Remove 'from modules.*' imports from the code since deps are now inlined
         # Handle multi-line imports with parentheses (including 'as' aliases)
         code = re.sub(
@@ -295,22 +298,35 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
             flags=re.MULTILINE,
         )
 
+        # Normalize: collapse multiple consecutive blank lines into one
+        code = re.sub(r"\n\n+", "\n\n", code)
+
+        # Remove leading/trailing whitespace but keep internal structure
+        code = code.strip()
+
         # Indent and add this module's code
         indented_lines = []
         indented_lines.append(f"{indent}# --- inlined from {module_path} ---")
-        for line in code.split("\n"):
+
+        # Split code into lines and process
+        lines = code.split("\n")
+        for line in lines:
             if line.strip():
                 indented_lines.append(f"{indent}{line}")
-            else:
-                indented_lines.append("")
+            elif line == "":
+                # Only add one blank line, skip if previous was also blank
+                if indented_lines and indented_lines[-1] != "":
+                    indented_lines.append("")
 
-        # Add alias assignments if any
+        # Add alias assignments to deferred list (will be added at end of app.setup)
         if aliases:
             for original, alias in aliases.items():
                 if original != alias:
-                    indented_lines.append(f"{indent}{alias} = {original}")
+                    deferred_aliases.append((indent, original, alias))
 
-        indented_lines.append("")
+        # Add trailing blank line only if not already present
+        if indented_lines and indented_lines[-1] != "":
+            indented_lines.append("")
 
         result_parts.append("\n".join(indented_lines))
         return "\n".join(result_parts)

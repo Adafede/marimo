@@ -5,11 +5,11 @@ __all__ = ["find_mcs"]
 from rdkit.Chem import Mol
 from rdkit.Chem.rdFMCS import FindMCS
 
-_MIN_MOLECULES: int = 2
-_ERROR_INSUFFICIENT: str = (
-    f"[!] Need at least {_MIN_MOLECULES} valid molecules to find MCS."
+MIN_MOLECULES: int = 2
+ERROR_INSUFFICIENT: str = (
+    f"[!] Need at least {MIN_MOLECULES} valid molecules to find MCS."
 )
-_ERROR_FAILED: str = "[!] Could not determine MCS."
+ERROR_FAILED: str = "[!] Could not determine MCS."
 
 
 def find_mcs(mols: list[Mol]) -> tuple[str | None, str | None]:
@@ -22,11 +22,11 @@ def find_mcs(mols: list[Mol]) -> tuple[str | None, str | None]:
     Returns:
         Tuple of (smarts_string, error_message)
     """
-    if len(mols) < _MIN_MOLECULES:
-        return None, _ERROR_INSUFFICIENT
+    if len(mols) < MIN_MOLECULES:
+        return None, ERROR_INSUFFICIENT
 
     mcs_result = FindMCS(mols)
     if mcs_result.canceled or not mcs_result.smartsString:
-        return None, _ERROR_FAILED
+        return None, ERROR_FAILED
 
     return mcs_result.smartsString, None
