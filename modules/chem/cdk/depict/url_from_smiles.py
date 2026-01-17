@@ -17,7 +17,7 @@ def url_from_smiles(
     """Generate URL for chemical structure depiction from SMILES."""
     if not smiles:
         return ""
-    url = f"{base_url}/depict/{layout}/{img_format}?smi={quote(string=smiles)}"
+    url = f"{base_url}/{layout}/{img_format}?smi={quote(string=smiles)}"
     if annotate is not None:
         url += f"&annotate={annotate}"
     return url
