@@ -11,27 +11,14 @@ from .patterns_compound import (
 )
 
 
-def query_sachem(
+def _build_sachem_service(
     escaped_smiles: str,
-    search_type: str = "substructure",
-    threshold: float = 0.8,
-    taxon_qid: str | None = None,
+    search_type: str,
+    threshold: float,
 ) -> str:
-    """
-    Build SACHEM chemical search query.
-
-    Args:
-        escaped_smiles: SMILES string (already escaped for SPARQL)
-        search_type: Either "substructure" or "similarity"
-        threshold: Tanimoto similarity threshold (0.0-1.0, for similarity search)
-        taxon_qid: Optional QID to filter by taxon (e.g., "Q12345")
-
-    Returns:
-        Complete SPARQL query string
-    """
-    # Build SACHEM service clause based on search type
+    """Build the SACHEM SERVICE clause."""
     if search_type == "similarity":
-        sachem_clause = f"""
+        return f"""
         SERVICE idsm:wikidata {{
             VALUES ?QUERY_SMILES {{ "{escaped_smiles}" }}
             VALUES ?CUTOFF {{ "{threshold}"^^xsd:double }}
@@ -42,8 +29,7 @@ def query_sachem(
         }}
         """
     else:
-        # substructure search (default)
-        sachem_clause = f"""
+        return f"""
         SERVICE idsm:wikidata {{
             VALUES ?SUBSTRUCTURE {{ "{escaped_smiles}" }}
             ?compound sachem:substructureSearch [
@@ -52,33 +38,79 @@ def query_sachem(
         }}
         """
 
-    # Build taxon filter if requested
-    if taxon_qid:
-        taxon_filter = f"?taxon (wdt:P171*) wd:{taxon_qid} ."
-    else:
-        taxon_filter = ""
 
-    # Construct full query - simpler structure that works with SACHEM
-    return f"""
-    {PREFIXES}{SACHEM_PREFIXES}
-    SELECT {SELECT_VARS_FULL} WHERE {{
-        {sachem_clause}
-        
-        # Get compound identifiers
-        ?compound wdt:P235 ?compound_inchikey ;
-                  wdt:P233 ?compound_smiles_conn .
-        
-        # Get taxonomic associations with provenance
-        OPTIONAL {{
+def query_sachem(
+    escaped_smiles: str,
+    search_type: str = "substructure",
+    threshold: float = 0.8,
+    taxon_qid: str | None = None,
+) -> str:
+    """
+    Build SACHEM chemical search query.
+
+    When taxon_qid is provided, the query is optimized to:
+    1. First find compounds in the taxon (fast - uses Wikidata index)
+    2. Then filter by structure using SACHEM (applied to smaller set)
+
+    This is MUCH faster than searching SACHEM first, then filtering by taxon.
+
+    Args:
+        escaped_smiles: SMILES string (already escaped for SPARQL)
+        search_type: Either "substructure" or "similarity"
+        threshold: Tanimoto similarity threshold (0.0-1.0, for similarity search)
+        taxon_qid: Optional QID to filter by taxon (e.g., "Q12345")
+
+    Returns:
+        Complete SPARQL query string
+    """
+    sachem_clause = _build_sachem_service(escaped_smiles, search_type, threshold)
+
+    if taxon_qid:
+        # OPTIMIZED: Filter by taxon FIRST, then apply SACHEM to the subset
+        # This dramatically improves performance for taxon-scoped searches
+        return f"""
+        {PREFIXES}{SACHEM_PREFIXES}
+        SELECT {SELECT_VARS_FULL} WHERE {{
+            # First: Find compounds in this taxon (fast - uses index)
+            ?taxon (wdt:P171*) wd:{taxon_qid} .
+            ?taxon wdt:P225 ?taxon_name .
             ?compound p:P703 ?statement .
             ?statement ps:P703 ?taxon ;
                        prov:wasDerivedFrom ?ref .
             ?ref pr:P248 ?ref_qid .
-            ?taxon wdt:P225 ?taxon_name .
-            {taxon_filter}
+            
+            # Then: Filter by structure using SACHEM (applied to smaller set)
+            {sachem_clause}
+            
+            # Get compound identifiers
+            ?compound wdt:P235 ?compound_inchikey ;
+                      wdt:P233 ?compound_smiles_conn .
+            
             {REFERENCE_METADATA_OPTIONAL}
+            {PROPERTIES_OPTIONAL}
         }}
-        
-        {PROPERTIES_OPTIONAL}
-    }}
-    """
+        """
+    else:
+        # No taxon filter - standard SACHEM search
+        return f"""
+        {PREFIXES}{SACHEM_PREFIXES}
+        SELECT {SELECT_VARS_FULL} WHERE {{
+            {sachem_clause}
+            
+            # Get compound identifiers
+            ?compound wdt:P235 ?compound_inchikey ;
+                      wdt:P233 ?compound_smiles_conn .
+            
+            # Get taxonomic associations with provenance (optional)
+            OPTIONAL {{
+                ?compound p:P703 ?statement .
+                ?statement ps:P703 ?taxon ;
+                           prov:wasDerivedFrom ?ref .
+                ?ref pr:P248 ?ref_qid .
+                ?taxon wdt:P225 ?taxon_name .
+                {REFERENCE_METADATA_OPTIONAL}
+            }}
+            
+            {PROPERTIES_OPTIONAL}
+        }}
+        """
