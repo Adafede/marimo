@@ -55,11 +55,8 @@ with app.setup:
     from rdflib.namespace import RDF, RDFS, XSD, DCTERMS
     from typing import Any
 
-    # === BEGIN ===
-    _USE_LOCAL = False  # Set to True for local development
-    if _USE_LOCAL:
-        sys.path.insert(0, str(mo.notebook_location() / "public"))
-    # === END ===
+    # === Import modules from /public ===
+    sys.path.insert(0, str(mo.notebook_location() / "public"))
 
     from modules.text.formula.filters import FormulaFilters
     from modules.text.formula.create_filters import create_filters

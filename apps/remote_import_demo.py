@@ -31,11 +31,8 @@ def _():
     # === COPY INTO YOUR APP SETUP ===
     import sys
 
-    # Toggle this flag for local vs remote development
-    _USE_LOCAL = False  # Set to True for local development
-    if _USE_LOCAL:
-        sys.path.insert(0, str(mo.notebook_location() / "public"))
-    # === END ===
+    # === Import modules from /public ===
+    sys.path.insert(0, str(mo.notebook_location() / "public"))
 
     mo.show_code()
     return
