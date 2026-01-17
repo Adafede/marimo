@@ -2232,7 +2232,7 @@ def display_summary(
             [
                 mo.stat(
                     value=f"{n:,}",
-                    label=f"{pluralize(name, n,irregular=PLURAL_MAP)}",
+                    label=f"{pluralize(name, n, irregular=PLURAL_MAP)}",
                     bordered=True,
                 )
                 for n, name in stats_data
