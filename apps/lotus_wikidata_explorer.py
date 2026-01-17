@@ -54,7 +54,6 @@ with app.setup:
     from rdflib import Graph, Literal, URIRef, BNode
     from rdflib.namespace import RDF, RDFS, XSD, DCTERMS
     from typing import Any
-
     from modules.text.formula.filters import FormulaFilters
     from modules.text.formula.create_filters import create_filters
     from modules.text.formula.serialize_filters import serialize_filters
@@ -76,8 +75,6 @@ with app.setup:
     from modules.knowledge.wikidata.html.link_from_statement import (
         link_from_statement as statement_link,
     )
-
-    # Import from modules - knowledge/wikidata/sparql
     from modules.knowledge.wikidata.sparql.query_taxon_search import query_taxon_search
     from modules.knowledge.wikidata.sparql.query_taxon_details import (
         query_taxon_details,
