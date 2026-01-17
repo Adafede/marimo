@@ -2132,6 +2132,19 @@ def add_dataset_metadata(
 
 
 @app.function
+def add_optional_literal(
+    g: Graph,
+    subject: URIRef,
+    predicate: URIRef,
+    value: Any,
+    datatype=XSD.string,
+) -> None:
+    """Add optional literal triple to graph if value exists (DRY helper)."""
+    if value is not None and value != "":
+        g.add((subject, predicate, Literal(value, datatype=datatype)))
+
+
+@app.function
 def add_compound_triples(
     g: Graph,
     row: dict[str, Any],
