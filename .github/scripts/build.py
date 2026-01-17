@@ -187,19 +187,13 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
         module_code_parts.append(indented_code)
         module_code_parts.append("")
 
-    # Build the inlined code as an app.setup block
+    # Build the inlined code to append to existing app.setup block
     inlined_cell = []
     inlined_cell.append("")
-    inlined_cell.append("")
-    inlined_cell.append("with app.setup:")
     inlined_cell.append("    # === AUTO-INLINED MODULES ===")
     inlined_cell.append("    # This code was automatically inlined from modules/")
-    inlined_cell.append("    import marimo as mo")
     inlined_cell.append("")
     inlined_cell.extend(module_code_parts)
-
-
-    inlined_cell.append("")
 
     inlined_code_str = "\n".join(inlined_cell)
 
@@ -215,23 +209,39 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
         flags=re.DOTALL,
     )
 
-    # Remove all 'from modules.*' and 'import modules.*' lines since they are now inlined
-    notebook_code = re.sub(r"^\s*from\s+modules\.[\w.]+\s+import\s+[^\n]+\n", "", notebook_code, flags=re.MULTILINE)
-    notebook_code = re.sub(r"^\s*import\s+modules\.[\w.]+\s*\n", "", notebook_code, flags=re.MULTILINE)
+    # Find the end of the existing app.setup block
+    # Look for "with app.setup:" and find where it ends (next @app.cell or @app.function)
+    app_setup_match = re.search(r"with\s+app\.setup:", notebook_code)
 
-    # Insert the inlined modules cell right after the app = marimo.App(...) line
-    # Find the app setup line pattern
-    app_setup_pattern = r"(app\s*=\s*marimo\.App\([^)]*\))"
-    match = re.search(app_setup_pattern, notebook_code)
+    if app_setup_match:
+        # Find the next @app.cell or @app.function after the setup block
+        next_cell_match = re.search(r"\n@app\.(cell|function)", notebook_code[app_setup_match.end():])
 
-    if match:
-        # Insert inlined code after the app setup line
-        insert_pos = match.end()
-        final_code = notebook_code[:insert_pos] + inlined_code_str + notebook_code[insert_pos:]
+        if next_cell_match:
+            # Insert before the next @app decorator
+            insert_pos = app_setup_match.end() + next_cell_match.start()
+            final_code = notebook_code[:insert_pos] + inlined_code_str + "\n" + notebook_code[insert_pos:]
+        else:
+            # No next cell found, append at end of file
+            final_code = notebook_code + inlined_code_str
     else:
-        # Fallback: just prepend (shouldn't happen for valid marimo notebooks)
-        logger.warning("Could not find 'app = marimo.App()' line, prepending inlined code")
-        final_code = inlined_code_str + "\n\n" + notebook_code
+        # No existing app.setup block, create one after app = marimo.App(...)
+        app_setup_pattern = r"(app\s*=\s*marimo\.App\([^)]*\))"
+        match = re.search(app_setup_pattern, notebook_code)
+
+        if match:
+            # Insert a new app.setup block after the app line
+            setup_block = "\n\nwith app.setup:\n    import marimo as mo\n" + inlined_code_str
+            insert_pos = match.end()
+            final_code = notebook_code[:insert_pos] + setup_block + notebook_code[insert_pos:]
+        else:
+            logger.warning("Could not find 'app = marimo.App()' line")
+            final_code = notebook_code
+
+    # Remove ALL 'from modules.*' and 'import modules.*' lines from final code
+    # This includes lines in the original notebook AND in inlined module code
+    final_code = re.sub(r"^\s*from\s+modules\.[\w.]+\s+import\s+[^\n]+\n", "", final_code, flags=re.MULTILINE)
+    final_code = re.sub(r"^\s*import\s+modules\.[\w.]+\s*\n", "", final_code, flags=re.MULTILINE)
 
     # Write to output
     with open(output_path, "w") as f:
