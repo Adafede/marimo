@@ -47,7 +47,7 @@ with app.setup:
             "[!] **RDKit not available in this environment**.\n\n"
             "To run this script:\n"
             "```bash\n"
-            "uvx marimo run https://raw.githubusercontent.com/Adafede/marimo/refs/heads/main/apps/mols.py\n"
+            "uvx marimo run https://adafede.github.io/marimo/apps/mols.py\n"
             "```\n"
             "If using Docker, toggle **App View** (bottom right or `cmd + .`).",
         )

@@ -5,7 +5,7 @@ __all__ = ["with_highlights"]
 from collections import defaultdict
 
 from ..mol.compute_2d_coords import compute_2d_coords
-from ..smiles.parse import parse as parse_smiles
+from ..smiles.parse import parse
 from .collect_highlights import SmartsEntry, collect_highlights
 from .to_svg import to_svg
 
@@ -59,7 +59,7 @@ def with_highlights(
     Returns:
         HTML string with SVG and labels
     """
-    mol = parse_smiles(smiles=smiles)
+    mol = parse(smiles=smiles)
     if not mol:
         return INVALID_SMILES_TEMPLATE.format(smi=smiles)
 
