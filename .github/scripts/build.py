@@ -165,9 +165,8 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
         remaining -= set(no_deps)
 
     # Read and inline modules in dependency order
-    # Collect all module code and extract function/class names for return statement
+    # Collect all module code
     module_code_parts = []
-    exported_names = set()
 
     for module_name in sorted_modules:
         module_file = public_path / f"{module_name.replace('.', '/')}.py"
@@ -182,71 +181,23 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
         # Convert relative imports to absolute
         module_code = convert_relative_to_absolute_imports(module_code, module_name)
 
-        # Add @app.function decorator before each top-level function definition
-        module_code = re.sub(
-            r"^(def\s+(\w+)\s*\()",
-            r"@app.function\n\1",
-            module_code,
-            flags=re.MULTILINE
-        )
-
-        # Add @app.class_ decorator before each top-level class definition
-        module_code = re.sub(
-            r"^(class\s+(\w+)\s*[:\(])",
-            r"@app.class_\n\1",
-            module_code,
-            flags=re.MULTILINE
-        )
-
-        # Extract function and class names defined in this module (after adding decorators)
-        func_pattern = r"^def\s+(\w+)\s*\("
-        class_pattern = r"^class\s+(\w+)\s*[:\(]"
-        var_pattern = r"^([A-Z_][A-Z0-9_]*)\s*[:=]"  # Constants like CONFIG, RDF_NS
-
-        for match in re.finditer(func_pattern, module_code, re.MULTILINE):
-            name = match.group(1)
-            if not name.startswith("_"):
-                exported_names.add(name)
-
-        for match in re.finditer(class_pattern, module_code, re.MULTILINE):
-            name = match.group(1)
-            if not name.startswith("_"):
-                exported_names.add(name)
-
-        for match in re.finditer(var_pattern, module_code, re.MULTILINE):
-            name = match.group(1)
-            if not name.startswith("_"):
-                exported_names.add(name)
-
         module_code_parts.append(f"    # --- {module_name} ---")
         # Indent all lines of module code by 4 spaces
         indented_code = "\n".join("    " + line if line.strip() else "" for line in module_code.split("\n"))
         module_code_parts.append(indented_code)
         module_code_parts.append("")
 
-    # Build the inlined cell with proper marimo decorator
+    # Build the inlined code as an app.setup block
     inlined_cell = []
     inlined_cell.append("")
     inlined_cell.append("")
-    inlined_cell.append("@app.cell")
-    inlined_cell.append("def _inlined_modules():")
+    inlined_cell.append("with app.setup:")
     inlined_cell.append("    # === AUTO-INLINED MODULES ===")
     inlined_cell.append("    # This code was automatically inlined from modules/")
+    inlined_cell.append("    import marimo as mo")
     inlined_cell.append("")
     inlined_cell.extend(module_code_parts)
 
-    # Build return statement with all exported names
-    if exported_names:
-        sorted_names = sorted(exported_names)
-        # Format return statement nicely if many names
-        if len(sorted_names) > 5:
-            return_items = ",\n        ".join(sorted_names)
-            inlined_cell.append(f"    return (\n        {return_items},\n    )")
-        else:
-            return_items = ", ".join(sorted_names)
-            inlined_cell.append(f"    return {return_items},")
-    else:
-        inlined_cell.append("    return")
 
     inlined_cell.append("")
 
