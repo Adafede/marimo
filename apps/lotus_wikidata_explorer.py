@@ -1589,7 +1589,7 @@ def md_title():
 def ui_disclaimer():
     mo.callout(
         mo.md("""
-        **Recommended:** `uvx marimo run https://raw.githubusercontent.com/Adafede/marimo/refs/heads/main/apps/lotus_wikidata_explorer.py`
+        **Recommended:** `uvx marimo run https://adafede.github.io/marimo/apps/lotus_wikidata_explorer.py`
         """),
         kind="info",
     ).style(

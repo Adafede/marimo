@@ -231,9 +231,6 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
     )
 
     # Function to get inlined code for a module and its dependencies
-    # Also collect deferred aliases for modules that were already inlined
-    deferred_aliases = []  # List of (indent, original, alias) tuples
-
     def get_inlined_code_with_deps(
         module_path: str,
         indent: str,
@@ -247,12 +244,16 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
             aliases: Dict mapping original names to aliases (e.g., {'ENTITY_PREFIX': 'WIKIDATA_ENTITY_PREFIX'})
         """
         if module_path in inlined_modules:
-            # Module already inlined - defer alias assignments to be added after all inlining
+            # Module already inlined - just add alias assignments at this location
+            # This preserves try/except structure
             if aliases:
+                alias_lines = []
                 for original, alias in aliases.items():
                     if original != alias:
-                        deferred_aliases.append((indent, original, alias))
-            return ""  # Don't add anything here, aliases will be added at the end
+                        alias_lines.append(f"{indent}{alias} = {original}")
+                if alias_lines:
+                    return "\n".join(alias_lines) + "\n"
+            return ""
 
         if module_path not in module_code_map:
             return ""  # Module not found
@@ -320,11 +321,12 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
                 if indented_lines and indented_lines[-1] != "":
                     indented_lines.append("")
 
-        # Add alias assignments to deferred list (will be added at end of app.setup)
+        # Add alias assignments immediately after the inlined code
+        # This preserves try/except structure - aliases stay in the same block as imports
         if aliases:
             for original, alias in aliases.items():
                 if original != alias:
-                    deferred_aliases.append((indent, original, alias))
+                    indented_lines.append(f"{indent}{alias} = {original}")
 
         # Add trailing blank line only if not already present
         if indented_lines and indented_lines[-1] != "":
@@ -422,26 +424,6 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
         notebook_code,
         flags=re.MULTILINE,
     )
-
-    # Add deferred aliases at the end of the app.setup block
-    if deferred_aliases:
-        # Build alias lines with proper indentation (use the indent from the first alias)
-        # All aliases should have the same indentation since they're all in app.setup
-        alias_lines = []
-        for indent, original, alias in deferred_aliases:
-            alias_lines.append(f"{indent}{alias} = {original}")
-
-        # Find where to insert: just before the line that starts with @app. (not indented)
-        # This marks the end of the app.setup block
-        # We need to find the pattern: newline + @app (at start of line, no indentation)
-        insert_match = re.search(r"\n(@app\.)", notebook_code)
-        if insert_match:
-            insert_pos = insert_match.start()
-            # Add aliases with a blank line before them for readability
-            alias_block = "\n\n    # === ALIASES ===\n" + "\n".join(alias_lines) + "\n"
-            notebook_code = (
-                notebook_code[:insert_pos] + alias_block + notebook_code[insert_pos:]
-            )
 
     final_code = notebook_code
 

@@ -15,8 +15,7 @@ def execute_with_retry(
     format: str = "csv",
     fallback_endpoint: str | None = None,
 ) -> bytes:
-    """Execute SPARQL query with retry logic.
-    """
+    """Execute SPARQL query with retry logic."""
     if not query or not query.strip():
         raise ValueError("SPARQL query cannot be empty")
 
