@@ -23,4 +23,4 @@ WIKI_PREFIX = WIKIDATA_BASE + "wiki/"
 
 # SPARQL endpoints
 SPARQL_ENDPOINT = "https://query.wikidata.org/sparql"
-QLEVER_ENDPOINT = "https://qlever.cs.uni-freiburg.de/api/wikidata"
+QLEVER_ENDPOINT = "https://qlever.dev/api/wikidata"

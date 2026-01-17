@@ -35,7 +35,7 @@ from loguru import logger
 
 def find_imported_modules(notebook_path: Path) -> Set[str]:
     """Find all modules imported from 'modules.*' in the notebook."""
-    with open(notebook_path, "r") as f:
+    with open(notebook_path) as f:
         content = f.read()
 
     imports = set()
@@ -56,7 +56,7 @@ def find_module_dependencies(module_path: Path, module_name: str) -> Set[str]:
     if not module_path.exists():
         return set()
 
-    with open(module_path, "r") as f:
+    with open(module_path) as f:
         content = f.read()
 
     dependencies = set()
@@ -162,14 +162,14 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
     if not required_modules:
         logger.info(f"No modules to inline for {notebook_path.name}")
         # Just copy the original
-        with open(notebook_path, "r") as f:
+        with open(notebook_path) as f:
             notebook_code = f.read()
         with open(output_path, "w") as f:
             f.write(notebook_code)
         return
 
     logger.info(
-        f"Inlining {len(required_modules)} modules for {notebook_path.name}: {sorted(required_modules)}"
+        f"Inlining {len(required_modules)} modules for {notebook_path.name}: {sorted(required_modules)}",
     )
 
     # Sort modules by dependency order (modules without deps first)
@@ -206,7 +206,7 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
             logger.warning(f"Module file not found: {module_file}")
             continue
 
-        with open(module_file, "r") as f:
+        with open(module_file) as f:
             module_code = f.read()
 
         # Convert relative imports to absolute
@@ -219,7 +219,7 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
     inlined_modules = set()
 
     # Read original notebook
-    with open(notebook_path, "r") as f:
+    with open(notebook_path) as f:
         notebook_code = f.read()
 
     # Remove the setup_local cell if it exists (used only for local dev)
@@ -235,7 +235,9 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
     deferred_aliases = []  # List of (indent, original, alias) tuples
 
     def get_inlined_code_with_deps(
-        module_path: str, indent: str, aliases: dict = None
+        module_path: str,
+        indent: str,
+        aliases: dict = None,
     ) -> str:
         """Get inlined code for a module, including its transitive dependencies.
 
@@ -415,31 +417,31 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
         flags=re.MULTILINE,
     )
     notebook_code = re.sub(
-        r"^\s*import\s+modules\.[\w.]+\s*\n", "", notebook_code, flags=re.MULTILINE
+        r"^\s*import\s+modules\.[\w.]+\s*\n",
+        "",
+        notebook_code,
+        flags=re.MULTILINE,
     )
 
-    # Add deferred aliases (for modules that were imported multiple times with different aliases)
+    # Add deferred aliases at the end of the app.setup block
     if deferred_aliases:
-        # Group aliases by indentation level
+        # Build alias lines with proper indentation (use the indent from the first alias)
+        # All aliases should have the same indentation since they're all in app.setup
         alias_lines = []
         for indent, original, alias in deferred_aliases:
             alias_lines.append(f"{indent}{alias} = {original}")
 
-        # Find the end of the app.setup block to insert aliases
-        # Look for the first @app.cell or @app.function after app.setup
-        app_setup_match = re.search(r"with\s+app\.setup:", notebook_code)
-        if app_setup_match:
-            next_cell_match = re.search(
-                r"\n(@app\.(cell|function))", notebook_code[app_setup_match.end():]
+        # Find where to insert: just before the line that starts with @app. (not indented)
+        # This marks the end of the app.setup block
+        # We need to find the pattern: newline + @app (at start of line, no indentation)
+        insert_match = re.search(r"\n(@app\.)", notebook_code)
+        if insert_match:
+            insert_pos = insert_match.start()
+            # Add aliases with a blank line before them for readability
+            alias_block = "\n\n    # === ALIASES ===\n" + "\n".join(alias_lines) + "\n"
+            notebook_code = (
+                notebook_code[:insert_pos] + alias_block + notebook_code[insert_pos:]
             )
-            if next_cell_match:
-                insert_pos = app_setup_match.end() + next_cell_match.start()
-                alias_block = "\n" + "\n".join(alias_lines) + "\n"
-                notebook_code = (
-                    notebook_code[:insert_pos]
-                    + alias_block
-                    + notebook_code[insert_pos:]
-                )
 
     final_code = notebook_code
 
@@ -451,7 +453,9 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
 
 
 def _export_html_wasm(
-    notebook_path: Path, output_dir: Path, as_app: bool = False
+    notebook_path: Path,
+    output_dir: Path,
+    as_app: bool = False,
 ) -> bool:
     """Export a single marimo notebook to HTML/WebAssembly format.
 
@@ -499,7 +503,7 @@ def _export_html_wasm(
     if as_app:
         logger.info(f"Exporting {notebook_path} to {output_path} as app")
         cmd.extend(
-            ["--mode", "run", "--no-show-code"]
+            ["--mode", "run", "--no-show-code"],
         )  # Apps run in "run" mode with hidden code
     else:
         logger.info(f"Exporting {notebook_path} to {output_path} as notebook")
@@ -580,7 +584,7 @@ def _generate_index(
             f.write(rendered_html)
         logger.info(f"Successfully generated index.html at {index_path}")
 
-    except IOError as e:
+    except OSError as e:
         # Handle file I/O errors
         logger.error(f"Error generating index.html: {e}")
     except jinja2.exceptions.TemplateError as e:
@@ -616,7 +620,7 @@ def _export(folder: Path, output_dir: Path, as_app: bool = False) -> List[dict]:
 
     if len(all_notebooks) != len(notebooks):
         logger.debug(
-            f"Filtered out {len(all_notebooks) - len(notebooks)} files from public/ directories"
+            f"Filtered out {len(all_notebooks) - len(notebooks)} files from public/ directories",
         )
 
     logger.debug(f"Found {len(notebooks)} Python files in {folder}")
@@ -637,7 +641,7 @@ def _export(folder: Path, output_dir: Path, as_app: bool = False) -> List[dict]:
     ]
 
     logger.info(
-        f"Successfully exported {len(notebook_data)} out of {len(notebooks)} files from {folder}"
+        f"Successfully exported {len(notebook_data)} out of {len(notebooks)} files from {folder}",
     )
     return notebook_data
 
