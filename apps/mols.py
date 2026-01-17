@@ -21,17 +21,11 @@ with app.setup:
     import marimo as mo
     from collections import defaultdict
     from itertools import cycle
-
-    # === MODULE SETUP ===
-    import sys
     from dataclasses import dataclass
 
     @dataclass
     class MockInput:
         value: str = ""
-
-    # === Import modules from /public ===
-    sys.path.insert(0, str(mo.notebook_dir() / "public"))
 
     from modules.text.strings.parse_labeled_lines import parse_labeled_lines
     from modules.utils.colors.hex_to_rgb_float import hex_to_rgb_float

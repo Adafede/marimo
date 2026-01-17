@@ -2,7 +2,6 @@
 # requires-python = "==3.13.*"
 # dependencies = [
 #     "marimo",
-#     "requests==2.32.5",
 # ]
 #
 # [tool.marimo.display]
@@ -12,7 +11,7 @@
 import marimo
 
 __generated_with = "0.19.4"
-app = marimo.App(app_title="Remote Import Demo")
+app = marimo.App(app_title="Remote Demo")
 
 with app.setup:
     import marimo as mo
