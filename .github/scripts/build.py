@@ -183,6 +183,9 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
         # Store with the full module path as key
         module_code_map[module_name] = module_code
 
+    # Track which modules have been inlined to avoid duplicates
+    inlined_modules = set()
+
     # Read original notebook
     with open(notebook_path, "r") as f:
         notebook_code = f.read()
@@ -195,27 +198,74 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
         flags=re.DOTALL,
     )
 
+    # Function to get inlined code for a module and its dependencies
+    def get_inlined_code_with_deps(module_path: str, indent: str) -> str:
+        """Get inlined code for a module, including its transitive dependencies."""
+        if module_path in inlined_modules:
+            return ""  # Already inlined
+
+        if module_path not in module_code_map:
+            return ""  # Module not found
+
+        code = module_code_map[module_path]
+        result_parts = []
+
+        # Find and inline dependencies first (from the module's imports)
+        # Look for 'from modules.x.y import' patterns in this module's code
+        dep_pattern = r"from\s+(modules\.[\w.]+)\s+import"
+        deps_in_code = re.findall(dep_pattern, code)
+
+        for dep in deps_in_code:
+            if dep not in inlined_modules and dep in module_code_map:
+                # Recursively inline the dependency first
+                dep_code = get_inlined_code_with_deps(dep, indent)
+                if dep_code:
+                    result_parts.append(dep_code)
+
+        # Mark this module as inlined
+        inlined_modules.add(module_path)
+
+        # Remove 'from modules.*' imports from the code since deps are now inlined
+        code = re.sub(
+            r"^\s*from\s+modules\.[\w.]+\s+import\s+\([^)]*\)\s*\n",
+            "",
+            code,
+            flags=re.MULTILINE | re.DOTALL,
+        )
+        code = re.sub(
+            r"^\s*from\s+modules\.[\w.]+\s+import\s+[^\n(]+\n",
+            "",
+            code,
+            flags=re.MULTILINE,
+        )
+        code = re.sub(
+            r"^\s*import\s+modules\.[\w.]+\s*\n",
+            "",
+            code,
+            flags=re.MULTILINE,
+        )
+
+        # Indent and add this module's code
+        indented_lines = []
+        indented_lines.append(f"{indent}# --- inlined from {module_path} ---")
+        for line in code.split("\n"):
+            if line.strip():
+                indented_lines.append(f"{indent}{line}")
+            else:
+                indented_lines.append("")
+        indented_lines.append("")
+
+        result_parts.append("\n".join(indented_lines))
+        return "\n".join(result_parts)
+
     # Function to replace a single import with inlined code
     def replace_import_with_inline(match):
         full_match = match.group(0)
         indent = match.group(1)  # Capture the indentation
         module_path = match.group(2)  # e.g., "modules.text.strings.pluralize"
 
-        # Convert module path to our key format
-        module_key = module_path
-
-        if module_key in module_code_map:
-            code = module_code_map[module_key]
-            # Indent all lines to match the import's indentation
-            indented_lines = []
-            indented_lines.append(f"{indent}# --- inlined from {module_path} ---")
-            for line in code.split("\n"):
-                if line.strip():
-                    indented_lines.append(f"{indent}{line}")
-                else:
-                    indented_lines.append("")
-            indented_lines.append("")
-            return "\n".join(indented_lines)
+        if module_path in module_code_map:
+            return get_inlined_code_with_deps(module_path, indent)
         else:
             # Module not found in our map, keep the original import
             # (will be removed later if it's a modules.* import)

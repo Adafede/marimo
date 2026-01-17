@@ -14,7 +14,7 @@ RGBColor = tuple[float, float, float]
 SmartsEntry = tuple[str, str, Any, RGBColor]  # (name, smarts_str, smarts_mol, color)
 
 
-def _iter_pattern_highlights(
+def iter_pattern_highlights(
     mol: Mol,
     smarts_entries: list[SmartsEntry],
     match_counter: defaultdict | None,
@@ -59,7 +59,7 @@ def collect_highlights(
     colors: dict[int, RGBColor] = {}
     tooltips: list[str] = []
 
-    for indices, color, tooltip in _iter_pattern_highlights(
+    for indices, color, tooltip in iter_pattern_highlights(
         mol=mol,
         smarts_entries=smarts_entries,
         match_counter=match_counter,

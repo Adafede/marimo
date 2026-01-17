@@ -12,29 +12,29 @@ except ImportError:
     HAS_POLARS = False
 
 
-def _extract_qid_from_url(url: str) -> str:
+def extract_qid_from_url(url: str) -> str:
     """Extract QID from Wikidata entity URL."""
     return url.split("/")[-1] if "/" in url else url
 
 
-def _parse_search_results(csv_bytes: bytes) -> list[tuple[str, str]]:
+def parse_search_results(csv_bytes: bytes) -> list[tuple[str, str]]:
     """Parse search results CSV into list of (qid, name) tuples."""
     df = pl.read_csv(source=io.BytesIO(csv_bytes))
     if df.is_empty():
         return []
 
     return [
-        (_extract_qid_from_url(row.get("taxon", "")), row.get("taxon_name", ""))
+        (extract_qid_from_url(row.get("taxon", "")), row.get("taxon_name", ""))
         for row in df.iter_rows(named=True)
         if row.get("taxon") and row.get("taxon_name")
     ]
 
 
-def _parse_connectivity(csv_bytes: bytes) -> dict[str, int]:
+def parse_connectivity(csv_bytes: bytes) -> dict[str, int]:
     """Parse connectivity CSV into qid -> compound_count mapping."""
     df = pl.read_csv(source=io.BytesIO(csv_bytes))
     return {
-        _extract_qid_from_url(row.get("taxon", "")): int(
+        extract_qid_from_url(row.get("taxon", "")): int(
             row.get("compound_count", 0) or 0,
         )
         for row in df.iter_rows(named=True)
@@ -42,11 +42,11 @@ def _parse_connectivity(csv_bytes: bytes) -> dict[str, int]:
     }
 
 
-def _parse_details(csv_bytes: bytes) -> dict[str, dict[str, str | None]]:
+def parse_details(csv_bytes: bytes) -> dict[str, dict[str, str | None]]:
     """Parse details CSV into qid -> {description, parent} mapping."""
     df = pl.read_csv(source=io.BytesIO(csv_bytes))
     return {
-        _extract_qid_from_url(row.get("taxon", "")): {
+        extract_qid_from_url(row.get("taxon", "")): {
             "description": row.get("taxonDescription"),
             "parent": row.get("taxon_parentLabel"),
         }
@@ -74,18 +74,18 @@ def resolve_from_csv(
     if not search_results_csv or not search_results_csv.strip():
         return [], {}
 
-    base_matches = _parse_search_results(csv_bytes=search_results_csv)
+    base_matches = parse_search_results(csv_bytes=search_results_csv)
     if not base_matches:
         return [], {}
 
     connectivity_map = (
-        _parse_connectivity(csv_bytes=connectivity_csv)
+        parse_connectivity(csv_bytes=connectivity_csv)
         if connectivity_csv and connectivity_csv.strip()
         else {}
     )
 
     details_map = (
-        _parse_details(csv_bytes=details_csv)
+        parse_details(csv_bytes=details_csv)
         if details_csv and details_csv.strip()
         else {}
     )

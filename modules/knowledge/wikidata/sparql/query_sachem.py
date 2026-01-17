@@ -11,7 +11,7 @@ from .patterns_compound import (
 )
 
 
-def _build_sachem_service(
+def build_sachem_service(
     escaped_smiles: str,
     search_type: str,
     threshold: float,
@@ -58,7 +58,7 @@ def query_sachem(
     Returns:
         Complete SPARQL query string
     """
-    sachem_clause = _build_sachem_service(escaped_smiles, search_type, threshold)
+    sachem_clause = build_sachem_service(escaped_smiles, search_type, threshold)
 
     if taxon_qid:
         # OPTIMIZED: Filter by taxonomic data FIRST (uses indexes, much smaller set)

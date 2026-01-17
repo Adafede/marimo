@@ -42,7 +42,7 @@ _HALOGEN_ATTRS = (
 )
 
 
-def _serialize_elements(
+def serialize_elements(
     filters: FormulaFilters,
     element_names: dict[str, str],
 ) -> dict[str, dict[str, int | None]]:
@@ -54,7 +54,7 @@ def _serialize_elements(
     }
 
 
-def _serialize_halogens(
+def serialize_halogens(
     filters: FormulaFilters,
     halogen_names: dict[str, str],
 ) -> dict[str, str]:
@@ -83,9 +83,9 @@ def serialize_filters(
     if filters.exact_formula and filters.exact_formula.strip():
         result["exact_formula"] = filters.exact_formula.strip()
 
-    result.update(_serialize_elements(filters=filters, element_names=element_names))
+    result.update(serialize_elements(filters=filters, element_names=element_names))
 
-    active_halogens = _serialize_halogens(filters=filters, halogen_names=halogen_names)
+    active_halogens = serialize_elements(filters=filters, halogen_names=halogen_names)
     if active_halogens:
         result["halogens"] = active_halogens
 
