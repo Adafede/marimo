@@ -47,14 +47,15 @@ def _():
         from importlib.machinery import ModuleSpec
         from importlib.abc import MetaPathFinder, Loader
 
-        _c = {}
+        # Module content cache and existence cache
+        _c = {}  # content cache: url -> source code
+        _e = {}  # existence cache: url -> False (only caches non-existence)
 
         class _L(Loader):
             def __init__(s, b):
                 s.b = b
+                # Reusable session for connection pooling
                 s.s = requests.Session()
-                # Remove headers that trigger browser warnings
-                s.s.headers.clear()
                 s.s.headers.update({"User-Agent": "marimo-remote-import"})
 
             def create_module(s, _):
@@ -83,14 +84,40 @@ def _():
                 if n != s.r and not n.startswith(s.r + "."):
                     return None
                 p = f"{s.l.b}/{n.replace('.', '/')}"
-                # Check for module (.py file) first - more common case
                 py_url = p + ".py"
-                if py_url in _c or s.l.s.head(py_url).status_code == 200:
-                    return ModuleSpec(n, s.l, is_package=False)
-                # Only check for package if .py doesn't exist
                 init_url = p + "/__init__.py"
-                if init_url in _c or s.l.s.head(init_url).status_code == 200:
+
+                # Check content cache first (already fetched)
+                if py_url in _c:
+                    return ModuleSpec(n, s.l, is_package=False)
+                if init_url in _c:
                     return ModuleSpec(n, s.l, is_package=True)
+
+                # Check non-existence cache
+                if py_url in _e and init_url in _e:
+                    return None
+
+                # Try GET directly (skip HEAD - faster)
+                if py_url not in _e:
+                    try:
+                        resp = s.l.s.get(py_url, timeout=10)
+                        if resp.status_code == 200:
+                            _c[py_url] = resp.text
+                            return ModuleSpec(n, s.l, is_package=False)
+                        _e[py_url] = False
+                    except Exception:
+                        _e[py_url] = False
+
+                if init_url not in _e:
+                    try:
+                        resp = s.l.s.get(init_url, timeout=10)
+                        if resp.status_code == 200:
+                            _c[init_url] = resp.text
+                            return ModuleSpec(n, s.l, is_package=True)
+                        _e[init_url] = False
+                    except Exception:
+                        _e[init_url] = False
+
                 return None
 
         def use(url):

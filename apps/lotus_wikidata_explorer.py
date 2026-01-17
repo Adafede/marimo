@@ -72,13 +72,13 @@ with app.setup:
         from importlib.machinery import ModuleSpec
         from importlib.abc import MetaPathFinder, Loader
 
-        _c = {}
+        _c = {}  # content cache: url -> source code
+        _e = {}  # existence cache: url -> False (only caches non-existence)
 
         class _L(Loader):
             def __init__(s, b):
                 s.b = b
                 s.s = requests.Session()
-                s.s.headers.clear()
                 s.s.headers.update({"User-Agent": "marimo-remote-import"})
 
             def create_module(s, _):
@@ -108,11 +108,32 @@ with app.setup:
                     return None
                 p = f"{s.l.b}/{n.replace('.', '/')}"
                 py_url = p + ".py"
-                if py_url in _c or s.l.s.head(py_url).status_code == 200:
-                    return ModuleSpec(n, s.l, is_package=False)
                 init_url = p + "/__init__.py"
-                if init_url in _c or s.l.s.head(init_url).status_code == 200:
+                if py_url in _c:
+                    return ModuleSpec(n, s.l, is_package=False)
+                if init_url in _c:
                     return ModuleSpec(n, s.l, is_package=True)
+                if py_url in _e and init_url in _e:
+                    return None
+                if py_url not in _e:
+                    try:
+                        resp = s.l.s.get(py_url, timeout=10)
+                        if resp.status_code == 200:
+                            _c[py_url] = resp.text
+                            return ModuleSpec(n, s.l, is_package=False)
+                        _e[py_url] = False
+                    except Exception:
+                        _e[py_url] = False
+                if init_url not in _e:
+                    try:
+                        resp = s.l.s.get(init_url, timeout=10)
+                        if resp.status_code == 200:
+                            _c[init_url] = resp.text
+                            return ModuleSpec(n, s.l, is_package=True)
+                        _e[init_url] = False
+                    except Exception:
+                        _e[init_url] = False
+
                 return None
 
         def use(url):
