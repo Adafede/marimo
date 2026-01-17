@@ -240,7 +240,14 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
 
     # Remove ALL 'from modules.*' and 'import modules.*' lines from final code
     # This includes lines in the original notebook AND in inlined module code
-    final_code = re.sub(r"^\s*from\s+modules\.[\w.]+\s+import\s+[^\n]+\n", "", final_code, flags=re.MULTILINE)
+    # Handle both single-line and multi-line imports with parentheses
+    final_code = re.sub(
+        r"^\s*from\s+modules\.[\w.]+\s+import\s+\([^)]*\)\s*\n",
+        "",
+        final_code,
+        flags=re.MULTILINE | re.DOTALL
+    )
+    final_code = re.sub(r"^\s*from\s+modules\.[\w.]+\s+import\s+[^\n(]+\n", "", final_code, flags=re.MULTILINE)
     final_code = re.sub(r"^\s*import\s+modules\.[\w.]+\s*\n", "", final_code, flags=re.MULTILINE)
 
     # Write to output
