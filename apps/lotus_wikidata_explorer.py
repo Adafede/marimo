@@ -56,7 +56,7 @@ with app.setup:
     from typing import Any
 
     # === Import modules from /public ===
-    sys.path.insert(0, str(mo.notebook_location() / "public"))
+    sys.path.insert(0, str(mo.notebook_dir() / "public"))
 
     from modules.text.formula.filters import FormulaFilters
     from modules.text.formula.create_filters import create_filters
