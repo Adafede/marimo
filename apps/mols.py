@@ -30,11 +30,8 @@ with app.setup:
     class MockInput:
         value: str = ""
 
-    # === BEGIN ===
-    _USE_LOCAL = False  # Set to True for local development
-    if _USE_LOCAL:
-        sys.path.insert(0, str(mo.notebook_location() / "public"))
-    # === END ===
+    # === Import modules from /public ===
+    sys.path.insert(0, str(mo.notebook_location() / "public"))
 
     from modules.text.strings.parse_labeled_lines import parse_labeled_lines
     from modules.utils.colors.hex_to_rgb_float import hex_to_rgb_float
