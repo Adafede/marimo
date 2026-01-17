@@ -199,6 +199,10 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
         flags=re.DOTALL,
     )
 
+    # Remove all 'from modules.*' and 'import modules.*' lines since they are now inlined
+    notebook_code = re.sub(r"^\s*from\s+modules\.[\w.]+\s+import\s+[^\n]+\n", "", notebook_code, flags=re.MULTILINE)
+    notebook_code = re.sub(r"^\s*import\s+modules\.[\w.]+\s*\n", "", notebook_code, flags=re.MULTILINE)
+
     # Combine inlined modules with notebook
     final_code = "\n".join(inlined_code) + "\n\n" + notebook_code
 
@@ -294,7 +298,8 @@ def _export_html_wasm(
     finally:
         # Clean up temp file if we created one
         if temp_path and temp_path.exists():
-            temp_path.unlink()
+            # temp_path.unlink()
+            pass
 
 
 def _generate_index(
