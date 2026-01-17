@@ -69,12 +69,29 @@ def find_module_dependencies(module_path: Path, module_name: str) -> Set[str]:
     dependencies.update(re.findall(pattern2, content))
 
     # Find relative imports and convert to absolute
-    pattern3 = r"from\s+\.([\w.]+)\s+import"
+    # Match patterns like: from .foo, from ..foo, from ...foo
+    pattern3 = r"from\s+(\.+)([\w.]*)\s+import"
     relative_imports = re.findall(pattern3, content)
 
-    parent_module = ".".join(module_name.split(".")[:-1])
-    for rel_import in relative_imports:
-        absolute_import = f"{parent_module}.{rel_import}"
+    module_parts = module_name.split(".")
+    for dots, rel_import in relative_imports:
+        # Number of dots determines how many levels to go up
+        # 1 dot = same package (go up 1 level from current module)
+        # 2 dots = parent package (go up 2 levels)
+        # etc.
+        levels_up = len(dots)
+        if levels_up > len(module_parts) - 1:
+            continue  # Can't go up that many levels
+
+        # Get the base package by going up the appropriate number of levels
+        base_parts = module_parts[:-levels_up] if levels_up > 0 else module_parts[:-1]
+
+        if rel_import:
+            absolute_import = ".".join(base_parts + [rel_import])
+        else:
+            # from . import foo - imports from __init__.py
+            absolute_import = ".".join(base_parts)
+
         dependencies.add(absolute_import)
 
     return dependencies
@@ -109,14 +126,29 @@ def get_all_required_modules(notebook_path: Path, public_path: Path) -> Set[str]
 
 def convert_relative_to_absolute_imports(code: str, module_name: str) -> str:
     """Convert relative imports to absolute imports in module code."""
-    parent_module = ".".join(module_name.split(".")[:-1])
+    module_parts = module_name.split(".")
 
-    # Convert "from .x import y" to "from modules.parent.x import y"
+    # Convert "from .x import y", "from ..x import y", etc. to absolute imports
     def replace_relative(match):
-        relative_part = match.group(1)
-        return f"from {parent_module}.{relative_part} import"
+        dots = match.group(1)
+        relative_part = match.group(2)
 
-    code = re.sub(r"from\s+\.([\w.]+)\s+import", replace_relative, code)
+        # Number of dots determines how many levels to go up
+        levels_up = len(dots)
+        if levels_up > len(module_parts) - 1:
+            return match.group(0)  # Can't convert, keep original
+
+        # Get the base package by going up the appropriate number of levels
+        base_parts = module_parts[:-levels_up] if levels_up > 0 else module_parts[:-1]
+
+        if relative_part:
+            absolute_path = ".".join(base_parts + [relative_part])
+        else:
+            absolute_path = ".".join(base_parts)
+
+        return f"from {absolute_path} import"
+
+    code = re.sub(r"from\s+(\.+)([\w.]*)\s+import", replace_relative, code)
 
     return code
 
