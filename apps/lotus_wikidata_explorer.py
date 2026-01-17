@@ -117,7 +117,8 @@ with app.setup:
         "app_version": "0.1.0",
         "app_name": "LOTUS Wikidata Explorer",
         "app_url": "https://github.com/Adafede/marimo/blob/main/apps/lotus_wikidata_explorer.py",
-        "sparql_endpoint": "https://qlever.dev/api/wikidata",
+        "qlever_endpoint": "https://qlever.dev/api/wikidata",
+        "wikidata_endpoint": "https://query.wikidata.org/sparql",
         "idsm_endpoint": "https://idsm.elixir-czech.cz/sparql/endpoint/",
         "table_row_limit": 1_000,
         "download_embed_threshold_bytes": 500_000,
@@ -145,6 +146,45 @@ with app.setup:
         "Taxon": "Taxa",
         "taxon": "taxa",
     }
+
+    def parse_sparql_response(response_bytes: bytes) -> pl.DataFrame:
+        """Parse SPARQL response bytes (CSV or JSON) into a Polars DataFrame.
+
+        Wikidata sometimes returns JSON despite requesting CSV format.
+        This function detects the format and parses accordingly.
+        """
+        if not response_bytes or not response_bytes.strip():
+            return pl.DataFrame()
+
+        response_text = response_bytes.strip()
+
+        # Detect JSON response (starts with '{')
+        if response_text.startswith(b"{"):
+            try:
+                json_data = json.loads(response_bytes.decode("utf-8"))
+                bindings = json_data.get("results", {}).get("bindings", [])
+                if not bindings:
+                    return pl.DataFrame()
+                # Convert SPARQL JSON bindings to flat dict rows
+                rows = []
+                for binding in bindings:
+                    row = {}
+                    for key, value in binding.items():
+                        row[key] = value.get("value", "")
+                    rows.append(row)
+                return pl.DataFrame(rows)
+            except (json.JSONDecodeError, KeyError):
+                return pl.DataFrame()
+        else:
+            # Parse as CSV
+            try:
+                return pl.read_csv(
+                    io.BytesIO(response_bytes),
+                    infer_schema_length=10000,
+                    truncate_ragged_lines=True,
+                )
+            except Exception:
+                return pl.DataFrame()
 
 
 @app.class_definition
@@ -333,11 +373,12 @@ def resolve_ambiguous_matches(
     # Query connectivity to find the most connected taxon (CSV for memory efficiency)
     csv_bytes = execute_with_retry(
         query_taxon_connectivity(values_clause("taxon", qids, prefix="wd:")),
-        endpoint=CONFIG["sparql_endpoint"],
+        endpoint=CONFIG["qlever_endpoint"],
+        fallback_endpoint=CONFIG["wikidata_endpoint"],
     )
     connectivity_map = {}
     if csv_bytes and csv_bytes.strip():
-        conn_df = pl.read_csv(io.BytesIO(csv_bytes))
+        conn_df = parse_sparql_response(csv_bytes)
         for row in conn_df.iter_rows(named=True):
             taxon_url = row.get("taxon", "")
             count = row.get("compound_count", 0)
@@ -357,11 +398,12 @@ def resolve_ambiguous_matches(
     # Get details for display (CSV for memory efficiency)
     csv_bytes = execute_with_retry(
         query_taxon_details(values_clause("taxon", qids, prefix="wd:")),
-        endpoint=CONFIG["sparql_endpoint"],
+        endpoint=CONFIG["qlever_endpoint"],
+        fallback_endpoint=CONFIG["wikidata_endpoint"],
     )
     details_map = {}
     if csv_bytes and csv_bytes.strip():
-        details_df = pl.read_csv(io.BytesIO(csv_bytes))
+        details_df = parse_sparql_response(csv_bytes)
         for row in details_df.iter_rows(named=True):
             taxon_url = row.get("taxon", "")
             if taxon_url:
@@ -412,12 +454,16 @@ def resolve_taxon_to_qid(
     # Search for taxon by name (CSV for memory efficiency)
     try:
         query = query_taxon_search(taxon_input)
-        csv_bytes = execute_with_retry(query, endpoint=CONFIG["sparql_endpoint"])
+        csv_bytes = execute_with_retry(
+            query,
+            endpoint=CONFIG["qlever_endpoint"],
+            fallback_endpoint=CONFIG["wikidata_endpoint"],
+        )
 
         if not csv_bytes or not csv_bytes.strip():
             return None, None
 
-        df = pl.read_csv(io.BytesIO(csv_bytes))
+        df = parse_sparql_response(csv_bytes)
         del csv_bytes
 
         if df.is_empty():
@@ -729,16 +775,20 @@ def query_wikidata(
         query = query_compounds_by_taxon(qid)
 
     # Execute query and get CSV bytes (memory efficient)
-    csv_bytes = execute_with_retry(query, endpoint=CONFIG["sparql_endpoint"])
+    csv_bytes = execute_with_retry(
+        query,
+        endpoint=CONFIG["qlever_endpoint"],
+        fallback_endpoint=CONFIG["wikidata_endpoint"],
+    )
 
     # Early return for empty results
     if not csv_bytes or csv_bytes.strip() == b"":
         return pl.DataFrame()
 
-    # Read CSV directly into Polars (much more memory efficient than JSON parsing)
-    df = pl.read_csv(io.BytesIO(csv_bytes), infer_schema_length=10000)
+    # Parse response (handles both CSV and JSON formats)
+    df = parse_sparql_response(csv_bytes)
 
-    # Free CSV bytes immediately
+    # Free bytes immediately
     del csv_bytes
 
     # Early return if no data rows
@@ -1067,7 +1117,6 @@ def create_export_metadata(
             "reference_qid",
         ],
         "search_parameters": {"taxon": taxon_input, "taxon_qid": qid},
-        "sparql_endpoint": CONFIG["sparql_endpoint"],
         "chemical_search_service": {
             "name": "SACHEM",
             "provider": "IDSM",
@@ -1146,22 +1195,27 @@ def compute_provenance_hashes(
 
     # Result hash - extract compound QIDs efficiently
     compound_col = "compound_qid" if "compound_qid" in df.columns else "compound"
-    if compound_col in df.columns:
-        compound_ids = sorted(
-            df.select(
-                pl.col(compound_col).str.replace(
-                    WIKIDATA_ENTITY_PREFIX,
-                    "",
-                    literal=True,
-                ),
+    compound_ids = []
+    if compound_col in df.columns and not df.is_empty():
+        try:
+            compound_ids = sorted(
+                df.select(
+                    pl.col(compound_col)
+                    .cast(pl.Utf8)
+                    .str.replace(
+                        WIKIDATA_ENTITY_PREFIX,
+                        "",
+                        literal=True,
+                    ),
+                )
+                .to_series()
+                .drop_nulls()
+                .unique()
+                .to_list(),
             )
-            .to_series()
-            .drop_nulls()
-            .unique()
-            .to_list(),
-        )
-    else:
-        compound_ids = []
+        except Exception:
+            # Handle any remaining edge cases
+            compound_ids = []
     result_hash = hashlib.sha256("|".join(compound_ids).encode("utf-8")).hexdigest()
 
     return query_hash, result_hash
