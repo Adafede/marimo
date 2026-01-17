@@ -12,7 +12,7 @@ def wrap_image(
     width: int = 150,
     height: int = 100,
     rounded: bool = True,
-) -> mo.Html | mo.image:
+) -> mo.Html:
     """Wrap image HTML in mo.image for mo.ui.table."""
     if not html_str:
         return mo.Html("")
