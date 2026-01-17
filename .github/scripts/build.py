@@ -5,6 +5,8 @@ This script exports marimo notebooks to HTML/WebAssembly format and generates
 an index.html file that lists all the notebooks. It handles both regular notebooks
 (from the notebooks/ directory) and apps (from the apps/ directory).
 
+For apps, it automatically inlines modules from modules/ before exporting.
+
 The script can be run from the command line with optional arguments:
     uv run .github/scripts/build.py [--output-dir OUTPUT_DIR]
 
@@ -21,7 +23,9 @@ The exported files will be placed in the specified output directory (default: _s
 # ///
 
 import subprocess
-from typing import List, Union
+import tempfile
+import re
+from typing import List, Union, Set
 from pathlib import Path
 
 import jinja2
@@ -30,16 +34,192 @@ import fire
 from loguru import logger
 
 
+def find_imported_modules(notebook_path: Path) -> Set[str]:
+    """Find all modules imported from 'modules.*' in the notebook."""
+    with open(notebook_path, "r") as f:
+        content = f.read()
+
+    imports = set()
+
+    # Pattern 1: from modules.x.y import z
+    pattern1 = r"from\s+(modules\.[\w.]+)\s+import"
+    imports.update(re.findall(pattern1, content))
+
+    # Pattern 2: import modules.x.y
+    pattern2 = r"import\s+(modules\.[\w.]+)"
+    imports.update(re.findall(pattern2, content))
+
+    return imports
+
+
+def find_module_dependencies(module_path: Path, module_name: str) -> Set[str]:
+    """Recursively find all dependencies of a module."""
+    if not module_path.exists():
+        return set()
+
+    with open(module_path, "r") as f:
+        content = f.read()
+
+    dependencies = set()
+
+    # Find absolute imports from modules.*
+    pattern1 = r"from\s+(modules\.[\w.]+)\s+import"
+    dependencies.update(re.findall(pattern1, content))
+
+    pattern2 = r"import\s+(modules\.[\w.]+)"
+    dependencies.update(re.findall(pattern2, content))
+
+    # Find relative imports and convert to absolute
+    pattern3 = r"from\s+\.([\w.]+)\s+import"
+    relative_imports = re.findall(pattern3, content)
+
+    parent_module = ".".join(module_name.split(".")[:-1])
+    for rel_import in relative_imports:
+        absolute_import = f"{parent_module}.{rel_import}"
+        dependencies.add(absolute_import)
+
+    return dependencies
+
+
+def get_all_required_modules(notebook_path: Path, public_path: Path) -> Set[str]:
+    """Get all modules required by the notebook, including transitive dependencies."""
+    direct_imports = find_imported_modules(notebook_path)
+
+    all_modules = set()
+    to_process = list(direct_imports)
+    processed = set()
+
+    while to_process:
+        module_name = to_process.pop()
+        if module_name in processed:
+            continue
+
+        processed.add(module_name)
+        all_modules.add(module_name)
+
+        # Find this module's dependencies
+        module_file = public_path / f"{module_name.replace('.', '/')}.py"
+        deps = find_module_dependencies(module_file, module_name)
+
+        for dep in deps:
+            if dep not in processed:
+                to_process.append(dep)
+
+    return all_modules
+
+
+def convert_relative_to_absolute_imports(code: str, module_name: str) -> str:
+    """Convert relative imports to absolute imports in module code."""
+    parent_module = ".".join(module_name.split(".")[:-1])
+
+    # Convert "from .x import y" to "from modules.parent.x import y"
+    def replace_relative(match):
+        relative_part = match.group(1)
+        return f"from {parent_module}.{relative_part} import"
+
+    code = re.sub(r"from\s+\.([\w.]+)\s+import", replace_relative, code)
+
+    return code
+
+
+def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
+    """Inline only required modules into the notebook."""
+
+    # Get all required modules
+    required_modules = get_all_required_modules(notebook_path, public_path)
+
+    if not required_modules:
+        logger.info(f"No modules to inline for {notebook_path.name}")
+        # Just copy the original
+        with open(notebook_path, "r") as f:
+            notebook_code = f.read()
+        with open(output_path, "w") as f:
+            f.write(notebook_code)
+        return
+
+    logger.info(
+        f"Inlining {len(required_modules)} modules for {notebook_path.name}: {sorted(required_modules)}"
+    )
+
+    # Sort modules by dependency order (modules without deps first)
+    module_graph = {}
+    for module_name in required_modules:
+        module_file = public_path / f"{module_name.replace('.', '/')}.py"
+        deps = find_module_dependencies(module_file, module_name)
+        # Only keep deps that are in our required set
+        deps = deps & required_modules
+        module_graph[module_name] = deps
+
+    # Topological sort
+    sorted_modules = []
+    remaining = set(required_modules)
+
+    while remaining:
+        # Find modules with no remaining dependencies
+        no_deps = [m for m in remaining if not (module_graph[m] & remaining)]
+        if not no_deps:
+            # Circular dependency - just add remaining in arbitrary order
+            no_deps = list(remaining)
+
+        sorted_modules.extend(sorted(no_deps))
+        remaining -= set(no_deps)
+
+    # Read and inline modules in dependency order
+    inlined_code = []
+    inlined_code.append("# === AUTO-INLINED MODULES ===")
+    inlined_code.append("# This code was automatically inlined from public/modules")
+    inlined_code.append("")
+
+    for module_name in sorted_modules:
+        module_file = public_path / f"{module_name.replace('.', '/')}.py"
+
+        if not module_file.exists():
+            logger.warning(f"Module file not found: {module_file}")
+            continue
+
+        with open(module_file, "r") as f:
+            module_code = f.read()
+
+        # Convert relative imports to absolute
+        module_code = convert_relative_to_absolute_imports(module_code, module_name)
+
+        inlined_code.append(f"# --- {module_name} ---")
+        inlined_code.append(module_code)
+        inlined_code.append("")
+
+    # Read original notebook
+    with open(notebook_path, "r") as f:
+        notebook_code = f.read()
+
+    # Remove the setup_local cell if it exists (used only for local dev)
+    notebook_code = re.sub(
+        r"@app\.cell\s+def\s+setup_local\(\):.*?return\s*\n",
+        "",
+        notebook_code,
+        flags=re.DOTALL,
+    )
+
+    # Combine inlined modules with notebook
+    final_code = "\n".join(inlined_code) + "\n\n" + notebook_code
+
+    # Write to output
+    with open(output_path, "w") as f:
+        f.write(final_code)
+
+    logger.info(f"Successfully inlined modules into {output_path}")
+
+
 def _export_html_wasm(
-    notebook_path: Path,
-    output_dir: Path,
-    as_app: bool = False,
+    notebook_path: Path, output_dir: Path, as_app: bool = False
 ) -> bool:
     """Export a single marimo notebook to HTML/WebAssembly format.
 
     This function takes a marimo notebook (.py file) and exports it to HTML/WebAssembly format.
     If as_app is True, the notebook is exported in "run" mode with code hidden, suitable for
     applications. Otherwise, it's exported in "edit" mode, suitable for interactive notebooks.
+
+    For apps, if a modules/ directory exists, modules will be automatically
+    inlined before export.
 
     Args:
         notebook_path (Path): Path to the marimo notebook (.py file) to export
@@ -50,6 +230,28 @@ def _export_html_wasm(
     Returns:
         bool: True if export succeeded, False otherwise
     """
+    temp_path = None
+
+    # If exporting as app and modules/ exists, inline modules first
+    if as_app:
+        public_dir = notebook_path.parent / ".."
+        if public_dir.exists() and public_dir.is_dir():
+            # Create temporary inlined version
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".py", delete=False
+            ) as tmp:
+                temp_path = Path(tmp.name)
+
+            logger.info(f"Inlining modules from {public_dir} for {notebook_path.name}")
+            inline_modules(notebook_path, temp_path, public_dir)
+
+            # Export the inlined version instead
+            notebook_to_export = temp_path
+        else:
+            notebook_to_export = notebook_path
+    else:
+        notebook_to_export = notebook_path
+
     # Convert .py extension to .html for the output file
     output_path: Path = notebook_path.with_suffix(".html")
 
@@ -60,7 +262,7 @@ def _export_html_wasm(
     if as_app:
         logger.info(f"Exporting {notebook_path} to {output_path} as app")
         cmd.extend(
-            ["--mode", "run", "--no-show-code"],
+            ["--mode", "run", "--no-show-code"]
         )  # Apps run in "run" mode with hidden code
     else:
         logger.info(f"Exporting {notebook_path} to {output_path} as notebook")
@@ -72,12 +274,13 @@ def _export_html_wasm(
         output_file.parent.mkdir(parents=True, exist_ok=True)
 
         # Add notebook path and output file to command
-        cmd.extend([str(notebook_path), "-o", str(output_file)])
+        cmd.extend([str(notebook_to_export), "-o", str(output_file)])
 
         # Run marimo export command
         logger.debug(f"Running command: {cmd}")
-        subprocess.run(cmd, capture_output=True, text=True, check=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
         logger.info(f"Successfully exported {notebook_path}")
+
         return True
     except subprocess.CalledProcessError as e:
         # Handle marimo export errors
@@ -88,6 +291,11 @@ def _export_html_wasm(
         # Handle unexpected errors
         logger.error(f"Unexpected error exporting {notebook_path}: {e}")
         return False
+    finally:
+        # Clean up temp file if we created one
+        if temp_path and temp_path.exists():
+            # temp_path.unlink()
+            pass
 
 
 def _generate_index(
@@ -137,7 +345,7 @@ def _generate_index(
             f.write(rendered_html)
         logger.info(f"Successfully generated index.html at {index_path}")
 
-    except OSError as e:
+    except IOError as e:
         # Handle file I/O errors
         logger.error(f"Error generating index.html: {e}")
     except jinja2.exceptions.TemplateError as e:
@@ -165,19 +373,15 @@ def _export(folder: Path, output_dir: Path, as_app: bool = False) -> List[dict]:
         logger.warning(f"Directory not found: {folder}")
         return []
 
-    # Find all Python files recursively in the folder
+    # Find all Python files recursively in the folder, excluding public/ directories
     all_notebooks = list(folder.rglob("*.py"))
 
-    # Filter out .py files from apps/public directory
-    notebooks = [
-        nb
-        for nb in all_notebooks
-        if not any(part == "public" and "apps" in nb.parts for part in nb.parts)
-    ]
+    # Filter out files in public/ directories
+    notebooks = [nb for nb in all_notebooks if "public" not in nb.parts]
 
     if len(all_notebooks) != len(notebooks):
         logger.debug(
-            f"Filtered out {len(all_notebooks) - len(notebooks)} .py files from apps/public"
+            f"Filtered out {len(all_notebooks) - len(notebooks)} files from public/ directories"
         )
 
     logger.debug(f"Found {len(notebooks)} Python files in {folder}")
@@ -198,7 +402,7 @@ def _export(folder: Path, output_dir: Path, as_app: bool = False) -> List[dict]:
     ]
 
     logger.info(
-        f"Successfully exported {len(notebook_data)} out of {len(notebooks)} files from {folder}",
+        f"Successfully exported {len(notebook_data)} out of {len(notebooks)} files from {folder}"
     )
     return notebook_data
 
@@ -212,7 +416,8 @@ def main(
     This function:
     1. Parses command line arguments
     2. Exports all marimo notebooks in the 'notebooks' and 'apps' directories
-    3. Generates an index.html file that lists all the notebooks
+    3. For apps, automatically inlines modules from modules/ directories
+    4. Generates an index.html file that lists all the notebooks
 
     Command line arguments:
         --output-dir: Directory where the exported files will be saved (default: _site)
