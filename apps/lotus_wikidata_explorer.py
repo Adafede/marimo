@@ -36,7 +36,6 @@ __generated_with = "0.19.4"
 app = marimo.App(
     width="full",
     app_title="LOTUS Wikidata Explorer",
-    layout_file="layouts/lotus_wikidata_explorer.slides.json",
 )
 
 with app.setup:
