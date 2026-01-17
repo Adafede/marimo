@@ -231,6 +231,9 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
     )
 
     # Function to get inlined code for a module and its dependencies
+    # Also collect deferred aliases for modules that were already inlined
+    deferred_aliases = []  # List of (indent, original, alias) tuples
+
     def get_inlined_code_with_deps(
         module_path: str, indent: str, aliases: dict = None
     ) -> str:
@@ -242,14 +245,12 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
             aliases: Dict mapping original names to aliases (e.g., {'ENTITY_PREFIX': 'WIKIDATA_ENTITY_PREFIX'})
         """
         if module_path in inlined_modules:
-            # Module already inlined, but we may still need to add aliases
+            # Module already inlined - defer alias assignments to be added after all inlining
             if aliases:
-                alias_lines = []
                 for original, alias in aliases.items():
                     if original != alias:
-                        alias_lines.append(f"{indent}{alias} = {original}")
-                return "\n".join(alias_lines) + "\n" if alias_lines else ""
-            return ""
+                        deferred_aliases.append((indent, original, alias))
+            return ""  # Don't add anything here, aliases will be added at the end
 
         if module_path not in module_code_map:
             return ""  # Module not found
@@ -400,6 +401,29 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
     notebook_code = re.sub(
         r"^\s*import\s+modules\.[\w.]+\s*\n", "", notebook_code, flags=re.MULTILINE
     )
+
+    # Add deferred aliases (for modules that were imported multiple times with different aliases)
+    if deferred_aliases:
+        # Group aliases by indentation level
+        alias_lines = []
+        for indent, original, alias in deferred_aliases:
+            alias_lines.append(f"{indent}{alias} = {original}")
+
+        # Find the end of the app.setup block to insert aliases
+        # Look for the first @app.cell or @app.function after app.setup
+        app_setup_match = re.search(r"with\s+app\.setup:", notebook_code)
+        if app_setup_match:
+            next_cell_match = re.search(
+                r"\n(@app\.(cell|function))", notebook_code[app_setup_match.end():]
+            )
+            if next_cell_match:
+                insert_pos = app_setup_match.end() + next_cell_match.start()
+                alias_block = "\n" + "\n".join(alias_lines) + "\n"
+                notebook_code = (
+                    notebook_code[:insert_pos]
+                    + alias_block
+                    + notebook_code[insert_pos:]
+                )
 
     final_code = notebook_code
 
