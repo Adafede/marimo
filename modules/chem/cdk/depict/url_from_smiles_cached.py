@@ -1,3 +1,5 @@
+"""Cached CDK Depict URL generation."""
+
 __all__ = ["url_from_smiles_cached"]
 
 from functools import lru_cache
@@ -16,7 +18,14 @@ def url_from_smiles_cached(
     img_format: str = "svg",
     annotate: str | None = "cip",
 ) -> str:
-    """Generate URL for chemical structure depiction from SMILES (cached)."""
+    """
+    Generate URL for chemical structure depiction from SMILES (cached).
+
+    Handles None/empty SMILES gracefully by returning empty string.
+    Results are cached for performance.
+    """
+    if not smiles:
+        return ""
     return url_from_smiles(
         smiles=smiles,
         base_url=base_url,
