@@ -80,11 +80,11 @@ SELECT {SELECT_VARS_FULL} WHERE {{
 
     # Then check structural match (filters pre-filtered compounds)
     {sachem_clause}
-    
+
     # Get compound identifiers
     ?compound wdt:P235 ?compound_inchikey ;
               wdt:P233 ?compound_smiles_conn .
-    
+
     {REFERENCE_METADATA_OPTIONAL}
     {PROPERTIES_OPTIONAL}
 }}
