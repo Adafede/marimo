@@ -19,6 +19,8 @@ def filter_range(
     keep_nulls: bool = True,
 ) -> pl.DataFrame:
     """Filter DataFrame by column value range."""
+    if df.is_empty():
+        return df
     if (min_val is None and max_val is None) or column not in df.columns:
         return df
 
