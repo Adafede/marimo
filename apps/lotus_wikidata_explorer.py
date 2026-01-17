@@ -55,7 +55,6 @@ with app.setup:
     from rdflib.namespace import RDF, RDFS, XSD, DCTERMS
     from typing import Any
 
-
     from modules.text.formula.filters import FormulaFilters
     from modules.text.formula.create_filters import create_filters
     from modules.text.formula.serialize_filters import serialize_filters

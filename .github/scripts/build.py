@@ -23,7 +23,6 @@ The exported files will be placed in the specified output directory (default: _s
 # ///
 
 import subprocess
-import tempfile
 import re
 from typing import List, Union, Set
 from pathlib import Path
@@ -183,7 +182,9 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
 
         module_code_parts.append(f"    # --- {module_name} ---")
         # Indent all lines of module code by 4 spaces
-        indented_code = "\n".join("    " + line if line.strip() else "" for line in module_code.split("\n"))
+        indented_code = "\n".join(
+            "    " + line if line.strip() else "" for line in module_code.split("\n")
+        )
         module_code_parts.append(indented_code)
         module_code_parts.append("")
 
@@ -215,12 +216,19 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
 
     if app_setup_match:
         # Find the next @app.cell or @app.function after the setup block
-        next_cell_match = re.search(r"\n@app\.(cell|function)", notebook_code[app_setup_match.end():])
+        next_cell_match = re.search(
+            r"\n@app\.(cell|function)", notebook_code[app_setup_match.end() :]
+        )
 
         if next_cell_match:
             # Insert before the next @app decorator
             insert_pos = app_setup_match.end() + next_cell_match.start()
-            final_code = notebook_code[:insert_pos] + inlined_code_str + "\n" + notebook_code[insert_pos:]
+            final_code = (
+                notebook_code[:insert_pos]
+                + inlined_code_str
+                + "\n"
+                + notebook_code[insert_pos:]
+            )
         else:
             # No next cell found, append at end of file
             final_code = notebook_code + inlined_code_str
@@ -231,9 +239,13 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
 
         if match:
             # Insert a new app.setup block after the app line
-            setup_block = "\n\nwith app.setup:\n    import marimo as mo\n" + inlined_code_str
+            setup_block = (
+                "\n\nwith app.setup:\n    import marimo as mo\n" + inlined_code_str
+            )
             insert_pos = match.end()
-            final_code = notebook_code[:insert_pos] + setup_block + notebook_code[insert_pos:]
+            final_code = (
+                notebook_code[:insert_pos] + setup_block + notebook_code[insert_pos:]
+            )
         else:
             logger.warning("Could not find 'app = marimo.App()' line")
             final_code = notebook_code
@@ -245,10 +257,17 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
         r"^\s*from\s+modules\.[\w.]+\s+import\s+\([^)]*\)\s*\n",
         "",
         final_code,
-        flags=re.MULTILINE | re.DOTALL
+        flags=re.MULTILINE | re.DOTALL,
     )
-    final_code = re.sub(r"^\s*from\s+modules\.[\w.]+\s+import\s+[^\n(]+\n", "", final_code, flags=re.MULTILINE)
-    final_code = re.sub(r"^\s*import\s+modules\.[\w.]+\s*\n", "", final_code, flags=re.MULTILINE)
+    final_code = re.sub(
+        r"^\s*from\s+modules\.[\w.]+\s+import\s+[^\n(]+\n",
+        "",
+        final_code,
+        flags=re.MULTILINE,
+    )
+    final_code = re.sub(
+        r"^\s*import\s+modules\.[\w.]+\s*\n", "", final_code, flags=re.MULTILINE
+    )
 
     # Write to output
     with open(output_path, "w") as f:
@@ -267,7 +286,7 @@ def _export_html_wasm(
     applications. Otherwise, it's exported in "edit" mode, suitable for interactive notebooks.
 
     For apps, if a modules/ directory exists, modules will be automatically
-    inlined before export.
+    inlined before export, and the inlined version is saved alongside the HTML.
 
     Args:
         notebook_path (Path): Path to the marimo notebook (.py file) to export
@@ -278,27 +297,23 @@ def _export_html_wasm(
     Returns:
         bool: True if export succeeded, False otherwise
     """
-    temp_path = None
+    inlined_path = None
+    notebook_to_export = notebook_path
 
     # If exporting as app and modules/ exists, inline modules first
     if as_app:
         public_dir = notebook_path.parent / ".."
         if public_dir.exists() and public_dir.is_dir():
-            # Create temporary inlined version
-            with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".py", delete=False
-            ) as tmp:
-                temp_path = Path(tmp.name)
+            # Create the inlined version directly in the output directory
+            output_py_path = output_dir / notebook_path
+            output_py_path.parent.mkdir(parents=True, exist_ok=True)
 
             logger.info(f"Inlining modules from {public_dir} for {notebook_path.name}")
-            inline_modules(notebook_path, temp_path, public_dir)
+            inline_modules(notebook_path, output_py_path, public_dir)
 
-            # Export the inlined version instead
-            notebook_to_export = temp_path
-        else:
-            notebook_to_export = notebook_path
-    else:
-        notebook_to_export = notebook_path
+            # Export the inlined version
+            notebook_to_export = output_py_path
+            inlined_path = output_py_path
 
     # Convert .py extension to .html for the output file
     output_path: Path = notebook_path.with_suffix(".html")
@@ -329,6 +344,9 @@ def _export_html_wasm(
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
         logger.info(f"Successfully exported {notebook_path}")
 
+        if inlined_path:
+            logger.info(f"Inlined notebook saved to {inlined_path}")
+
         return True
     except subprocess.CalledProcessError as e:
         # Handle marimo export errors
@@ -336,14 +354,9 @@ def _export_html_wasm(
         logger.error(f"Command output: {e.stderr}")
         return False
     except Exception as e:
-        # Handle unexpected errors
+        # Handle unexpected error
         logger.error(f"Unexpected error exporting {notebook_path}: {e}")
         return False
-    finally:
-        # Clean up temp file if we created one
-        if temp_path and temp_path.exists():
-            # temp_path.unlink()
-            pass
 
 
 def _generate_index(
