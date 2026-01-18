@@ -782,7 +782,9 @@ def query_wikidata(
     has_conn = "compound_smiles_conn" in df.columns
     if has_iso and has_conn:
         transforms.append(
-            pl.coalesce(["compound_smiles_iso", "compound_smiles_conn"]).alias("smiles")
+            pl.coalesce(["compound_smiles_iso", "compound_smiles_conn"]).alias(
+                "smiles"
+            ),
         )
     elif has_iso:
         transforms.append(pl.col("compound_smiles_iso").alias("smiles"))
@@ -795,7 +797,7 @@ def query_wikidata(
             pl.when(pl.col("ref_doi").str.starts_with("http"))
             .then(pl.col("ref_doi").str.split("doi.org/").list.last())
             .otherwise(pl.col("ref_doi"))
-            .alias("ref_doi")
+            .alias("ref_doi"),
         )
 
     # Date parsing
@@ -805,10 +807,10 @@ def query_wikidata(
             .then(
                 pl.col("pub_date")
                 .str.strptime(pl.Datetime, format="%Y-%m-%dT%H:%M:%SZ", strict=False)
-                .dt.date()
+                .dt.date(),
             )
             .otherwise(None)
-            .alias("pub_date")
+            .alias("pub_date"),
         )
 
     # Mass to float
@@ -836,9 +838,20 @@ def query_wikidata(
 
     # Ensure required columns exist - batch add missing columns
     required_columns = [
-        "compound", "name", "inchikey", "smiles", "taxon_name", "taxon",
-        "ref_title", "ref_doi", "reference", "pub_date", "mass", "mf",
-        "statement", "ref",
+        "compound",
+        "name",
+        "inchikey",
+        "smiles",
+        "taxon_name",
+        "taxon",
+        "ref_title",
+        "ref_doi",
+        "reference",
+        "pub_date",
+        "mass",
+        "mf",
+        "statement",
+        "ref",
     ]
     missing = [col for col in required_columns if col not in df.columns]
     if missing:
@@ -876,8 +889,10 @@ def build_display_dataframe(df: pl.DataFrame) -> pl.DataFrame:
             .then(pl.lit(""))
             .otherwise(
                 pl.col(col_name).str.replace(
-                    "http://www.wikidata.org/entity/", "", literal=True
-                )
+                    "http://www.wikidata.org/entity/",
+                    "",
+                    literal=True,
+                ),
             )
         )
 
@@ -895,7 +910,7 @@ def build_display_dataframe(df: pl.DataFrame) -> pl.DataFrame:
                 + pl.lit(color)
                 + pl.lit(';">')
                 + qid
-                + pl.lit("</a>")
+                + pl.lit("</a>"),
             )
         )
 
@@ -918,7 +933,7 @@ def build_display_dataframe(df: pl.DataFrame) -> pl.DataFrame:
                 + pl.lit(color_link)
                 + pl.lit(';">')
                 + clean_doi
-                + pl.lit("</a>")
+                + pl.lit("</a>"),
             )
         )
 
@@ -936,7 +951,7 @@ def build_display_dataframe(df: pl.DataFrame) -> pl.DataFrame:
                 + pl.lit(color_link)
                 + pl.lit(';">')
                 + stmt_id
-                + pl.lit("</a>")
+                + pl.lit("</a>"),
             )
         )
 
@@ -1004,7 +1019,7 @@ def prepare_export_dataframe(
         select_exprs.append(
             pl.col("statement")
             .str.replace(WIKIDATA_STATEMENT_PREFIX, "", literal=True)
-            .alias("statement_id")
+            .alias("statement_id"),
         )
 
     # Add ref URI for RDF export if requested
@@ -1200,7 +1215,7 @@ def compute_provenance_hashes(
                 df.select(
                     pl.col(compound_col)
                     .cast(pl.Utf8)
-                    .str.replace(WIKIDATA_ENTITY_PREFIX, "", literal=True)
+                    .str.replace(WIKIDATA_ENTITY_PREFIX, "", literal=True),
                 )
                 .to_series()
                 .drop_nulls()
@@ -1581,7 +1596,9 @@ def export_to_rdf_turtle(
 
     # Add compound data with cached namespaces
     for row in df.iter_rows(named=True):
-        add_compound_triples(g, row, dataset_uri, processed_taxa, processed_refs, ns_cache)
+        add_compound_triples(
+            g, row, dataset_uri, processed_taxa, processed_refs, ns_cache
+        )
 
     # Serialize to Turtle format
     return g.serialize(format="turtle")
