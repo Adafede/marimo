@@ -80,6 +80,9 @@ with app.setup:
     from modules.knowledge.wikidata.url.constants import WIKIDATA_HTTP_BASE
     from modules.knowledge.wikidata.url.constants import WIKI_PREFIX
     from modules.knowledge.wikidata.html.scholia import scholia_url
+    from modules.knowledge.wikidata.html.link_from_qid import link_from_qid
+    from modules.knowledge.wikidata.html.link_from_doi import link_from_doi
+    from modules.knowledge.wikidata.html.link_from_statement import link_from_statement
     from modules.knowledge.wikidata.sparql.query_taxon_search import query_taxon_search
     from modules.knowledge.wikidata.sparql.query_taxon_details import (
         query_taxon_details,
@@ -871,43 +874,30 @@ def build_display_dataframe(df: pl.DataFrame) -> pl.DataFrame:
     Returns a DataFrame with renamed columns and HTML strings for links/images.
     Uses map_elements for link building to avoid Polars capacity overflow issues.
     """
-    # Pre-compute constants (avoid repeated dictionary lookups)
+    # Pre-compute colors (avoid repeated dictionary lookups)
     color_link = CONFIG["color_hyperlink"]
     color_compound = CONFIG["color_wikidata_red"]
     color_taxon = CONFIG["color_wikidata_green"]
     color_ref = CONFIG["color_wikidata_blue"]
-    doi_base = "https://doi.org/"
 
-    # Efficient inline functions (closure captures constants)
+    # Wrapper functions that capture colors via closure
     def _structure_img(smiles):
         return html_from_smiles(smiles) if smiles else ""
 
-    def _make_qid_link(url, color):
-        if not url:
-            return ""
-        qid = url.replace(WIKIDATA_ENTITY_PREFIX, "") if url.startswith(WIKIDATA_ENTITY_PREFIX) else url
-        return f'<a href="{scholia_url(qid)}" target="_blank" style="color:{color};">{qid}</a>'
-
     def _compound_link(url):
-        return _make_qid_link(url, color_compound)
+        return link_from_qid(url, color_compound)
 
     def _taxon_link(url):
-        return _make_qid_link(url, color_taxon)
+        return link_from_qid(url, color_taxon)
 
     def _ref_link(url):
-        return _make_qid_link(url, color_ref)
+        return link_from_qid(url, color_ref)
 
     def _doi_link(doi):
-        if not doi:
-            return ""
-        clean = doi.split("doi.org/")[-1] if "doi.org/" in doi else doi
-        return f'<a href="{doi_base}{clean}" target="_blank" style="color:{color_link};">{clean}</a>'
+        return link_from_doi(doi, color_link)
 
     def _stmt_link(url):
-        if not url:
-            return ""
-        stmt_id = url.split("/")[-1]
-        return f'<a href="{url}" target="_blank" style="color:{color_link};">{stmt_id}</a>'
+        return link_from_statement(url, color_link)
 
     return df.select(
         [
