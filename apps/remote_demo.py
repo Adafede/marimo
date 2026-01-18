@@ -11,11 +11,13 @@
 
 import marimo
 
+NBDIR = marimo.notebook_dir()
+
 __generated_with = "0.19.4"
 app = marimo.App(
     app_title="Remote Demo",
-    css_file="public/custom.css",
-    html_head_file="public/head.html",
+    css_file=NBDIR / "public/custom.css",
+    html_head_file=NBDIR / "public/head.html",
 )
 
 with app.setup:
@@ -43,6 +45,7 @@ def imports():
     # Modules will be auto-inlined by the build script
     from modules.text.formula.parse import parse
     from modules.chem.cdk.depict.url_from_smiles import url_from_smiles
+
     return parse, url_from_smiles
 
 
