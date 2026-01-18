@@ -49,7 +49,7 @@ def serialize_elements(
     """Serialize element range filters to dictionary."""
     return {
         element_names.get(key, key): range_dict
-        for key, attr in _ELEMENT_ATTRS
+        for key, attr in ELEMENT_ATTRS
         if (range_dict := serialize_range(element_range=getattr(filters, attr)))
     }
 

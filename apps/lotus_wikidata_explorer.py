@@ -96,6 +96,7 @@ with app.setup:
         query_all_compounds,
     )
     from modules.net.sparql.execute_with_retry import execute_with_retry
+    from modules.net.sparql.parse_response import parse_sparql_response
     from modules.net.sparql.values_clause import values_clause
     from modules.chem.cdk.depict.html_from_smiles import html_from_smiles
     from modules.data.filter.mass import filter_mass
@@ -154,45 +155,6 @@ with app.setup:
         "Taxon": "Taxa",
         "taxon": "taxa",
     }
-
-    def parse_sparql_response(response_bytes: bytes) -> pl.DataFrame:
-        """Parse SPARQL response bytes (CSV or JSON) into a Polars DataFrame.
-
-        Wikidata sometimes returns JSON despite requesting CSV format.
-        This function detects the format and parses accordingly.
-        """
-        if not response_bytes or not response_bytes.strip():
-            return pl.DataFrame()
-
-        response_text = response_bytes.strip()
-
-        # Detect JSON response (starts with '{')
-        if response_text.startswith(b"{"):
-            try:
-                json_data = json.loads(response_bytes.decode("utf-8"))
-                bindings = json_data.get("results", {}).get("bindings", [])
-                if not bindings:
-                    return pl.DataFrame()
-                # Convert SPARQL JSON bindings to flat dict rows
-                rows = []
-                for binding in bindings:
-                    row = {}
-                    for key, value in binding.items():
-                        row[key] = value.get("value", "")
-                    rows.append(row)
-                return pl.DataFrame(rows)
-            except (json.JSONDecodeError, KeyError):
-                return pl.DataFrame()
-        else:
-            # Parse as CSV
-            try:
-                return pl.read_csv(
-                    io.BytesIO(response_bytes),
-                    infer_schema_length=10000,
-                    truncate_ragged_lines=True,
-                )
-            except Exception:
-                return pl.DataFrame()
 
 
 @app.class_definition
