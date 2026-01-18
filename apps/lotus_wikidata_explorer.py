@@ -1728,7 +1728,7 @@ def ui_search_params(search_params):
     )
 
     formula_filter = mo.ui.checkbox(
-        label="Formula",
+        label="Formula filter",
         value=search_params.formula_filter,
     )
     exact_formula = mo.ui.text(
@@ -1812,7 +1812,7 @@ def ui_search_params(search_params):
         full_width=True,
     )
 
-    run_button = mo.ui.run_button(label="🔍 Search")
+    run_button = mo.ui.run_button(label="Search Wikidata")
     return (
         br_state,
         c_max,
