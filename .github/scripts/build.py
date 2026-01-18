@@ -34,35 +34,35 @@ import fire
 from loguru import logger
 
 
-def copy_public_directories(source_dir: Path, output_dir: Path) -> None:
-    """Copy all public/ directories from source to output directory.
+def copy_assets_directories(source_dir: Path, output_dir: Path) -> None:
+    """Copy all assets/ directories from source to output directory.
 
-    This function recursively finds all 'public' directories in the source
+    This function recursively finds all 'assets' directories in the source
     and copies them to the corresponding location in the output directory,
     preserving the directory structure.
 
     Args:
-        source_dir (Path): Source directory to search for public/ folders
-        output_dir (Path): Destination directory where public/ folders will be copied
+        source_dir (Path): Source directory to search for assets/ folders
+        output_dir (Path): Destination directory where assets/ folders will be copied
     """
     if not source_dir.exists():
         logger.warning(f"Source directory not found: {source_dir}")
         return
 
     # Find all public directories recursively
-    public_dirs = list(source_dir.rglob("public"))
+    assets_dirs = list(source_dir.rglob("assets"))
 
-    if not public_dirs:
-        logger.debug(f"No public directories found in {source_dir}")
+    if not assets_dirs:
+        logger.debug(f"No assets directories found in {source_dir}")
         return
 
     logger.info(
-        f"Found {len(public_dirs)} public directory/directories in {source_dir}",
+        f"Found {len(assets_dirs)} assets directory/directories in {source_dir}",
     )
 
-    for public_dir in public_dirs:
+    for assets_dir in assets_dirs:
         # Calculate the relative path from source_dir to this public dir
-        relative_path = public_dir.relative_to(source_dir)
+        relative_path = assets_dir.relative_to(source_dir)
 
         # Create the corresponding path in output_dir
         dest_path = output_dir / relative_path
@@ -73,11 +73,11 @@ def copy_public_directories(source_dir: Path, output_dir: Path) -> None:
                 shutil.rmtree(dest_path)
 
             # Copy the entire public directory
-            shutil.copytree(public_dir, dest_path)
-            logger.info(f"Copied {public_dir} -> {dest_path}")
+            shutil.copytree(assets_dir, dest_path)
+            logger.info(f"Copied {assets_dir} -> {dest_path}")
 
         except Exception as e:
-            logger.error(f"Error copying {public_dir} to {dest_path}: {e}")
+            logger.error(f"Error copying {assets_dir} to {dest_path}: {e}")
 
 
 def find_imported_modules(notebook_path: Path) -> Set[str]:
@@ -739,8 +739,8 @@ def main(
 
     # Copy public directories from both notebooks/ and apps/
     logger.info("Copying public directories...")
-    copy_public_directories(Path("notebooks"), output_dir / Path("notebooks"))
-    copy_public_directories(Path("apps"), output_dir / Path("apps"))
+    copy_assets_directories(Path("notebooks"), output_dir / Path("notebooks"))
+    copy_assets_directories(Path("apps"), output_dir / Path("apps"))
 
     # Exit if no notebooks or apps were found
     if not notebooks_data and not apps_data:
