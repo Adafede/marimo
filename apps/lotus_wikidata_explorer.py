@@ -1563,26 +1563,26 @@ def md_title():
     return
 
 
-@app.cell
-def ui_disclaimer():
-    mo.callout(
-        mo.md(
-            """
-            To run this script locally:
+# @app.cell
+# def ui_disclaimer():
+#     mo.callout(
+#         mo.md(
+#             """
+#             To run this script locally:
 
-            ```
-            uvx marimo run https://adafede.github.io/marimo/apps/lotus_wikidata_explorer.py
-            ```
+#             ```
+#             uvx marimo run https://adafede.github.io/marimo/apps/lotus_wikidata_explorer.py
+#             ```
 
-            """,
-        ),
-        kind="info",
-    ).style(
-        style={
-            "overflow-wrap": "anywhere",
-        },
-    )
-    return
+#             """,
+#         ),
+#         kind="info",
+#     ).style(
+#         style={
+#             "overflow-wrap": "anywhere",
+#         },
+#     )
+#     return
 
 
 @app.cell
@@ -1836,16 +1836,16 @@ def ui_filters(
     if smiles_search_type.value == "similarity":
         structure_fields.append(smiles_threshold)
 
-    # Main search: taxon + SMILES side by side
+    # Main search: search + taxon + SMILES side by side
     main_search = mo.hstack(
-        [taxon_input, mo.vstack(structure_fields)],
+        [mo.vstack([run_button,taxon_input,]), mo.vstack(structure_fields)],
         gap=2,
         widths="equal",
     )
 
-    # Filter checkboxes inline with search button
+    # Filter checkboxes inline
     filter_row = mo.hstack(
-        [mass_filter, year_filter, formula_filter, run_button],
+        [mass_filter, year_filter, formula_filter,],
         gap=2,
         justify="start",
     )
@@ -2136,18 +2136,18 @@ def display_summary(
                 threshold_val = smiles_threshold.value
                 smiles_info = f"SMILES: `{_smiles_str}` ({search_type}, threshold: {threshold_val})"
             else:
-                smiles_info = f"SMILES: `{_smiles_str}...` ({search_type})"
+                smiles_info = f"SMILES: `{_smiles_str}` ({search_type})"
 
             combined_info = f"{taxon_info} - {smiles_info}"
         else:
             combined_info = taxon_info
 
         # Search info
-        search_info_display = mo.md(f"**{combined_info}**")
-
-        # Provenance hash
-        hash_info = mo.md(
-            f"*Hashes:* Query: `{query_hash}` - Results: `{result_hash}`",
+        search_info_display = mo.md(
+            f"**{combined_info}**\n"
+            f"**Hashes:**\n"
+            f"\t*Query*: `{query_hash}`"
+            f"\t*Results*: `{result_hash}`",
         ).style(
             style={
                 "overflow-wrap": "anywhere",
@@ -2166,13 +2166,13 @@ def display_summary(
                 mo.stat(
                     value=f"{n:,}",
                     label=f"{pluralize(name, n, irregular=PLURAL_MAP)}",
-                    bordered=True,
+                    bordered=False,
                 )
                 for n, name in stats_data
             ],
-            gap=2,
+            gap=0,
             justify="start",
-            wrap=False,
+            wrap=True,
         ).style(
             style={
                 "overflow-wrap": "anywhere",
@@ -2181,7 +2181,7 @@ def display_summary(
 
         search_and_stats = mo.vstack(
             [
-                mo.vstack([search_info_display, hash_info], gap=0.5),
+                search_info_display,
                 stats_cards,
             ],
             gap=2,
