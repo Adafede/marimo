@@ -11,12 +11,14 @@
 
 import marimo
 
+NBDIR = marimo.notebook_dir()
+
 __generated_with = "0.19.4"
 app = marimo.App(
     width="medium",
     app_title="Automated substructure depiction and verification",
-    css_file="public/custom.css",
-    html_head_file="public/head.html",
+    css_file=NBDIR / "public/custom.css",
+    html_head_file=NBDIR / "public/head.html",
 )
 
 with app.setup:
@@ -54,12 +56,16 @@ with app.setup:
         rdkit_available = True
     except ImportError:
         message = mo.md(
-            "[!] **RDKit not available in this environment**.\n\n"
-            "To run this script:\n"
-            "```bash\n"
-            "uvx marimo run https://adafede.github.io/marimo/apps/mols.py\n"
-            "```\n"
-            "If using Docker, toggle **App View** (bottom right or `cmd + .`).",
+            """
+            [!] **RDKit not available in this environment**.
+            To run this script locally:
+
+            ```
+            uvx marimo run https://adafede.github.io/marimo/apps/mols.py
+            ```
+
+            If using Docker, toggle **App View** (bottom right or `cmd + .`).
+            """,
         )
         rdkit_available = False
         parse_smarts = None

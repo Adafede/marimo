@@ -32,12 +32,14 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import marimo
 
+NBDIR = marimo.notebook_dir()
+
 __generated_with = "0.19.4"
 app = marimo.App(
     width="full",
     app_title="LOTUS Wikidata Explorer",
-    css_file="public/custom.css",
-    html_head_file="public/head.html",
+    css_file=NBDIR / "public/custom.css",
+    html_head_file=NBDIR / "public/head.html",
 )
 
 with app.setup:
@@ -1560,9 +1562,16 @@ def md_title():
 @app.cell
 def ui_disclaimer():
     mo.callout(
-        mo.md("""
-        **Recommended:** `uvx marimo run https://adafede.github.io/marimo/apps/lotus_wikidata_explorer.py`
-        """),
+        mo.md(
+            """
+            To run this script locally:
+
+            ```
+            uvx marimo run https://adafede.github.io/marimo/apps/lotus_wikidata_explorer.py
+            ```
+
+            """,
+        ),
         kind="info",
     ).style(
         style={
