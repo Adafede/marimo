@@ -8,6 +8,7 @@
 #     "requests==2.32.5",
 # ]
 # [tool.marimo.display]
+# custom_css = ["public/custom.css"]
 # theme = "system"
 # ///
 
@@ -36,6 +37,7 @@ __generated_with = "0.19.4"
 app = marimo.App(
     width="full",
     app_title="LOTUS Wikidata Explorer",
+    html_head_file="public/head.html",
 )
 
 with app.setup:
@@ -56,7 +58,7 @@ with app.setup:
     from typing import Any
 
     # Toggle this flag for local vs remote development
-    _USE_LOCAL = False  # Set to True for local development
+    _USE_LOCAL = True  # Set to True for local development
     if _USE_LOCAL:
         # Add your local module directory to the path
         # Adjust this path to where your "modules" folder is located locally
@@ -2847,8 +2849,9 @@ def footer():
     mo.md("""
     ---
     **Data:** <a href="https://www.wikidata.org/wiki/Q104225190" style="color:#990000;">LOTUS Initiative</a> & <a href="https://www.wikidata.org/" style="color:#990000;">Wikidata</a>  |
-    **Code:** <a href="https://github.com/cdk/depict" style="color:#339966;">CDK Depict</a> & <a href="https://github.com/Adafede/marimo/blob/main/apps/lotus_wikidata_explorer.py" style="color:#339966;">lotus_wikidata_explorer.py</a>  |
-    **License:** <a href="https://creativecommons.org/publicdomain/zero/1.0/" style="color:#006699;">CC0 1.0</a> for data & <a href="https://www.gnu.org/licenses/agpl-3.0.html" style="color:#006699;">AGPL-3.0</a> for code
+    **Code:** <a href="https://github.com/Adafede/marimo/blob/main/apps/lotus_wikidata_explorer.py" style="color:#339966;">lotus_wikidata_explorer.py</a>  |
+    **External tools:** <a href="https://github.com/cdk/depict" style="color:#006699;">CDK Depict</a> & <a href="https://idsm.elixir-czech.cz/" style="color:#006699;">IDSM</a> & <a href="https://doi.org/10.1186/s13321-018-0282-y" style="color:#006699;">Sachem</a> & <a href="https://qlever.dev/wikidata" style="color:#006699;">QLever</a>
+    **License:** <a href="https://creativecommons.org/publicdomain/zero/1.0/" style="color:#484848;">CC0 1.0</a> for data & <a href="https://www.gnu.org/licenses/agpl-3.0.html" style="color:#484848;">AGPL-3.0</a> for code
     """)
     return
 
