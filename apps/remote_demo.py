@@ -13,7 +13,6 @@ import marimo
 __generated_with = "0.19.4"
 app = marimo.App(
     app_title="Remote Demo",
-    css_file="public/custom.css",
     html_head_file="public/head.html",
 )
 
