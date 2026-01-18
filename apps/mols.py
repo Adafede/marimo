@@ -3,7 +3,7 @@
 # dependencies = [
 #     "marimo",
 #     "rdkit==2025.9.3",
-#     "requests==2.32.5",
+#     "starlette==0.51.0",  # because of a nasty bug from 0.52.0
 # ]
 # [tool.marimo.display]
 # theme = "system"
@@ -15,6 +15,7 @@ __generated_with = "0.19.4"
 app = marimo.App(
     width="medium",
     app_title="Automated substructure depiction and verification",
+    css_file="public/custom.css",
     html_head_file="public/head.html",
 )
 

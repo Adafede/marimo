@@ -549,7 +549,7 @@ def _export_html_wasm(
     output_path: Path = notebook_path.with_suffix(".html")
 
     # Base command for marimo export
-    cmd: List[str] = ["uvx", "marimo", "export", "html-wasm", "--sandbox"]
+    cmd: List[str] = ["uv", "run", "marimo", "export", "html-wasm", "--sandbox"]
 
     # Configure export mode based on whether it's an app or a notebook
     if as_app:
@@ -584,7 +584,7 @@ def _export_html_wasm(
         logger.error(f"Command output: {e.stderr}")
         return False
     except Exception as e:
-        # Handle unexpected error
+        # Handle unexpected errors
         logger.error(f"Unexpected error exporting {notebook_path}: {e}")
         return False
 

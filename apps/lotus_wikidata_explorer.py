@@ -5,7 +5,7 @@
 #     "marimo",
 #     "polars==1.37.1",
 #     "rdflib==7.5.0",
-#     "requests==2.32.5",
+#     "starlette==0.51.0",  # because of a nasty bug from 0.52.0
 # ]
 # [tool.marimo.display]
 # theme = "system"
@@ -36,6 +36,7 @@ __generated_with = "0.19.4"
 app = marimo.App(
     width="full",
     app_title="LOTUS Wikidata Explorer",
+    css_file="public/custom.css",
     html_head_file="public/head.html",
 )
 

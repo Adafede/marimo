@@ -2,6 +2,7 @@
 # requires-python = "==3.13.*"
 # dependencies = [
 #     "marimo",
+#     "starlette==0.51.0",  # because of a nasty bug from 0.52.0
 # ]
 #
 # [tool.marimo.display]
@@ -13,6 +14,7 @@ import marimo
 __generated_with = "0.19.4"
 app = marimo.App(
     app_title="Remote Demo",
+    css_file="public/custom.css",
     html_head_file="public/head.html",
 )
 
@@ -41,7 +43,6 @@ def imports():
     # Modules will be auto-inlined by the build script
     from modules.text.formula.parse import parse
     from modules.chem.cdk.depict.url_from_smiles import url_from_smiles
-
     return parse, url_from_smiles
 
 
