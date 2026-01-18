@@ -869,95 +869,48 @@ def build_display_dataframe(df: pl.DataFrame) -> pl.DataFrame:
     """Build display DataFrame with HTML-formatted columns.
 
     Returns a DataFrame with renamed columns and HTML strings for links/images.
+    Uses map_elements for link building to avoid Polars capacity overflow issues.
     """
-    # Constants for link building (avoid repeated dictionary lookups)
+    # Pre-compute constants (avoid repeated dictionary lookups)
     color_link = CONFIG["color_hyperlink"]
     color_compound = CONFIG["color_wikidata_red"]
     color_taxon = CONFIG["color_wikidata_green"]
     color_ref = CONFIG["color_wikidata_blue"]
+    doi_base = "https://doi.org/"
 
-    # CDK Depict URL template (structure images)
-    # Note: we still use map_elements for structure since url_from_smiles has complex logic
+    # Efficient inline functions (closure captures constants)
     def _structure_img(smiles):
         return html_from_smiles(smiles) if smiles else ""
 
-    # Extract QID from entity URL (handles both URL and raw QID)
-    def _qid_expr(col_name: str) -> pl.Expr:
-        """Extract QID from Wikidata entity URL."""
-        return (
-            pl.when(pl.col(col_name).is_null() | (pl.col(col_name) == ""))
-            .then(pl.lit(""))
-            .otherwise(
-                pl.col(col_name).str.replace(
-                    "http://www.wikidata.org/entity/",
-                    "",
-                    literal=True,
-                ),
-            )
-        )
+    def _make_qid_link(url, color):
+        if not url:
+            return ""
+        qid = url.replace(WIKIDATA_ENTITY_PREFIX, "") if url.startswith(WIKIDATA_ENTITY_PREFIX) else url
+        return f'<a href="{scholia_url(qid)}" target="_blank" style="color:{color};">{qid}</a>'
 
-    # Build Scholia link from QID column
-    def _qid_link_expr(col_name: str, color: str) -> pl.Expr:
-        """Build HTML link to Scholia for QID column."""
-        qid = _qid_expr(col_name)
-        return (
-            pl.when(qid == "")
-            .then(pl.lit(""))
-            .otherwise(
-                pl.lit('<a href="https://scholia.toolforge.org/')
-                + qid
-                + pl.lit('" target="_blank" style="color:')
-                + pl.lit(color)
-                + pl.lit(';">')
-                + qid
-                + pl.lit("</a>"),
-            )
-        )
+    def _compound_link(url):
+        return _make_qid_link(url, color_compound)
 
-    # DOI link (extract DOI from URL if needed, then create link)
-    def _doi_link_expr() -> pl.Expr:
-        """Build HTML link for DOI column."""
-        # Extract DOI (handle both doi.org URLs and raw DOIs)
-        clean_doi = (
-            pl.when(pl.col("ref_doi").str.contains("doi.org/"))
-            .then(pl.col("ref_doi").str.split("doi.org/").list.last())
-            .otherwise(pl.col("ref_doi"))
-        )
-        return (
-            pl.when(pl.col("ref_doi").is_null() | (pl.col("ref_doi") == ""))
-            .then(pl.lit(""))
-            .otherwise(
-                pl.lit('<a href="https://doi.org/')
-                + clean_doi
-                + pl.lit('" target="_blank" style="color:')
-                + pl.lit(color_link)
-                + pl.lit(';">')
-                + clean_doi
-                + pl.lit("</a>"),
-            )
-        )
+    def _taxon_link(url):
+        return _make_qid_link(url, color_taxon)
 
-    # Statement link (extract ID from URL, use full URL as href)
-    def _stmt_link_expr() -> pl.Expr:
-        """Build HTML link for statement column."""
-        stmt_id = pl.col("statement").str.split("/").list.last()
-        return (
-            pl.when(pl.col("statement").is_null() | (pl.col("statement") == ""))
-            .then(pl.lit(""))
-            .otherwise(
-                pl.lit('<a href="')
-                + pl.col("statement")
-                + pl.lit('" target="_blank" style="color:')
-                + pl.lit(color_link)
-                + pl.lit(';">')
-                + stmt_id
-                + pl.lit("</a>"),
-            )
-        )
+    def _ref_link(url):
+        return _make_qid_link(url, color_ref)
+
+    def _doi_link(doi):
+        if not doi:
+            return ""
+        clean = doi.split("doi.org/")[-1] if "doi.org/" in doi else doi
+        return f'<a href="{doi_base}{clean}" target="_blank" style="color:{color_link};">{clean}</a>'
+
+    def _stmt_link(url):
+        if not url:
+            return ""
+        stmt_id = url.split("/")[-1]
+        return f'<a href="{url}" target="_blank" style="color:{color_link};">{stmt_id}</a>'
 
     return df.select(
         [
-            # Structure image still needs map_elements (complex URL encoding)
             pl.col("smiles")
             .map_elements(_structure_img, return_dtype=pl.String)
             .alias("Compound Depiction"),
@@ -969,11 +922,21 @@ def build_display_dataframe(df: pl.DataFrame) -> pl.DataFrame:
             pl.col("taxon_name").alias("Taxon Name"),
             pl.col("ref_title").alias("Reference Title"),
             pl.col("pub_date").alias("Reference Date"),
-            _doi_link_expr().alias("Reference DOI"),
-            _qid_link_expr("compound", color_compound).alias("Compound QID"),
-            _qid_link_expr("taxon", color_taxon).alias("Taxon QID"),
-            _qid_link_expr("reference", color_ref).alias("Reference QID"),
-            _stmt_link_expr().alias("Statement"),
+            pl.col("ref_doi")
+            .map_elements(_doi_link, return_dtype=pl.String)
+            .alias("Reference DOI"),
+            pl.col("compound")
+            .map_elements(_compound_link, return_dtype=pl.String)
+            .alias("Compound QID"),
+            pl.col("taxon")
+            .map_elements(_taxon_link, return_dtype=pl.String)
+            .alias("Taxon QID"),
+            pl.col("reference")
+            .map_elements(_ref_link, return_dtype=pl.String)
+            .alias("Reference QID"),
+            pl.col("statement")
+            .map_elements(_stmt_link, return_dtype=pl.String)
+            .alias("Statement"),
         ],
     )
 
