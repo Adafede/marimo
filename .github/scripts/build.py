@@ -24,6 +24,7 @@ The exported files will be placed in the specified output directory (default: _s
 
 import subprocess
 import re
+import shutil
 from typing import List, Union, Set
 from pathlib import Path
 
@@ -31,6 +32,52 @@ import jinja2
 import fire
 
 from loguru import logger
+
+
+def copy_public_directories(source_dir: Path, output_dir: Path) -> None:
+    """Copy all public/ directories from source to output directory.
+
+    This function recursively finds all 'public' directories in the source
+    and copies them to the corresponding location in the output directory,
+    preserving the directory structure.
+
+    Args:
+        source_dir (Path): Source directory to search for public/ folders
+        output_dir (Path): Destination directory where public/ folders will be copied
+    """
+    if not source_dir.exists():
+        logger.warning(f"Source directory not found: {source_dir}")
+        return
+
+    # Find all public directories recursively
+    public_dirs = list(source_dir.rglob("public"))
+
+    if not public_dirs:
+        logger.debug(f"No public directories found in {source_dir}")
+        return
+
+    logger.info(
+        f"Found {len(public_dirs)} public directory/directories in {source_dir}",
+    )
+
+    for public_dir in public_dirs:
+        # Calculate the relative path from source_dir to this public dir
+        relative_path = public_dir.relative_to(source_dir)
+
+        # Create the corresponding path in output_dir
+        dest_path = output_dir / relative_path
+
+        try:
+            # Remove existing directory if it exists
+            if dest_path.exists():
+                shutil.rmtree(dest_path)
+
+            # Copy the entire public directory
+            shutil.copytree(public_dir, dest_path)
+            logger.info(f"Copied {public_dir} -> {dest_path}")
+
+        except Exception as e:
+            logger.error(f"Error copying {public_dir} to {dest_path}: {e}")
 
 
 def find_imported_modules(notebook_path: Path) -> Set[str]:
@@ -689,6 +736,11 @@ def main(
 
     # Export apps from the apps/ directory
     apps_data = _export(Path("apps"), output_dir, as_app=True)
+
+    # Copy public directories from both notebooks/ and apps/
+    logger.info("Copying public directories...")
+    copy_public_directories(Path("notebooks"), output_dir / Path("notebooks"))
+    copy_public_directories(Path("apps"), output_dir / Path("apps"))
 
     # Exit if no notebooks or apps were found
     if not notebooks_data and not apps_data:
