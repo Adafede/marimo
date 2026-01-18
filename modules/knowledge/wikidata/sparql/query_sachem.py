@@ -3,7 +3,7 @@
 __all__ = ["query_sachem"]
 
 from .prefixes import PREFIXES
-from .prefixes_sachem import PREFIXES as SACHEM_PREFIXES
+from .prefixes_sachem import PREFIXES_SACHEM
 from .patterns_compound import (
     SELECT_VARS_FULL,
     PROPERTIES_OPTIONAL,
@@ -65,7 +65,7 @@ def query_sachem(
         # Then apply SACHEM to pre-filtered compounds
         return f"""
 {PREFIXES}
-{SACHEM_PREFIXES}
+{PREFIXES_SACHEM}
 SELECT {SELECT_VARS_FULL} WHERE {{
     # Filter compounds with taxonomic data FIRST (much smaller set)
     ?compound p:P703 ?statement .
@@ -93,7 +93,7 @@ SELECT {SELECT_VARS_FULL} WHERE {{
         # No taxon filter - standard SACHEM search with optional taxonomic data
         return f"""
 {PREFIXES}
-{SACHEM_PREFIXES}
+{PREFIXES_SACHEM}
 SELECT {SELECT_VARS_FULL} WHERE {{
     {sachem_clause}
 
