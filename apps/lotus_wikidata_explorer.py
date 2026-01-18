@@ -54,6 +54,14 @@ with app.setup:
     from rdflib import Graph, Literal, URIRef, BNode
     from rdflib.namespace import RDF, RDFS, XSD, DCTERMS
     from typing import Any
+
+    # Toggle this flag for local vs remote development
+    _USE_LOCAL = False  # Set to True for local development
+    if _USE_LOCAL:
+        # Add your local module directory to the path
+        # Adjust this path to where your "modules" folder is located locally
+        sys.path.insert(0, ".")
+
     from modules.text.formula.filters import FormulaFilters
     from modules.text.formula.create_filters import create_filters
     from modules.text.formula.serialize_filters import serialize_filters
@@ -374,7 +382,7 @@ def resolve_ambiguous_matches(
     csv_bytes = execute_with_retry(
         query_taxon_connectivity(values_clause("taxon", qids, prefix="wd:")),
         endpoint=CONFIG["qlever_endpoint"],
-        fallback_endpoint=CONFIG["wikidata_endpoint"],
+        fallback_endpoint=None,
     )
     connectivity_map = {}
     if csv_bytes and csv_bytes.strip():
@@ -399,7 +407,7 @@ def resolve_ambiguous_matches(
     csv_bytes = execute_with_retry(
         query_taxon_details(values_clause("taxon", qids, prefix="wd:")),
         endpoint=CONFIG["qlever_endpoint"],
-        fallback_endpoint=CONFIG["wikidata_endpoint"],
+        fallback_endpoint=None,
     )
     details_map = {}
     if csv_bytes and csv_bytes.strip():
@@ -457,7 +465,7 @@ def resolve_taxon_to_qid(
         csv_bytes = execute_with_retry(
             query,
             endpoint=CONFIG["qlever_endpoint"],
-            fallback_endpoint=CONFIG["wikidata_endpoint"],
+            fallback_endpoint=None,
         )
 
         if not csv_bytes or not csv_bytes.strip():
@@ -778,7 +786,7 @@ def query_wikidata(
     csv_bytes = execute_with_retry(
         query,
         endpoint=CONFIG["qlever_endpoint"],
-        fallback_endpoint=CONFIG["wikidata_endpoint"],
+        fallback_endpoint=None,
     )
 
     # Early return for empty results
@@ -2598,24 +2606,17 @@ def generate_results(
                 json_generate_button,
                 rdf_generate_button,
             ]
-            # Store results_df - export dataframe will be prepared on-demand
-            csv_generation_data = {
-                "results_df": results_df,
-                "active_filters": active_filters,
-                "lazy": True,
-            }
-            json_generation_data = {
-                "results_df": results_df,
-                "active_filters": active_filters,
-                "lazy": True,
-            }
-            rdf_generation_data = {
+            # Store results_df ONCE - all exports share the same data reference
+            shared_generation_data = {
                 "results_df": results_df,
                 "taxon_input": taxon_input.value,
                 "qid": qid,
                 "active_filters": active_filters,
                 "lazy": True,
             }
+            csv_generation_data = shared_generation_data
+            json_generation_data = shared_generation_data
+            rdf_generation_data = shared_generation_data
             # Metadata download
             metadata_button = mo.download(
                 data=metadata_json,
