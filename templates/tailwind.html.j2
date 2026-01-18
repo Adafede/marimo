@@ -4,11 +4,70 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>marimo WebAssembly + GitHub Pages Template</title>
-  <!-- Include Tailwind CSS via CDN -->
+
+  <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Simple Analytics -->
+  <script async defer src="https://scripts.simpleanalyticscdn.com/latest.js" crossorigin="anonymous"></script>
+
+  <!-- Custom fonts -->
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Fira+Code:wght@400;600&display=swap');
+
+    /* Core marimo font tokens (public API) */
+    :root {
+      --marimo-text-font: 'Fira Code', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      --marimo-heading-font: 'Fira Code', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      --marimo-monospace-font: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+    }
+
+    body {
+      font-size: 16px;
+      line-height: 1.6;
+      font-family: var(--marimo-text-font);
+    }
+
+    h1, h2, h3, h4, h5, h6 {
+      letter-spacing: 0.02em;
+      font-family: var(--marimo-heading-font);
+    }
+
+    h1 {
+      font-size: 1.9rem;
+      margin-top: 2.2rem;
+      margin-bottom: 1.0rem;
+    }
+
+    h2 {
+      font-size: 1.6rem;
+      margin-top: 2.0rem;
+      margin-bottom: 0.9rem;
+    }
+
+    h3 {
+      font-size: 1.3rem;
+      margin-top: 1.8rem;
+      margin-bottom: 0.7rem;
+    }
+
+    p, .paragraph {
+      font-size: 1.05rem;
+    }
+
+    code, pre, kbd, samp {
+      font-family: var(--marimo-monospace-font);
+    }
+
+    pre code {
+      font-size: 0.95rem;
+    }
+  </style>
 </head>
-<body class="font-sans text-gray-800 bg-white p-5">
+
+<body class="text-gray-800 bg-white p-5">
   <div class="max-w-4xl mx-auto">
+
     <!-- Header -->
     <header class="bg-gray-100 p-6 text-center rounded-lg mb-6">
       <img src="https://raw.githubusercontent.com/marimo-team/marimo/main/docs/_static/marimo-logotype-thick.svg" alt="marimo Logo" class="w-20 h-auto mx-auto mb-3">
@@ -22,7 +81,6 @@
       <p class="text-center mb-4">Interactive notebooks in edit mode - you can modify and experiment with the code</p>
       <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
         {% for notebook in notebooks %}
-        <!-- {{ notebook.display_name }} Notebook -->
         <div class="bg-gray-50 border border-gray-200 rounded-lg overflow-hidden">
           <div class="bg-gray-200 p-3 font-semibold">{{ notebook.display_name }}</div>
           <div class="p-4">
@@ -38,7 +96,6 @@
       <p class="text-center mb-4">Interactive applications in run mode - code is hidden for a clean user interface</p>
       <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {% for app in apps %}
-        <!-- {{ app.display_name }} App -->
         <div class="bg-gray-50 border border-gray-200 rounded-lg overflow-hidden">
           <div class="bg-gray-100 p-3 font-semibold">{{ app.display_name }}</div>
           <div class="p-4">
@@ -51,7 +108,10 @@
     </main>
 
     <footer class="mt-10 pt-6 border-t border-gray-200 text-center text-sm text-gray-600">
-      <p class="mb-2">Built with <a href="https://marimo.io" target="_blank" class="text-blue-500 hover:underline">marimo</a> - Interactive Python notebooks</p>
+      <p class="mb-2">
+        Built with <a href="https://marimo.io" target="_blank" class="text-blue-500 hover:underline">marimo</a>
+        – Interactive Python notebooks
+      </p>
     </footer>
   </div>
 </body>
