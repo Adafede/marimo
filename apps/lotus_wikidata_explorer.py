@@ -8,7 +8,7 @@
 #     "requests==2.32.5",
 # ]
 # [tool.marimo.display]
-# custom_css = ["public/custom.css"]
+# custom_css = ["assets/custom.css"]
 # theme = "system"
 # ///
 
@@ -37,7 +37,7 @@ __generated_with = "0.19.4"
 app = marimo.App(
     width="full",
     app_title="LOTUS Wikidata Explorer",
-    html_head_file="public/head.html",
+    html_head_file="assets/head.html",
 )
 
 with app.setup:
