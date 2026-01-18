@@ -15,3 +15,9 @@ dependencies = [
 dev = [
   "pre-commit>=4.5.1",
 ]
+
+[project.scripts]
+lotus_wikidata_explorer = "apps.lotus_wikidata_explorer:main"
+
+[tool.setuptools]
+packages = ["modules"]
