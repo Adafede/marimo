@@ -85,7 +85,7 @@ def serialize_filters(
 
     result.update(serialize_elements(filters=filters, element_names=element_names))
 
-    active_halogens = serialize_elements(filters=filters, halogen_names=halogen_names)
+    active_halogens = serialize_elements(filters=filters, element_names=halogen_names)
     if active_halogens:
         result["halogens"] = active_halogens
 

@@ -1,9 +1,7 @@
 [display]
 theme = "system"
 custom_css = [
-  "apps/public/custom.css",
   "public/custom.css",
-  "custom.css",
 ]
 
 [package_management]

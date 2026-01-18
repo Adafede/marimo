@@ -9,25 +9,36 @@ from .client import Client
 def execute_with_retry(
     query: str,
     endpoint: str,
-    timeout: int = 300,
-    max_retries: int = 3,
-    backoff_base: float = 2.0,
+    timeout: int = 120,
+    max_retries: int = 2,
+    backoff_base: float = 1.0,
     format: str = "csv",
     fallback_endpoint: str | None = None,
 ) -> bytes:
-    """Execute SPARQL query with retry logic."""
+    """Execute SPARQL query with retry logic.
+
+    Optimized for fast feedback with minimal retries.
+    """
     if not query or not query.strip():
         raise ValueError("SPARQL query cannot be empty")
 
     last_error = None
 
+    # Create clients once, reuse
+    main_client = Client(endpoint=endpoint, timeout=timeout)
+    fallback_client = (
+        Client(endpoint=fallback_endpoint, timeout=timeout)
+        if fallback_endpoint
+        else None
+    )
+
     for attempt in range(max_retries):
         # Use fallback endpoint on last attempt if provided
-        current_endpoint = endpoint
-        if attempt == max_retries - 1 and fallback_endpoint:
-            current_endpoint = fallback_endpoint
-
-        client = Client(endpoint=current_endpoint, timeout=timeout)
+        client = (
+            fallback_client
+            if (attempt == max_retries - 1 and fallback_client)
+            else main_client
+        )
 
         try:
             if format == "json":

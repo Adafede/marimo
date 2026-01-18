@@ -5,7 +5,7 @@
 #     "marimo",
 #     "polars==1.37.1",
 #     "rdflib==7.5.0",
-#     "starlette==0.51.0",  # because of a nasty bug from 0.52.0
+#     "starlette==0.51.0", # because of a nasty bug from 0.52.0
 # ]
 # ///
 
@@ -790,25 +790,15 @@ def query_wikidata(
     rename_dict = {k: v for k, v in column_mapping.items() if k in df.columns}
     df = df.rename(rename_dict)
 
-    # Combine smiles columns (prefer isomeric over connectivity)
-    if "smiles_iso" in df.columns or "smiles_conn" in df.columns:
-        smiles_iso = df.get_column("smiles_iso") if "smiles_iso" in df.columns else None
-        smiles_conn = (
-            df.get_column("smiles_conn") if "smiles_conn" in df.columns else None
-        )
-        if smiles_iso is not None and smiles_conn is not None:
-            df = df.with_columns(
-                pl.when(
-                    pl.col("smiles_iso").is_not_null() & (pl.col("smiles_iso") != ""),
-                )
-                .then(pl.col("smiles_iso"))
-                .otherwise(pl.col("smiles_conn"))
-                .alias("smiles"),
-            ).drop(["smiles_iso", "smiles_conn"])
-        elif smiles_iso is not None:
-            df = df.rename({"smiles_iso": "smiles"})
-        elif smiles_conn is not None:
-            df = df.rename({"smiles_conn": "smiles"})
+    # Combine smiles columns efficiently (prefer isomeric over connectivity)
+    if "smiles_iso" in df.columns and "smiles_conn" in df.columns:
+        df = df.with_columns(
+            pl.coalesce(["smiles_iso", "smiles_conn"]).alias("smiles"),
+        ).drop(["smiles_iso", "smiles_conn"])
+    elif "smiles_iso" in df.columns:
+        df = df.rename({"smiles_iso": "smiles"})
+    elif "smiles_conn" in df.columns:
+        df = df.rename({"smiles_conn": "smiles"})
 
     # Process ref_doi to extract DOI from URL if needed
     if "ref_doi" in df.columns:
@@ -1551,9 +1541,7 @@ def export_to_rdf_turtle(
 
 @app.cell
 def md_title():
-    mo.md("""
-    # LOTUS Wikidata Explorer
-    """)
+    mo.md("# LOTUS Wikidata Explorer")
     return
 
 
@@ -1581,115 +1569,39 @@ def ui_disclaimer():
 
 @app.cell
 def ui_url_api():
-    # URL Query API section (left)
-    url_api_section = mo.accordion(
-        {
-            "URL Query API": mo.md("""
-            Query via URL parameters. Add to notebook URL to auto-execute searches.
-
-            **Key Parameters:**
-            - `taxon` - Name, QID, or "*" for all
-            - `smiles` - Chemical structure
-            - `smiles_search_type` - "substructure" or "similarity"
-            - `smiles_threshold` - 0.0-1.0 (for similarity)
-            - `mass_filter=true`, `mass_min`, `mass_max`
-            - `year_filter=true`, `year_start`, `year_end`
-            - `formula_filter=true`, `exact_formula`
-            - Element ranges: `c_min`, `c_max`, `h_min`, `h_max`, etc.
-            - Halogen states: `f_state`, `cl_state`, `br_state`, `i_state`
-
-            **Examples:**
-            ```
-            ?taxon=Salix&smiles=CC(=O)Oc1ccccc1C(=O)O
-            ?smiles=c1ccccc1&smiles_search_type=similarity&smiles_threshold=0.45
-            ?taxon=*&mass_filter=true&mass_min=300&mass_max=500
-            ```
-            """),
-        },
-    )
-
-    # Help & Documentation section (right)
+    # Compact help - collapsed by default
     help_section = mo.accordion(
         {
-            "Help": mo.md("""
-            **Quick Start:** Enter taxon (or "*") --> Add SMILES (optional) --> Apply filters --> Search
+            "Help & API": mo.md(
+                """
+                **Search:** Enter a taxon name (e.g., *Gentiana lutea*) and/or a SMILES structure, then click Search.
 
-            **Search Modes:**
-            - **Taxon only**: Find all compounds in that taxonomic group
-            - **SMILES only**: Find compounds by chemical structure (SACHEM)
-            - **Both**: Find structures within a specific taxonomic group
-
-            **Chemical Search** (SACHEM/IDSM):
-            - **Substructure**: Find compounds containing your structure
-            - **Similarity**: Find similar compounds (Tanimoto 0.0-1.0, default 0.8)
-
-            **Filters:** Mass (Da), Year, Formula (exact or element ranges + halogen control)
-
-            **Export:** CSV, JSON, RDF/Turtle. Auto-compress >8MB.
-            """),
+                **URL API:** `?taxon=Salix&smiles=CC(=O)Oc1ccccc1C(=O)O` | `?taxon=*&mass_filter=true&mass_min=300`
+                """,
+            ),
         },
     )
-
-    # Display side by side
-    mo.hstack([url_api_section, help_section], gap=2, widths="equal")
+    help_section
     return
 
 
 @app.cell
 def url_params_check():
-    # URL parameter detection and display
+    # URL parameter detection - simple notification
     _url_params_check = mo.query_params()
-
-    # Display URL query info if parameters are present
     if _url_params_check and (
         "taxon" in _url_params_check or "smiles" in _url_params_check
     ):
-        known_params = [
-            "taxon",
-            "smiles",
-            "smiles_search_type",
-            "smiles_threshold",
-            "mass_filter",
-            "mass_min",
-            "mass_max",
-            "year_filter",
-            "year_start",
-            "year_end",
-            "formula_filter",
-            "exact_formula",
-            "c_min",
-            "c_max",
-            "h_min",
-            "h_max",
-            "n_min",
-            "n_max",
-            "o_min",
-            "o_max",
-            "p_min",
-            "p_max",
-            "s_min",
-            "s_max",
-            "f_state",
-            "cl_state",
-            "br_state",
-            "i_state",
-        ]
-        param_items = [
-            f"- **{k}**: `{_url_params_check.get(k)}`"
-            for k in known_params
-            if k in _url_params_check
-        ]
-        if param_items:
-            mo.callout(
-                mo.md(f"""
-                **URL Query Detected** - Auto-executing with: {chr(10).join(param_items)}
-                """),
-                kind="info",
-            ).style(
-                style={
-                    "overflow-wrap": "anywhere",
-                },
-            )
+        taxon = _url_params_check.get("taxon", "")
+        smiles = _url_params_check.get("smiles", "")
+        msg = f"**Auto-search:** {taxon}" if taxon else ""
+        if smiles:
+            msg += f" SMILES: `{smiles}`"
+        mo.callout(mo.md(msg), kind="info").style(
+            style={
+                "overflow-wrap": "anywhere",
+            },
+        )
     return
 
 
@@ -1699,7 +1611,7 @@ def ui_search_params(search_params):
     taxon_input = mo.ui.text(
         value=search_params.taxon,
         label="Taxon Name or Wikidata QID - Optional",
-        placeholder="e.g., Artemisia annua, Cinchona, Q157115, or * for all taxa",
+        placeholder="e.g., Gentiana lutea, Q157115, or * for all",
         full_width=True,
     )
 
@@ -1707,14 +1619,14 @@ def ui_search_params(search_params):
     smiles_input = mo.ui.text(
         value=search_params.smiles,
         label="Chemical Structure (SMILES) - Optional",
-        placeholder="e.g., c1ccccc1 (benzene), CC(=O)Oc1ccccc1C(=O)O (aspirin)",
+        placeholder="e.g., c1ccccc1 or CC(=O)Oc1ccccc1C(=O)O",
         full_width=True,
     )
 
     smiles_search_type = mo.ui.dropdown(
         options=["substructure", "similarity"],
         value=search_params.smiles_search_type,
-        label="Chemical Search Type",
+        label="Search Type",
         full_width=True,
     )
 
@@ -1729,7 +1641,7 @@ def ui_search_params(search_params):
 
     ## MASS FILTERS
     mass_filter = mo.ui.checkbox(
-        label="Filter by mass",
+        label="Mass filter",
         value=search_params.mass_filter,
     )
 
@@ -1738,7 +1650,7 @@ def ui_search_params(search_params):
         start=0,
         stop=CONFIG["mass_ui_max"],
         step=0.001,
-        label="Min mass (Da)",
+        label="Min (Da)",
         full_width=True,
     )
     mass_max = mo.ui.number(
@@ -1746,18 +1658,18 @@ def ui_search_params(search_params):
         start=0,
         stop=CONFIG["mass_ui_max"],
         step=0.001,
-        label="Max mass (Da)",
+        label="Max (Da)",
         full_width=True,
     )
 
     formula_filter = mo.ui.checkbox(
-        label="Filter by molecular formula",
+        label="Formula filter",
         value=search_params.formula_filter,
     )
     exact_formula = mo.ui.text(
         value=search_params.exact_formula,
-        label="Exact formula (e.g., C15H10O5)",
-        placeholder="Leave empty to use element ranges",
+        label="Exact formula",
+        placeholder="e.g., C15H10O5",
         full_width=True,
     )
 
@@ -1817,21 +1729,21 @@ def ui_search_params(search_params):
 
     current_year = datetime.now().year
     year_filter = mo.ui.checkbox(
-        label="Filter by publication year",
+        label="Year",
         value=search_params.year_filter,
     )
     year_start = mo.ui.number(
         value=search_params.year_start,
         start=CONFIG["year_range_start"],
         stop=current_year,
-        label="Start year",
+        label="From",
         full_width=True,
     )
     year_end = mo.ui.number(
         value=search_params.year_end,
         start=CONFIG["year_range_start"],
         stop=current_year,
-        label="End year",
+        label="To",
         full_width=True,
     )
 
@@ -1901,70 +1813,46 @@ def ui_filters(
     year_filter,
     year_start,
 ):
-    # Build structure search section (right column)
+    # Build structure search section
     structure_fields = [smiles_input, smiles_search_type]
     if smiles_search_type.value == "similarity":
         structure_fields.append(smiles_threshold)
 
-    structure_section = mo.vstack(structure_fields)
-
-    # Main search parameters: taxon on left, structure on right
+    # Main search: taxon + SMILES side by side
     main_search = mo.hstack(
-        [
-            mo.vstack([taxon_input]),
-            structure_section,
-        ],
-        gap=3,
+        [taxon_input, mo.vstack(structure_fields)],
+        gap=2,
         widths="equal",
     )
 
-    # Optional filter buttons arranged horizontally
-    filter_buttons = mo.hstack(
-        [mass_filter, year_filter, formula_filter],
-        gap=3,
+    # Filter checkboxes inline with search button
+    filter_row = mo.hstack(
+        [mass_filter, year_filter, formula_filter, run_button],
+        gap=2,
         justify="start",
     )
 
-    # Build filters UI
-    filters_ui = [
-        mo.md("## Search Parameters"),
-        main_search,
-        mo.md("### Optional Filters"),
-        filter_buttons,
-    ]
+    # Build filters UI - compact
+    filters_ui = [main_search, filter_row]
 
-    # Mass filter fields
+    # Conditional filter fields - all inline
     if mass_filter.value:
         filters_ui.append(mo.hstack([mass_min, mass_max], gap=2, widths="equal"))
 
-    # Year filter fields
     if year_filter.value:
         filters_ui.append(mo.hstack([year_start, year_end], gap=2, widths="equal"))
 
-    # Formula filter fields
     if formula_filter.value:
         filters_ui.extend(
             [
                 exact_formula,
-                mo.md("**Element count ranges** (leave blank for no constraint)"),
-                mo.hstack([c_min, c_max], gap=2, widths="equal"),
-                mo.hstack([h_min, h_max], gap=2, widths="equal"),
-                mo.hstack([n_min, n_max], gap=2, widths="equal"),
-                mo.hstack([o_min, o_max], gap=2, widths="equal"),
-                mo.hstack([p_min, p_max], gap=2, widths="equal"),
-                mo.hstack([s_min, s_max], gap=2, widths="equal"),
-                mo.md("**Halogen constraints**"),
-                mo.hstack(
-                    [f_state, cl_state, br_state, i_state],
-                    gap=2,
-                    widths="equal",
-                ),
+                mo.hstack([c_min, c_max, h_min, h_max, n_min, n_max], gap=1),
+                mo.hstack([o_min, o_max, p_min, p_max, s_min, s_max], gap=1),
+                mo.hstack([f_state, cl_state, br_state, i_state], gap=1),
             ],
         )
 
-    filters_ui.append(run_button)
-
-    mo.vstack(filters_ui)
+    mo.vstack(filters_ui, gap=1)
     return
 
 
