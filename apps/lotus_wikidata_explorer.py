@@ -80,11 +80,6 @@ with app.setup:
     from modules.knowledge.wikidata.url.constants import WIKIDATA_HTTP_BASE
     from modules.knowledge.wikidata.url.constants import WIKI_PREFIX
     from modules.knowledge.wikidata.html.scholia import scholia_url
-    from modules.knowledge.wikidata.html.link_from_qid import link_from_qid
-    from modules.knowledge.wikidata.html.link_from_doi import link_from_doi
-    from modules.knowledge.wikidata.html.link_from_statement import (
-        link_from_statement as statement_link,
-    )
     from modules.knowledge.wikidata.sparql.query_taxon_search import query_taxon_search
     from modules.knowledge.wikidata.sparql.query_taxon_details import (
         query_taxon_details,
@@ -757,106 +752,97 @@ def query_wikidata(
     if not csv_bytes or csv_bytes.strip() == b"":
         return pl.DataFrame()
 
-    # Parse response (handles both CSV and JSON formats)
+    # Parse response directly into DataFrame
     df = parse_sparql_response(csv_bytes)
-
-    # Free bytes immediately
-    del csv_bytes
+    del csv_bytes  # Free bytes immediately
 
     # Early return if no data rows
     if df.is_empty():
         return pl.DataFrame()
 
     # Rename columns from SPARQL variable names to internal names
-    column_mapping = {
-        "compound": "compound",
+    rename_dict = {
         "compoundLabel": "name",
         "compound_inchikey": "inchikey",
-        "compound_smiles_iso": "smiles_iso",
-        "compound_smiles_conn": "smiles_conn",
-        "taxon_name": "taxon_name",
-        "taxon": "taxon",
-        "ref_title": "ref_title",
-        "ref_doi": "ref_doi",
         "ref_qid": "reference",
         "ref_date": "pub_date",
         "compound_mass": "mass",
         "compound_formula": "mf",
-        "statement": "statement",
-        "ref": "ref",
     }
+    # Only rename columns that exist
+    rename_dict = {k: v for k, v in rename_dict.items() if k in df.columns}
+    if rename_dict:
+        df = df.rename(rename_dict)
 
-    # Rename columns that exist
-    rename_dict = {k: v for k, v in column_mapping.items() if k in df.columns}
-    df = df.rename(rename_dict)
+    # Build all column transformations in a single batch
+    transforms = []
 
-    # Combine smiles columns efficiently (prefer isomeric over connectivity)
-    if "smiles_iso" in df.columns and "smiles_conn" in df.columns:
-        df = df.with_columns(
-            pl.coalesce(["smiles_iso", "smiles_conn"]).alias("smiles"),
-        ).drop(["smiles_iso", "smiles_conn"])
-    elif "smiles_iso" in df.columns:
-        df = df.rename({"smiles_iso": "smiles"})
-    elif "smiles_conn" in df.columns:
-        df = df.rename({"smiles_conn": "smiles"})
+    # Combine smiles columns (prefer isomeric over connectivity)
+    has_iso = "compound_smiles_iso" in df.columns
+    has_conn = "compound_smiles_conn" in df.columns
+    if has_iso and has_conn:
+        transforms.append(
+            pl.coalesce(["compound_smiles_iso", "compound_smiles_conn"]).alias("smiles")
+        )
+    elif has_iso:
+        transforms.append(pl.col("compound_smiles_iso").alias("smiles"))
+    elif has_conn:
+        transforms.append(pl.col("compound_smiles_conn").alias("smiles"))
 
-    # Process ref_doi to extract DOI from URL if needed
+    # DOI extraction (from URL to raw DOI)
     if "ref_doi" in df.columns:
-        df = df.with_columns(
+        transforms.append(
             pl.when(pl.col("ref_doi").str.starts_with("http"))
             .then(pl.col("ref_doi").str.split("doi.org/").list.last())
             .otherwise(pl.col("ref_doi"))
-            .alias("ref_doi"),
+            .alias("ref_doi")
         )
 
-    # Process pub_date to date type
+    # Date parsing
     if "pub_date" in df.columns:
-        df = df.with_columns(
+        transforms.append(
             pl.when(pl.col("pub_date").is_not_null() & (pl.col("pub_date") != ""))
             .then(
                 pl.col("pub_date")
-                .str.strptime(
-                    pl.Datetime,
-                    format="%Y-%m-%dT%H:%M:%SZ",
-                    strict=False,
-                )
-                .dt.date(),
+                .str.strptime(pl.Datetime, format="%Y-%m-%dT%H:%M:%SZ", strict=False)
+                .dt.date()
             )
             .otherwise(None)
-            .alias("pub_date"),
+            .alias("pub_date")
         )
 
-    # Convert mass to float
+    # Mass to float
     if "mass" in df.columns:
-        df = df.with_columns(pl.col("mass").cast(pl.Float64, strict=False))
+        transforms.append(pl.col("mass").cast(pl.Float64, strict=False).alias("mass"))
 
-    # Chain filters for efficiency (Polars optimizes the execution plan)
+    # Apply all transformations in one go (single memory allocation)
+    if transforms:
+        df = df.with_columns(transforms)
+
+    # Drop old smiles columns if new one was created
+    drop_cols = []
+    if has_iso:
+        drop_cols.append("compound_smiles_iso")
+    if has_conn:
+        drop_cols.append("compound_smiles_conn")
+    if drop_cols:
+        df = df.drop([c for c in drop_cols if c in df.columns])
+
+    # Apply filters (Polars optimizes the execution plan)
     df = filter_year(df, year_start, year_end)
     df = filter_mass(df, mass_min, mass_max)
-
     if formula_filters:
         df = filter_formula(df, formula_filters, match_func=match_filters)
 
-    # Ensure required columns exist (fill with None if missing)
+    # Ensure required columns exist - batch add missing columns
     required_columns = [
-        "compound",
-        "name",
-        "inchikey",
-        "smiles",
-        "taxon_name",
-        "taxon",
-        "ref_title",
-        "ref_doi",
-        "reference",
-        "pub_date",
-        "mass",
-        "mf",
-        "statement",
-        "ref",
+        "compound", "name", "inchikey", "smiles", "taxon_name", "taxon",
+        "ref_title", "ref_doi", "reference", "pub_date", "mass", "mf",
+        "statement", "ref",
     ]
-    for col in required_columns:
-        if col not in df.columns:
-            df = df.with_columns(pl.lit(None).alias(col))
+    missing = [col for col in required_columns if col not in df.columns]
+    if missing:
+        df = df.with_columns([pl.lit(None).alias(col) for col in missing])
 
     # Final operations: deduplicate and sort
     # Note: unique() is efficient in Polars, keeps first occurrence
@@ -870,30 +856,93 @@ def build_display_dataframe(df: pl.DataFrame) -> pl.DataFrame:
     """Build display DataFrame with HTML-formatted columns.
 
     Returns a DataFrame with renamed columns and HTML strings for links/images.
-    This can be used for both WASM (plain HTML) and native (mo.ui.table).
     """
+    # Constants for link building (avoid repeated dictionary lookups)
+    color_link = CONFIG["color_hyperlink"]
+    color_compound = CONFIG["color_wikidata_red"]
+    color_taxon = CONFIG["color_wikidata_green"]
+    color_ref = CONFIG["color_wikidata_blue"]
 
-    # Create wrapper functions that use CONFIG values
+    # CDK Depict URL template (structure images)
+    # Note: we still use map_elements for structure since url_from_smiles has complex logic
     def _structure_img(smiles):
         return html_from_smiles(smiles) if smiles else ""
 
-    def _doi_lnk(doi):
-        return link_from_doi(doi, CONFIG["color_hyperlink"]) if doi else ""
+    # Extract QID from entity URL (handles both URL and raw QID)
+    def _qid_expr(col_name: str) -> pl.Expr:
+        """Extract QID from Wikidata entity URL."""
+        return (
+            pl.when(pl.col(col_name).is_null() | (pl.col(col_name) == ""))
+            .then(pl.lit(""))
+            .otherwise(
+                pl.col(col_name).str.replace(
+                    "http://www.wikidata.org/entity/", "", literal=True
+                )
+            )
+        )
 
-    def _compound_qid_lnk(url):
-        return link_from_qid(url, CONFIG["color_wikidata_red"]) if url else ""
+    # Build Scholia link from QID column
+    def _qid_link_expr(col_name: str, color: str) -> pl.Expr:
+        """Build HTML link to Scholia for QID column."""
+        qid = _qid_expr(col_name)
+        return (
+            pl.when(qid == "")
+            .then(pl.lit(""))
+            .otherwise(
+                pl.lit('<a href="https://scholia.toolforge.org/')
+                + qid
+                + pl.lit('" target="_blank" style="color:')
+                + pl.lit(color)
+                + pl.lit(';">')
+                + qid
+                + pl.lit("</a>")
+            )
+        )
 
-    def _taxon_qid_lnk(url):
-        return link_from_qid(url, CONFIG["color_wikidata_green"]) if url else ""
+    # DOI link (extract DOI from URL if needed, then create link)
+    def _doi_link_expr() -> pl.Expr:
+        """Build HTML link for DOI column."""
+        # Extract DOI (handle both doi.org URLs and raw DOIs)
+        clean_doi = (
+            pl.when(pl.col("ref_doi").str.contains("doi.org/"))
+            .then(pl.col("ref_doi").str.split("doi.org/").list.last())
+            .otherwise(pl.col("ref_doi"))
+        )
+        return (
+            pl.when(pl.col("ref_doi").is_null() | (pl.col("ref_doi") == ""))
+            .then(pl.lit(""))
+            .otherwise(
+                pl.lit('<a href="https://doi.org/')
+                + clean_doi
+                + pl.lit('" target="_blank" style="color:')
+                + pl.lit(color_link)
+                + pl.lit(';">')
+                + clean_doi
+                + pl.lit("</a>")
+            )
+        )
 
-    def _ref_qid_lnk(url):
-        return link_from_qid(url, CONFIG["color_wikidata_blue"]) if url else ""
-
-    def _stmt_lnk(url):
-        return statement_link(url, CONFIG["color_hyperlink"]) if url else ""
+    # Statement link (extract ID from URL, use full URL as href)
+    def _stmt_link_expr() -> pl.Expr:
+        """Build HTML link for statement column."""
+        stmt_id = pl.col("statement").str.split("/").list.last()
+        return (
+            pl.when(pl.col("statement").is_null() | (pl.col("statement") == ""))
+            .then(pl.lit(""))
+            .otherwise(
+                pl.lit('<a href="')
+                + pl.col("statement")
+                + pl.lit('" target="_blank" style="color:')
+                + pl.lit(color_link)
+                + pl.lit(';">')
+                + stmt_id
+                + pl.lit("</a>")
+            )
+        )
 
     return df.select(
         [
+            # Structure image still needs map_elements (complex URL encoding)
             pl.col("smiles")
             .map_elements(_structure_img, return_dtype=pl.String)
             .alias("Compound Depiction"),
@@ -905,21 +954,11 @@ def build_display_dataframe(df: pl.DataFrame) -> pl.DataFrame:
             pl.col("taxon_name").alias("Taxon Name"),
             pl.col("ref_title").alias("Reference Title"),
             pl.col("pub_date").alias("Reference Date"),
-            pl.col("ref_doi")
-            .map_elements(_doi_lnk, return_dtype=pl.String)
-            .alias("Reference DOI"),
-            pl.col("compound")
-            .map_elements(_compound_qid_lnk, return_dtype=pl.String)
-            .alias("Compound QID"),
-            pl.col("taxon")
-            .map_elements(_taxon_qid_lnk, return_dtype=pl.String)
-            .alias("Taxon QID"),
-            pl.col("reference")
-            .map_elements(_ref_qid_lnk, return_dtype=pl.String)
-            .alias("Reference QID"),
-            pl.col("statement")
-            .map_elements(_stmt_lnk, return_dtype=pl.String)
-            .alias("Statement"),
+            _doi_link_expr().alias("Reference DOI"),
+            _qid_link_expr("compound", color_compound).alias("Compound QID"),
+            _qid_link_expr("taxon", color_taxon).alias("Taxon QID"),
+            _qid_link_expr("reference", color_ref).alias("Reference QID"),
+            _stmt_link_expr().alias("Statement"),
         ],
     )
 
@@ -937,47 +976,42 @@ def prepare_export_dataframe(
         include_rdf_ref: If True, include ref URI for RDF export.
                          Statement is always included if present.
     """
-    df_with_qids: pl.DataFrame = df.with_columns(
-        [
-            pl.col("compound")
-            .str.replace(WIKIDATA_ENTITY_PREFIX, "", literal=True)
-            .alias("compound_qid"),
-            pl.col("taxon")
-            .str.replace(WIKIDATA_ENTITY_PREFIX, "", literal=True)
-            .alias("taxon_qid"),
-            pl.col("reference")
-            .str.replace(WIKIDATA_ENTITY_PREFIX, "", literal=True)
-            .alias("reference_qid"),
-            pl.col("statement")
-            .str.replace(WIKIDATA_STATEMENT_PREFIX, "", literal=True)
-            .alias("statement_id"),
-        ],
-    )
-
-    select_cols: list[pl.Expr | str] = [
+    # Build all expressions in a single select (no intermediate DataFrame)
+    select_exprs = [
         pl.col("name").alias("compound_name"),
         pl.col("smiles").alias("compound_smiles"),
         pl.col("inchikey").alias("compound_inchikey"),
         pl.col("mass").alias("compound_mass"),
         pl.col("mf").alias("molecular_formula"),
-        "taxon_name",
+        pl.col("taxon_name"),
         pl.col("ref_title").alias("reference_title"),
         pl.col("ref_doi").alias("reference_doi"),
         pl.col("pub_date").alias("reference_date"),
-        "compound_qid",
-        "taxon_qid",
-        "reference_qid",
+        # QID extractions inline
+        pl.col("compound")
+        .str.replace(WIKIDATA_ENTITY_PREFIX, "", literal=True)
+        .alias("compound_qid"),
+        pl.col("taxon")
+        .str.replace(WIKIDATA_ENTITY_PREFIX, "", literal=True)
+        .alias("taxon_qid"),
+        pl.col("reference")
+        .str.replace(WIKIDATA_ENTITY_PREFIX, "", literal=True)
+        .alias("reference_qid"),
     ]
 
-    # Always include statement (for display + RDF)
-    if "statement" in df_with_qids.columns:
-        select_cols.append("statement_id")
+    # Add statement ID if present
+    if "statement" in df.columns:
+        select_exprs.append(
+            pl.col("statement")
+            .str.replace(WIKIDATA_STATEMENT_PREFIX, "", literal=True)
+            .alias("statement_id")
+        )
 
-    # Only include ref URI for RDF export
-    if include_rdf_ref and "ref" in df_with_qids.columns:
-        select_cols.append("ref")
+    # Add ref URI for RDF export if requested
+    if include_rdf_ref and "ref" in df.columns:
+        select_exprs.append(pl.col("ref"))
 
-    return df_with_qids.select(select_cols)
+    return df.select(select_exprs)
 
 
 @app.function
@@ -1147,7 +1181,7 @@ def compute_provenance_hashes(
         - query_hash: based on search parameters (what was asked)
         - result_hash: based on compound identifiers (what was found)
     """
-    # Query hash
+    # Query hash - small data, use direct approach
     query_components = [qid or "", taxon_input or ""]
     if filters:
         query_components.append(json.dumps(filters, sort_keys=True))
@@ -1155,32 +1189,34 @@ def compute_provenance_hashes(
         "|".join(query_components).encode("utf-8"),
     ).hexdigest()
 
-    # Result hash - extract compound QIDs efficiently
+    # Result hash - streaming approach for memory efficiency
+    result_hasher = hashlib.sha256()
     compound_col = "compound_qid" if "compound_qid" in df.columns else "compound"
-    compound_ids = []
+
     if compound_col in df.columns and not df.is_empty():
         try:
-            compound_ids = sorted(
+            # Get unique compound IDs as a sorted series (no intermediate list)
+            unique_ids = (
                 df.select(
                     pl.col(compound_col)
                     .cast(pl.Utf8)
-                    .str.replace(
-                        WIKIDATA_ENTITY_PREFIX,
-                        "",
-                        literal=True,
-                    ),
+                    .str.replace(WIKIDATA_ENTITY_PREFIX, "", literal=True)
                 )
                 .to_series()
                 .drop_nulls()
                 .unique()
-                .to_list(),
+                .sort()
             )
+            # Stream through values without creating full string
+            for i, val in enumerate(unique_ids):
+                if i > 0:
+                    result_hasher.update(b"|")
+                if val:
+                    result_hasher.update(val.encode("utf-8"))
         except Exception:
-            # Handle any remaining edge cases
-            compound_ids = []
-    result_hash = hashlib.sha256("|".join(compound_ids).encode("utf-8")).hexdigest()
+            pass
 
-    return query_hash, result_hash
+    return query_hash, result_hasher.hexdigest()
 
 
 @app.function
@@ -1337,15 +1373,16 @@ def add_compound_triples(
     dataset_uri: URIRef,
     processed_taxa: set,
     processed_refs: set,
+    ns_cache: dict,
 ) -> None:
     """Add all triples for a single compound using Wikidata's full RDF structure."""
-    WD = WIKIDATA_NAMESPACES["WD"]
-    WDT = WIKIDATA_NAMESPACES["WDT"]
-    P = WIKIDATA_NAMESPACES["P"]
-    PS = WIKIDATA_NAMESPACES["PS"]
-    PR = WIKIDATA_NAMESPACES["PR"]
-    PROV = WIKIDATA_NAMESPACES["PROV"]
-    SCHEMA = WIKIDATA_NAMESPACES["SCHEMA"]
+    WD = ns_cache["WD"]
+    WDT = ns_cache["WDT"]
+    P = ns_cache["P"]
+    PS = ns_cache["PS"]
+    PR = ns_cache["PR"]
+    PROV = ns_cache["PROV"]
+    SCHEMA = ns_cache["SCHEMA"]
 
     compound_qid = row.get("compound_qid", "")
     if not compound_qid:
@@ -1504,6 +1541,17 @@ def export_to_rdf_turtle(
     g.bind("xsd", XSD)
     g.bind("dcterms", DCTERMS)
 
+    # Pre-cache namespace references (avoid repeated dict lookups per row)
+    ns_cache = {
+        "WD": WIKIDATA_NAMESPACES["WD"],
+        "WDT": WIKIDATA_NAMESPACES["WDT"],
+        "P": WIKIDATA_NAMESPACES["P"],
+        "PS": WIKIDATA_NAMESPACES["PS"],
+        "PR": WIKIDATA_NAMESPACES["PR"],
+        "PROV": WIKIDATA_NAMESPACES["PROV"],
+        "SCHEMA": WIKIDATA_NAMESPACES["SCHEMA"],
+    }
+
     # Create dataset URI with provenance hashes
     dataset_uri, query_hash, result_hash = create_dataset_uri(
         qid,
@@ -1531,9 +1579,9 @@ def export_to_rdf_turtle(
     processed_taxa = set()
     processed_refs = set()
 
-    # Add compound data
+    # Add compound data with cached namespaces
     for row in df.iter_rows(named=True):
-        add_compound_triples(g, row, dataset_uri, processed_taxa, processed_refs)
+        add_compound_triples(g, row, dataset_uri, processed_taxa, processed_refs, ns_cache)
 
     # Serialize to Turtle format
     return g.serialize(format="turtle")
@@ -1663,13 +1711,13 @@ def ui_search_params(search_params):
     )
 
     formula_filter = mo.ui.checkbox(
-        label="Formula filter",
+        label="Formula",
         value=search_params.formula_filter,
     )
     exact_formula = mo.ui.text(
         value=search_params.exact_formula,
-        label="Exact formula",
-        placeholder="e.g., C15H10O5",
+        label="Formula",
+        placeholder="C15H10O5",
         full_width=True,
     )
 
@@ -1729,7 +1777,7 @@ def ui_search_params(search_params):
 
     current_year = datetime.now().year
     year_filter = mo.ui.checkbox(
-        label="Year",
+        label="Year filter",
         value=search_params.year_filter,
     )
     year_start = mo.ui.number(
@@ -1747,7 +1795,7 @@ def ui_search_params(search_params):
         full_width=True,
     )
 
-    run_button = mo.ui.run_button(label="Search Wikidata")
+    run_button = mo.ui.run_button(label="🔍 Search")
     return (
         br_state,
         c_max,
