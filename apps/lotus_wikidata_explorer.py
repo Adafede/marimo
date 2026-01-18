@@ -786,7 +786,7 @@ def query_wikidata(
     if has_iso and has_conn:
         transforms.append(
             pl.coalesce(["compound_smiles_iso", "compound_smiles_conn"]).alias(
-                "smiles"
+                "smiles",
             ),
         )
     elif has_iso:
@@ -1550,7 +1550,12 @@ def export_to_rdf_turtle(
     # Add compound data with cached namespaces
     for row in df.iter_rows(named=True):
         add_compound_triples(
-            g, row, dataset_uri, processed_taxa, processed_refs, ns_cache
+            g,
+            row,
+            dataset_uri,
+            processed_taxa,
+            processed_refs,
+            ns_cache,
         )
 
     # Serialize to Turtle format
@@ -1838,14 +1843,14 @@ def ui_filters(
 
     # Main search: search + taxon + SMILES side by side
     main_search = mo.hstack(
-        [mo.vstack([run_button,taxon_input,]), mo.vstack(structure_fields)],
+        [mo.vstack([run_button, taxon_input]), mo.vstack(structure_fields)],
         gap=2,
         widths="equal",
     )
 
     # Filter checkboxes inline
     filter_row = mo.hstack(
-        [mass_filter, year_filter, formula_filter,],
+        [mass_filter, year_filter, formula_filter],
         gap=2,
         justify="start",
     )
