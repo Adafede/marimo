@@ -36,7 +36,6 @@ __generated_with = "0.19.4"
 app = marimo.App(
     width="full",
     app_title="LOTUS Wikidata Explorer",
-    css_file="public/custom.css",
     html_head_file="public/head.html",
 )
 
