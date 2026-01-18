@@ -231,9 +231,6 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
     )
 
     # Function to get inlined code for a module and its dependencies
-    # Also collect deferred aliases for modules that were already inlined
-    deferred_aliases = []  # List of (indent, original, alias) tuples
-
     def get_inlined_code_with_deps(
         module_path: str,
         indent: str,
@@ -246,33 +243,39 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
             indent: The indentation to use for the inlined code
             aliases: Dict mapping original names to aliases (e.g., {'ENTITY_PREFIX': 'WIKIDATA_ENTITY_PREFIX'})
         """
+        result_parts = []
+
         if module_path in inlined_modules:
-            # Module already inlined - defer alias assignments to be added after all inlining
+            # Module already inlined - just add alias assignments at this indentation
             if aliases:
+                alias_lines = []
                 for original, alias in aliases.items():
                     if original != alias:
-                        deferred_aliases.append((indent, original, alias))
-            return ""  # Don't add anything here, aliases will be added at the end
+                        alias_lines.append(f"{indent}{alias} = {original}")
+                if alias_lines:
+                    return "\n".join(alias_lines) + "\n"
+            return ""
 
         if module_path not in module_code_map:
             return ""  # Module not found
 
         code = module_code_map[module_path]
-        result_parts = []
 
-        # Find and inline dependencies first (from the module's imports)
+        # Find and inline dependencies FIRST (from the module's imports)
         # Look for 'from modules.x.y import' patterns in this module's code
         dep_pattern = r"from\s+(modules\.[\w.]+)\s+import"
         deps_in_code = re.findall(dep_pattern, code)
 
-        for dep in deps_in_code:
+        # Sort and deduplicate for deterministic order
+        for dep in sorted(set(deps_in_code)):
             if dep not in inlined_modules and dep in module_code_map:
-                # Recursively inline the dependency first
-                dep_code = get_inlined_code_with_deps(dep, indent)
+                # Recursively inline the dependency first (no aliases for transitive deps)
+                dep_code = get_inlined_code_with_deps(dep, indent, None)
                 if dep_code:
                     result_parts.append(dep_code)
 
-        # Mark this module as inlined
+        # Mark this module as inlined BEFORE processing its code
+        # to prevent infinite recursion with circular deps
         inlined_modules.add(module_path)
 
         # Normalize line endings (convert \r\n to \n)
@@ -320,17 +323,21 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
                 if indented_lines and indented_lines[-1] != "":
                     indented_lines.append("")
 
-        # Add alias assignments to deferred list (will be added at end of app.setup)
-        if aliases:
-            for original, alias in aliases.items():
-                if original != alias:
-                    deferred_aliases.append((indent, original, alias))
-
         # Add trailing blank line only if not already present
         if indented_lines and indented_lines[-1] != "":
             indented_lines.append("")
 
         result_parts.append("\n".join(indented_lines))
+
+        # Add alias assignments AFTER the module code
+        if aliases:
+            alias_lines = []
+            for original, alias in aliases.items():
+                if original != alias:
+                    alias_lines.append(f"{indent}{alias} = {original}")
+            if alias_lines:
+                result_parts.append("\n".join(alias_lines) + "\n")
+
         return "\n".join(result_parts)
 
     def parse_import_aliases(import_text: str) -> dict:
@@ -383,24 +390,40 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
             # (will be removed later if it's a modules.* import)
             return full_match
 
-    # Replace single-line imports: from modules.x.y import z
-    # Pattern captures: (indent)(module_path) import (names)
-    # Must NOT match lines that have ( after import (those are multi-line)
-    notebook_code = re.sub(
-        r"^(\s*)from\s+(modules\.[\w.]+)\s+import\s+(?!\()[^\n]+\n",
-        replace_import_with_inline,
-        notebook_code,
-        flags=re.MULTILINE,
-    )
+    # Process ALL imports in source order (both single-line and multi-line)
+    # This is critical because the first import of a module must inline its code,
+    # while subsequent imports only add aliases
 
-    # Replace multi-line imports: from modules.x.y import (\n    z as alias,\n)
-    # The pattern needs to match across multiple lines including 'as' aliases
-    notebook_code = re.sub(
-        r"^(\s*)from\s+(modules\.[\w.]+)\s+import\s*\([^)]*\)\n",
-        replace_import_with_inline,
-        notebook_code,
-        flags=re.MULTILINE | re.DOTALL,
-    )
+    # Pattern for single-line imports: from modules.x.y import z
+    single_line_pattern = r"^(\s*)from\s+(modules\.[\w.]+)\s+import\s+(?!\()[^\n]+\n"
+
+    # Pattern for multi-line imports: from modules.x.y import (\n    z as alias,\n)
+    multi_line_pattern = r"^(\s*)from\s+(modules\.[\w.]+)\s+import\s*\([^)]*\)\n"
+
+    # Find all matches with their positions
+    all_matches = []
+
+    for match in re.finditer(single_line_pattern, notebook_code, flags=re.MULTILINE):
+        all_matches.append((match.start(), match.end(), match))
+
+    for match in re.finditer(
+        multi_line_pattern, notebook_code, flags=re.MULTILINE | re.DOTALL
+    ):
+        all_matches.append((match.start(), match.end(), match))
+
+    # Sort by position (start index) to process in source order
+    all_matches.sort(key=lambda x: x[0])
+
+    # First pass: determine what each match should be replaced with (in source order)
+    # This ensures the first import of a module gets the full code
+    replacements = []
+    for start, end, match in all_matches:
+        replacement = replace_import_with_inline(match)
+        replacements.append((start, end, replacement))
+
+    # Second pass: apply replacements in reverse order (so positions don't shift)
+    for start, end, replacement in reversed(replacements):
+        notebook_code = notebook_code[:start] + replacement + notebook_code[end:]
 
     # Remove any remaining 'from modules.*' lines that weren't replaced
     # (e.g., modules we didn't have code for)
@@ -422,26 +445,6 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
         notebook_code,
         flags=re.MULTILINE,
     )
-
-    # Add deferred aliases at the end of the app.setup block
-    if deferred_aliases:
-        # Build alias lines with proper indentation (use the indent from the first alias)
-        # All aliases should have the same indentation since they're all in app.setup
-        alias_lines = []
-        for indent, original, alias in deferred_aliases:
-            alias_lines.append(f"{indent}{alias} = {original}")
-
-        # Find where to insert: just before the line that starts with @app. (not indented)
-        # This marks the end of the app.setup block
-        # We need to find the pattern: newline + @app (at start of line, no indentation)
-        insert_match = re.search(r"\n(@app\.)", notebook_code)
-        if insert_match:
-            insert_pos = insert_match.start()
-            # Add aliases with a blank line before them for readability
-            alias_block = "\n\n    # === ALIASES ===\n" + "\n".join(alias_lines) + "\n"
-            notebook_code = (
-                notebook_code[:insert_pos] + alias_block + notebook_code[insert_pos:]
-            )
 
     final_code = notebook_code
 
