@@ -6,7 +6,6 @@
 #     "requests==2.32.5",
 # ]
 # [tool.marimo.display]
-# custom_css = ["public/custom.css"]
 # theme = "system"
 # ///
 
@@ -16,6 +15,7 @@ __generated_with = "0.19.4"
 app = marimo.App(
     width="medium",
     app_title="Automated substructure depiction and verification",
+    css_file="public/custom.css",
     html_head_file="public/head.html",
 )
 
