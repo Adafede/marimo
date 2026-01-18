@@ -407,7 +407,9 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
         all_matches.append((match.start(), match.end(), match))
 
     for match in re.finditer(
-        multi_line_pattern, notebook_code, flags=re.MULTILINE | re.DOTALL
+        multi_line_pattern,
+        notebook_code,
+        flags=re.MULTILINE | re.DOTALL,
     ):
         all_matches.append((match.start(), match.end(), match))
 
