@@ -1,0 +1,6 @@
+[display]
+theme = "system"
+# TODO test later
+
+[package_management]
+manager = "uv"
