@@ -2,7 +2,6 @@
 # requires-python = "==3.13.*"
 # dependencies = [
 #     "marimo",
-#     "starlette==0.51.0",  # because of a nasty bug from 0.52.0
 # ]
 # ///
 
