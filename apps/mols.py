@@ -3,7 +3,6 @@
 # dependencies = [
 #     "marimo",
 #     "rdkit==2025.9.3",
-#     "starlette==0.51.0",  # because of a nasty bug from 0.52.0
 # ]
 # ///
 
