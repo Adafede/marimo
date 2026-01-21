@@ -1,6 +1,6 @@
 """Draw molecule to SVG string."""
 
-__all__ = ["to_svg"]
+__all__ = ["svg_from_mol"]
 
 from rdkit.Chem import Mol
 from rdkit.Chem.Draw.rdMolDraw2D import MolDraw2DSVG
@@ -9,7 +9,7 @@ DEFAULT_WIDTH: int = 200
 DEFAULT_HEIGHT: int = 200
 
 
-def to_svg(
+def svg_from_mol(
     mol: Mol,
     width: int = DEFAULT_WIDTH,
     height: int = DEFAULT_HEIGHT,

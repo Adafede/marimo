@@ -1,17 +1,17 @@
 """Cached CDK Depict URL generation."""
 
-__all__ = ["url_from_smiles_cached"]
+__all__ = ["svg_from_smiles_cached"]
 
 from functools import lru_cache
 
 from .url import CDK_DEPICT_URL
-from .url_from_smiles import url_from_smiles
+from .svg_from_smiles import svg_from_smiles
 
 CACHE_SIZE: int = 256
 
 
 @lru_cache(maxsize=CACHE_SIZE)
-def url_from_smiles_cached(
+def svg_from_smiles_cached(
     smiles: str | None,
     base_url: str = CDK_DEPICT_URL,
     layout: str = "cow",
@@ -26,7 +26,7 @@ def url_from_smiles_cached(
     """
     if not smiles:
         return ""
-    return url_from_smiles(
+    return svg_from_smiles(
         smiles=smiles,
         base_url=base_url,
         layout=layout,

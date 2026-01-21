@@ -7,7 +7,7 @@ from collections import defaultdict
 from ..mol.compute_2d_coords import compute_2d_coords
 from ..smiles.parse import parse
 from .collect_highlights import SmartsEntry, collect_highlights
-from .to_svg import to_svg
+from .svg_from_mol import svg_from_mol
 
 INVALID_SMILES_TEMPLATE: str = (
     "<div style='color:red;'>[x] Invalid SMILES: <code>{smi}</code></div>"
@@ -71,7 +71,7 @@ def with_highlights(
         match_counter=match_counter,
     )
 
-    svg = to_svg(
+    svg = svg_from_mol(
         mol=mol,
         width=width,
         height=height,

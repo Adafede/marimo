@@ -1,13 +1,13 @@
 """Generate CDK Depict URL from SMILES string."""
 
-__all__ = ["url_from_smiles"]
+__all__ = ["svg_from_smiles"]
 
 from urllib.parse import quote
 
 from .url import CDK_DEPICT_URL
 
 
-def url_from_smiles(
+def svg_from_smiles(
     smiles: str | None,
     base_url: str = CDK_DEPICT_URL,
     layout: str = "cow",

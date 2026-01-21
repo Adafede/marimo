@@ -1,6 +1,7 @@
 # /// script
 # requires-python = "==3.13.*"
 # dependencies = [
+#     # "epam-indigo>=1.36.1",
 #     "great-tables==0.20.0",
 #     "marimo",
 #     "polars==1.37.1",
@@ -97,7 +98,10 @@ with app.setup:
     from modules.net.sparql.execute_with_retry import execute_with_retry
     from modules.net.sparql.parse_response import parse_sparql_response
     from modules.net.sparql.values_clause import values_clause
-    from modules.chem.cdk.depict.html_from_smiles import html_from_smiles
+    from modules.chem.cdk.depict.svg_from_smiles import svg_from_smiles
+    # indigo alternative
+    # from modules.chem.indigo.depict.svg_from_mol import svg_from_mol
+    # from modules.chem.indigo.mol.mol_from_smiles import mol_from_smiles
     from modules.data.filter.mass import filter_mass
     from modules.data.filter.year import filter_year
     from modules.data.filter.formula import filter_formula
@@ -106,6 +110,7 @@ with app.setup:
     from modules.text.formula.element_config import (
         ELEMENT_DEFAULTS,
     )
+    from modules.ui.html_from_image import html_from_image
     from modules.ui.marimo.wrap_html import wrap_html
     from modules.ui.marimo.wrap_image import wrap_image
     from modules.io.compress.if_large import compress_if_large
@@ -881,7 +886,9 @@ def build_display_dataframe(df: pl.DataFrame) -> pl.DataFrame:
 
     # Wrapper functions that capture colors via closure
     def _structure_img(smiles):
-        return html_from_smiles(smiles) if smiles else ""
+        # indigo alternative
+        # return html_from_image(svg_from_mol(mol_from_smiles(smiles))) if smiles else ""
+        return html_from_image(svg_from_smiles(smiles)) if smiles else ""
 
     def _compound_link(url):
         return link_from_qid(url, color_compound)

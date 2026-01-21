@@ -7,6 +7,7 @@ name = "adafedemarimo"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "epam-indigo" },
     { name = "marimo" },
     { name = "polars" },
     { name = "pydantic-ai" },
@@ -21,6 +22,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "epam-indigo", specifier = ">=1.36.1" },
     { name = "marimo", specifier = ">=0.19.4" },
     { name = "polars", specifier = ">=1.37.1" },
     { name = "pydantic-ai", specifier = ">=1.44.0" },
@@ -537,6 +539,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/f5/22/900cb125c76b7aaa450ce02fd727f452243f2e91a61af068b40adba60ea9/email_validator-2.3.0.tar.gz", hash = "sha256:9fc05c37f2f6cf439ff414f8fc46d917929974a82244c20eb10231ba60c54426", size = 51238 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/de/15/545e2b6cf2e3be84bc1ed85613edd75b8aea69807a71c26f4ca6a9258e82/email_validator-2.3.0-py3-none-any.whl", hash = "sha256:80f13f623413e6b197ae73bb10bf4eb0908faf509ad8362c5edeb0be7fd450b4", size = 35604 },
+]
+
+[[package]]
+name = "epam-indigo"
+version = "1.36.1"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a6/5d/00aab65c3a7d029b0bab9c07ea4139c2d96413114a40fd7549a774902687/epam_indigo-1.36.1-py3-none-macosx_10_7_intel.whl", hash = "sha256:1c5a041afd307e9bb2ad621ed9a0233e40e4244a0c890a7355f5dc20f1a3e41d", size = 6363358 },
+    { url = "https://files.pythonhosted.org/packages/5c/ca/aa1fcb61463ebabe7128eea3f03a28a1139076d178acc1ca72091980b76c/epam_indigo-1.36.1-py3-none-macosx_11_0_arm64.whl", hash = "sha256:f8420ded0f1e0c98d9ebafdb19e6b321dde700160265e6b08a84ca4265ee08aa", size = 5878826 },
+    { url = "https://files.pythonhosted.org/packages/56/fb/e23fe6458e8b390fe785d229dc94ebdc2708e478b5908439135a6878f4eb/epam_indigo-1.36.1-py3-none-manylinux1_x86_64.whl", hash = "sha256:9670c9e07d9fc94d0dbfdb9b342ee0a090a2a280a1457199d70f389cc66f0629", size = 8946147 },
+    { url = "https://files.pythonhosted.org/packages/f5/14/5678c1a2d4c4b8d2a079df0cd451756c133b3904790214d989cb97eb2a93/epam_indigo-1.36.1-py3-none-manylinux2014_aarch64.whl", hash = "sha256:1762d33ecc6766aa7b0874c039c3dd2fec50722f82f90866b500d9c03d402510", size = 8417830 },
+    { url = "https://files.pythonhosted.org/packages/a2/1e/e59bbf14fe715a8ab6706e71180c8ad474274e8e01ff77e8d76ef3b444a6/epam_indigo-1.36.1-py3-none-win32.whl", hash = "sha256:8d66aea9a807b5c8ef9d4906176890d42236cdb323914bdee9d9e8de04948b03", size = 7933487 },
+    { url = "https://files.pythonhosted.org/packages/68/b6/15e424781bc8adbd7dd05711125016a8dff1796d29ff6b61d9272285582b/epam_indigo-1.36.1-py3-none-win_amd64.whl", hash = "sha256:49fbf4cfa687206c7731dd2ec6b66894b2bb8691f71908237763c7d5aeb337d0", size = 8765849 },
 ]
 
 [[package]]
