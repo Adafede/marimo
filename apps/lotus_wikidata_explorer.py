@@ -55,7 +55,7 @@ with app.setup:
     from datetime import datetime
     from rdflib import Graph, Literal, URIRef, BNode
     from rdflib.namespace import RDF, RDFS, XSD, DCTERMS
-    from typing import Any
+    from typing import Any, Final, TypedDict, cast
 
     # Toggle this flag for local vs remote development
     _USE_LOCAL = True  # Set to True for local development
@@ -127,7 +127,32 @@ with app.setup:
     # APPLICATION CONFIGURATION
     # ====================================================================
 
-    CONFIG = {
+    class ConfigDict(TypedDict):
+        app_version: str
+        app_name: str
+        app_url: str
+        qlever_endpoint: str
+        wikidata_endpoint: str
+        idsm_endpoint: str
+        table_row_limit: int
+        download_embed_threshold_bytes: int
+        color_hyperlink: str
+        color_wikidata_blue: str
+        color_wikidata_green: str
+        color_wikidata_red: str
+        page_size_default: int
+        page_size_export: int
+        year_range_start: int
+        year_default_start: int
+        mass_default_min: int
+        mass_default_max: int
+        mass_ui_max: int
+        default_search_type: str
+        default_similarity_threshold: float
+        default_smiles: str
+        default_taxon: str
+
+    CONFIG: Final[ConfigDict] = {
         "app_version": "0.1.0",
         "app_name": "LOTUS Wikidata Explorer",
         "app_url": "https://github.com/Adafede/marimo/blob/main/apps/lotus_wikidata_explorer.py",
@@ -259,10 +284,12 @@ class SearchParams:
             return None
         elem_args = {}
         for e in ("c", "h", "n", "o", "p", "s"):
-            min_v, max_v = getattr(self, f"{e}_min"), getattr(self, f"{e}_max")
-            elem_args[f"{e}_min"] = min_v or 0
-            elem_args[f"{e}_max"] = (
-                max_v if max_v is not None else CONFIG[f"element_{e}_max"]
+            min_key = f"{e}_min"
+            max_key = f"{e}_max"
+            min_v, max_v = getattr(self, min_key), getattr(self, max_key)
+            elem_args[min_key] = min_v or 0
+            elem_args[max_key] = (
+                max_v if max_v is not None else cast(int, CONFIG[f"element_{max_key}"])
             )
         return create_filters(
             exact_formula=self.exact_formula,
@@ -538,7 +565,7 @@ def generate_filename(
     taxon_name: str,
     file_type: str,
     prefix: str = "lotus_data",
-    filters: dict[str, Any] = None,
+    filters: dict[str, Any] | None = None,
 ) -> str:
     """Generate standardized, descriptive filename for exports."""
     # Handle wildcard for all taxa
@@ -739,10 +766,10 @@ def query_wikidata(
     # Build query based on search mode
     if smiles:
         query = query_sachem(
-            validate_and_escape(smiles),
-            smiles_search_type,
-            smiles_threshold,
-            qid,
+            escaped_smiles=validate_and_escape(smiles),
+            search_type=smiles_search_type,
+            threshold=smiles_threshold,
+            taxon_qid=qid,
         )
     elif qid == "*" or qid is None:
         query = query_all_compounds()
@@ -1035,7 +1062,7 @@ def create_export_metadata(
 
     description += "Retrieved via LOTUS Wikidata Explorer with chemical search capabilities (SACHEM/IDSM)."
 
-    metadata = {
+    metadata: dict[str, Any] = {
         "@context": "https://schema.org/",
         "@type": "Dataset",
         "name": dataset_name,

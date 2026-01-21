@@ -7,7 +7,7 @@ DEFAULT_REQUIRED_ATOMS: str = "CNOSPFIBcnops"
 
 
 def validate(
-    smiles: str,
+    smiles: str | None,
     max_length: int = DEFAULT_MAX_LENGTH,
     required_atoms: str = DEFAULT_REQUIRED_ATOMS,
 ) -> tuple[bool, str | None]:

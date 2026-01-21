@@ -281,7 +281,7 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
     def get_inlined_code_with_deps(
         module_path: str,
         indent: str,
-        aliases: dict = None,
+        aliases: dict | None = None,
     ) -> str:
         """Get inlined code for a module, including its transitive dependencies.
 
