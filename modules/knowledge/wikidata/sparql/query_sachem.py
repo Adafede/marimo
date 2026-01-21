@@ -58,7 +58,11 @@ def query_sachem(
     Returns:
         Complete SPARQL query string
     """
-    sachem_clause = build_sachem_service(escaped_smiles, search_type, threshold)
+    sachem_clause = build_sachem_service(
+        escaped_smiles=escaped_smiles,
+        search_type=search_type,
+        threshold=threshold,
+    )
 
     if taxon_qid:
         # OPTIMIZED: Filter by taxonomic data FIRST (uses indexes, much smaller set)

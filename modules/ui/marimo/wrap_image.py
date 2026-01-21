@@ -11,7 +11,7 @@ SRC_PATTERN = re.compile(r'src="([^"]+)"')
 
 
 def wrap_image(
-    html_str: str,
+    html_str: str | None,
     max_width: str = "150px",
     max_height: str = "100px",
     rounded: bool = True,

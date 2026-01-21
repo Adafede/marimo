@@ -21,3 +21,6 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
+
+[tool.ty.rules]
+unresolved-import = "ignore"

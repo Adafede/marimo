@@ -3,10 +3,10 @@
 __all__ = ["validate_and_escape"]
 
 from .validate import validate
-from .escape_for_sparql import escape_for_sparql
+from ..strings.escape_backslashes import escape_backslashes
 
 
-def validate_and_escape(smiles: str) -> str:
+def validate_and_escape(smiles: str | None) -> str | None:
     """Validate and escape SMILES string for SPARQL. Raises ValueError if invalid."""
     if not smiles:
         return smiles
@@ -15,4 +15,4 @@ def validate_and_escape(smiles: str) -> str:
     if not is_valid:
         raise ValueError(f"Invalid SMILES: {error_msg}")
 
-    return escape_for_sparql(smiles)
+    return escape_backslashes(smiles)

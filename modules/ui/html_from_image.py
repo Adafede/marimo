@@ -24,7 +24,7 @@ def build_style(
 
 
 def html_from_image(
-    img: str,
+    img: str | None,
     max_width: str = DEFAULT_MAX_WIDTH,
     max_height: str = DEFAULT_MAX_HEIGHT,
     rounded: bool = True,
