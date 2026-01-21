@@ -99,6 +99,7 @@ with app.setup:
     from modules.net.sparql.parse_response import parse_sparql_response
     from modules.net.sparql.values_clause import values_clause
     from modules.chem.cdk.depict.svg_from_smiles import svg_from_smiles
+
     # indigo alternative
     # from modules.chem.indigo.depict.svg_from_mol import svg_from_mol
     # from modules.chem.indigo.mol.mol_from_smiles import mol_from_smiles

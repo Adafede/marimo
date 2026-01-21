@@ -6,6 +6,7 @@ import base64
 from indigo import IndigoObject
 from ..indigo_instance import get_indigo, get_renderer
 
+
 def svg_from_mol(
     mol: IndigoObject | None,
     img_format: str = "svg",

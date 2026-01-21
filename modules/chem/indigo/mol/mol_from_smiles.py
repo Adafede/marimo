@@ -5,6 +5,7 @@ __all__ = ["mol_from_smiles"]
 from indigo import IndigoObject
 from ..indigo_instance import get_indigo
 
+
 def mol_from_smiles(
     smiles: str | None,
     aromatize: bool = True,
