@@ -850,7 +850,7 @@ def query_wikidata(
 
     # Mass to float
     if "mass" in df.columns:
-        transforms.append(pl.col("mass").cast(pl.Float64, strict=False).alias("mass"))
+        transforms.append(pl.col("mass").cast(pl.Float32, strict=False).alias("mass"))
 
     # Apply all transformations in one go (single memory allocation)
     if transforms:
