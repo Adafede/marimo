@@ -8,14 +8,10 @@
 
 import marimo
 
-NBDIR = marimo.notebook_dir()
-
-__generated_with = "0.19.4"
+__generated_with = "0.19.6"
 app = marimo.App(
     width="medium",
     app_title="Automated substructure depiction and verification",
-    css_file=NBDIR / "public/custom.css",
-    html_head_file=NBDIR / "public/head.html",
 )
 
 with app.setup:

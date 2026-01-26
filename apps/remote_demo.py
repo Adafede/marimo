@@ -7,14 +7,8 @@
 
 import marimo
 
-NBDIR = marimo.notebook_dir()
-
-__generated_with = "0.19.4"
-app = marimo.App(
-    app_title="Remote Demo",
-    css_file=NBDIR / "public/custom.css",
-    html_head_file=NBDIR / "public/head.html",
-)
+__generated_with = "0.19.6"
+app = marimo.App(app_title="Remote Demo")
 
 with app.setup:
     import marimo as mo
@@ -40,9 +34,9 @@ def imports():
         sys.path.insert(0, ".")
     # Modules will be auto-inlined by the build script
     from modules.text.formula.parse import parse
-    from modules.chem.cdk.depict.url_from_smiles import url_from_smiles
+    from modules.chem.cdk.depict.svg_from_smiles import svg_from_smiles
 
-    return parse, url_from_smiles
+    return parse, svg_from_smiles
 
 
 @app.cell
@@ -52,8 +46,8 @@ def example_1(parse):
 
 
 @app.cell
-def example_2(url_from_smiles):
-    mo.show_code(mo.image(url_from_smiles("CCO")), position="above")
+def example_2(svg_from_smiles):
+    mo.show_code(mo.image(svg_from_smiles("CCO")), position="above")
     return
 
 

@@ -30,15 +30,8 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import marimo
 
-NBDIR = marimo.notebook_dir()
-
-__generated_with = "0.19.4"
-app = marimo.App(
-    width="full",
-    app_title="LOTUS Wikidata Explorer",
-    css_file=NBDIR / "public/custom.css",
-    html_head_file=NBDIR / "public/head.html",
-)
+__generated_with = "0.19.6"
+app = marimo.App(width="full", app_title="LOTUS Wikidata Explorer")
 
 with app.setup:
     import marimo as mo
