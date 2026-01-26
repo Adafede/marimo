@@ -503,6 +503,19 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
 
     logger.info(f"Successfully inlined modules into {output_path}")
 
+def inject_simpleanalytics(html_path: Path) -> None:
+    html = html_path.read_text()
+
+    script = """
+    <!-- Simple Analytics -->
+    <script async src="https://scripts.simpleanalyticscdn.com/latest.js"></script>
+    """
+
+    # Insert before </body>
+    if "</body>" in html:
+        html = html.replace("</body>", script + "\n</body>")
+        html_path.write_text(html)
+
 
 def _export_html_wasm(
     notebook_path: Path,
@@ -573,6 +586,8 @@ def _export_html_wasm(
         logger.debug(f"Running command: {cmd}")
         subprocess.run(cmd, capture_output=True, text=True, check=True)
         logger.info(f"Successfully exported {notebook_path}")
+        inject_simpleanalytics(output_file)
+        logger.info("Successfully added analytics")
 
         if inlined_path:
             logger.info(f"Inlined notebook saved to {inlined_path}")
