@@ -14,7 +14,7 @@ __generated_with = "0.18.1"
 app = marimo.App(
     width="medium",
     app_title="Test app",
-    html_head_file="public/dokieli.html",
+    html_head_file="dokieli.html",
 )
 
 with app.setup:
