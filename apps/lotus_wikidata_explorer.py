@@ -2793,7 +2793,7 @@ def ui_params():
 def footer():
     mo.md("""
     ---
-    **Data:** 
+    **Data:**
     <a href="https://www.wikidata.org/wiki/Q104225190" style="color:#990000;">LOTUS Initiative</a> &
     <a href="https://www.wikidata.org/" style="color:#990000;">Wikidata</a> |
     **Code:**
