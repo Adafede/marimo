@@ -503,6 +503,7 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
 
     logger.info(f"Successfully inlined modules into {output_path}")
 
+
 def inject_simpleanalytics(html_path: Path) -> None:
     html = html_path.read_text()
 
