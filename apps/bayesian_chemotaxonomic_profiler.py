@@ -450,14 +450,14 @@ def validate_columns(
 
 
 @app.function
+@app.
 def read_table(
-    path: Path,
+    path: str | Path,
     separator: str = ",",
     expected: Iterable[str] | None = None,
     name: str = "table",
 ) -> pl.DataFrame:
-    """Read CSV and optionally validate required columns."""
-    df = pl.read_csv(str(path), separator=separator)
+    df = pl.read_csv(path, separator=separator)
     return validate_columns(df, expected, name) if expected else df
 
 
@@ -2342,19 +2342,21 @@ def show_lineage_profile(markers, scaffold_select, taxon_lineage):
 
 
 @app.cell
-def top10_md():
+def top10_md(
+    effective_config,
+    ):
     _out = mo.vstack(
         [
             mo.md("# Top 10 Taxa by Chemical Distinctiveness"),
-            mo.md("""
+            mo.md(f"""
         For each rank, we find the **10 taxa with most distinctive chemistry**, 
         then show all their enriched scaffolds.
 
         **Selection criteria:**
-        - P(enriched) ≥ 0.89 (high confidence)
-        - ESS ≥ 3 (reliable data)
-        - OBS ≥ 3 (reliable data)
-        - log₂FC ≥ 1.5 (strong enrichment, ≥3× baseline)
+        - P(enriched) ≥ {MIN_PROB}
+        - ESS ≥ {effective_config["stats"]["min_ess"]}
+        - OBS ≥ {MIN_OBS}
+        - log₂FC ≥ {MIN_LOG2FC}
         """),
         ]
     )
