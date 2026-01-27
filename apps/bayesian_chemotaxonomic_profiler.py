@@ -449,7 +449,7 @@ def read_table(
     name: str = "table",
 ) -> pl.DataFrame:
     """Read CSV/CSV.GZ from local or remote path and optionally validate columns."""
-    df = pl.scan_csv(
+    df = pl.read_csv(
         str(path),
         low_memory=True,
         rechunk=False,
@@ -472,7 +472,7 @@ def load_fragments(path: str, min_freq: int) -> pl.DataFrame:
 def load_compound_fragment_mapping(path: str) -> pl.DataFrame:
     """Parse compound-to-fragment mapping file."""
     return (
-        pl.scan_csv(
+        pl.read_csv(
             path,
             low_memory=True,
             rechunk=False,
@@ -487,7 +487,6 @@ def load_compound_fragment_mapping(path: str) -> pl.DataFrame:
             ],
         )
         .select(["compound_name", "fragments_str"])
-        .collect()
     )
 
 
