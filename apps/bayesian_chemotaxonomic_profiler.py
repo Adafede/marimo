@@ -108,7 +108,6 @@ app = marimo.App(width="medium", app_title="Bayesian Chemotaxonomic Markers")
 
 with app.setup:
     import fsspec
-    import io
     import json
     import logging
     import sys
@@ -452,7 +451,7 @@ def read_table(
 ) -> pl.DataFrame:
     """Read CSV/CSV.GZ from local or remote path and optionally validate columns."""
     df = pl.read_csv(
-        io.BytesIO(str(path)),
+        str(path),
         low_memory=True,
         rechunk=False,
         separator=separator,
@@ -489,7 +488,9 @@ def load_compound_fragment_mapping(path: Path) -> pl.DataFrame:
     """Parse compound-to-fragment mapping file."""
     return (
         pl.read_csv(
-            path,
+            str(path),
+            low_memory=True,
+            rechunk=False,
             new_columns=["raw"],
             truncate_ragged_lines=True,
             separator="\n",
@@ -1567,7 +1568,9 @@ def load_data(effective_config):
         # Load canonical SMILES from local file - REQUIRED for MORTAR row mapping
         # The MORTAR fragment files map by row order to this file
         compound_can_smiles = pl.read_csv(
-            effective_config["data_paths"]["path_can_smi"],
+            str(effective_config["data_paths"]["path_can_smi"]),
+            low_memory=True,
+            rechunk=False,
             has_header=False,
             new_columns=["compound_smiles"],
         )
