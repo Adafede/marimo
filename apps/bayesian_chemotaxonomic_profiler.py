@@ -4,7 +4,6 @@
 #     "aiohttp==3.13.3",
 #     "altair==6.0.0",
 #     "cmcrameri==1.9",
-#     "fsspec==2026.1.0",
 #     "marimo",
 #     "numpy==2.4.1",
 #     "polars==1.37.1",
@@ -109,7 +108,6 @@ __generated_with = "0.19.6"
 app = marimo.App(width="medium", app_title="Bayesian Chemotaxonomic Markers")
 
 with app.setup:
-    import fsspec
     import json
     import logging
     import sys
@@ -117,7 +115,6 @@ with app.setup:
     import urllib.request
     import urllib.parse
     from dataclasses import dataclass, field
-    from pathlib import Path
     from typing import Any, Iterable, Final, Sequence, TypedDict
 
     import altair as alt
@@ -140,7 +137,6 @@ with app.setup:
         rope_decision,
     )
 
-    fs = fsspec.filesystem("http", asynchronous=False, use_requests=True)
     alt.data_transformers.enable("vegafusion")
 
     # Patch urllib for Pyodide/WASM (browser) compatibility
@@ -447,7 +443,7 @@ def validate_columns(
 
 @app.function
 def read_table(
-    path: str | Path,
+    path: str,
     separator: str = ",",
     expected: Iterable[str] | None = None,
     name: str = "table",
@@ -477,7 +473,7 @@ def select_first_existing(
 
 
 @app.function
-def load_fragments(path: Path, min_freq: int) -> pl.DataFrame:
+def load_fragments(path: str, min_freq: int) -> pl.DataFrame:
     """Load fragment SMILES, filtering by minimum molecule frequency."""
     return read_table(
         path,
@@ -487,11 +483,11 @@ def load_fragments(path: Path, min_freq: int) -> pl.DataFrame:
 
 
 @app.function
-def load_compound_fragment_mapping(path: Path) -> pl.DataFrame:
+def load_compound_fragment_mapping(path: str) -> pl.DataFrame:
     """Parse compound-to-fragment mapping file."""
     return (
         pl.read_csv(
-            str(path),
+            path,
             low_memory=True,
             rechunk=False,
             new_columns=["raw"],
@@ -1581,18 +1577,18 @@ def load_data(effective_config):
             f"✓ Canonical SMILES (local): {compound_can_smiles.height:,} compounds",
         )
 
-        # Try to load local fragment files if they exist
-        items_path = select_first_existing(
-            effective_config["data_paths"],
-            ["path_items_cdk", "path_items_ert", "path_items_sru"],
-        )
-        compound_mapping = (
-            load_compound_fragment_mapping(items_path) if items_path else None
-        )
+        data_path = effective_config["data_paths"]
+
+        compound_mappings = {
+            key: load_compound_fragment_mapping(data_path[key])
+            if key in data_path
+            else None
+            for key in ["path_items_cdk", "path_items_ert", "path_items_sru"]
+        }
 
         frag_tables = []
         for attr in ["path_frags_cdk", "path_frags_ert", "path_frags_sru"]:
-            p = Path(effective_config["data_paths"][attr])
+            p = effective_config["data_paths"][attr]
             frag_tables.append(
                 load_fragments(
                     p, effective_config["filtering"]["min_frequency_scaffold"]
