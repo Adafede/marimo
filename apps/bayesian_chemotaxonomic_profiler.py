@@ -1540,6 +1540,10 @@ def load_data_wd(effective_config):
                 """,
                 endpoint=effective_config["qlever_endpoint"],
             )
+        ).select(
+            pl.col("compound").cast(pl.Int64, strict=False),
+            pl.col("compound_smiles").cast(pl.String, strict=False),
+        ).drop_nulls(
         ).lazy()
         _compound_ids = compound_taxon.select("compound").unique()
         compound_smiles = compound_smiles.collect().join(
@@ -1598,6 +1602,10 @@ def load_data_wd(effective_config):
                 """,
                 endpoint=effective_config["qlever_endpoint"],
             )
+        ).select(
+            pl.col("taxon").cast(pl.Int64, strict=False),
+            pl.col("taxon_rank").cast(pl.Int64, strict=False),
+        ).drop_nulls(
         ).lazy()
         taxon_rank = taxon_rank.filter(pl.col("taxon").is_in(_to_keep)).collect()
 
@@ -1621,6 +1629,10 @@ def load_data_wd(effective_config):
                 """,
                 endpoint=effective_config["qlever_endpoint"],
             )
+        ).select(
+            pl.col("taxon").cast(pl.Int64, strict=False),
+            pl.col("taxon_name").cast(pl.String, strict=False),
+        ).drop_nulls(
         ).lazy()
         taxon_name = taxon_name.filter(pl.col("taxon").is_in(_to_keep)).collect()
 
