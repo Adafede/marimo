@@ -1,6 +1,7 @@
 # /// script
 # requires-python = "==3.13.*"
 # dependencies = [
+#     "aiohttp==3.13.3",
 #     "altair==6.0.0",
 #     "cmcrameri==1.9",
 #     "fsspec==2026.1.0",
@@ -8,6 +9,7 @@
 #     "numpy==2.4.1",
 #     "polars==1.37.1",
 #     "pyarrow==23.0.0",
+#     "requests==2.32.5",
 #     "scipy==1.17.0",
 #     "simple-parsing==0.1.7",
 #     # "vegafusion==2.0.3",

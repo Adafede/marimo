@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Minimal, reusable utilities for marimo applications"
 requires-python = ">=3.13"
 dependencies = [
+ "aiohttp>=3.13.3",
   "altair>=6.0.0",
   "cmcrameri>=1.9",
   "epam-indigo>=1.36.1",
@@ -15,6 +16,7 @@ dependencies = [
   "pydantic-ai>=1.47.0",
   "rdflib>=7.5.0",
   "rdkit>=2025.9.3",
+  "requests>=2.32.5",
   "scipy>=1.17.0",
   "simple-parsing>=0.1.8",
   "vegafusion>=2.0.3",
