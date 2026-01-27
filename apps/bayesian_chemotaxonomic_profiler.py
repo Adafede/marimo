@@ -108,6 +108,7 @@ app = marimo.App(width="medium", app_title="Bayesian Chemotaxonomic Markers")
 
 with app.setup:
     import fsspec
+    import io
     import json
     import logging
     import sys
@@ -358,7 +359,9 @@ with app.setup:
     # DEFAULT DATA PATHS
     # ====================================================================
     # The base URL where your files are hosted
-    BASE_URL = "https://github.com/Adafede/marimo/raw/refs/heads/main/apps/public/mortar"
+    BASE_URL = (
+        "https://github.com/Adafede/marimo/raw/refs/heads/main/apps/public/mortar"
+    )
     PROXY = "https://corsproxy.marimo.app/"
 
     def get_proxied_url(filename: str) -> str:
@@ -448,7 +451,12 @@ def read_table(
     name: str = "table",
 ) -> pl.DataFrame:
     """Read CSV/CSV.GZ from local or remote path and optionally validate columns."""
-    df = pl.read_csv(str(path), separator=separator)
+    df = pl.read_csv(
+        io.BytesIO(str(path)),
+        low_memory=True,
+        rechunk=False,
+        separator=separator,
+    )
     return validate_columns(df, expected, name) if expected else df
 
 
