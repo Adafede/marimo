@@ -373,7 +373,7 @@ def resolve_ambiguous_matches(
     )
     connectivity_map = {}
     if csv_bytes and csv_bytes.strip():
-        conn_df = parse_sparql_response(csv_bytes)
+        conn_df = parse_sparql_response(csv_bytes).collect()
         for row in conn_df.iter_rows(named=True):
             taxon_url = row.get("taxon", "")
             count = row.get("compound_count", 0)
@@ -398,7 +398,7 @@ def resolve_ambiguous_matches(
     )
     details_map = {}
     if csv_bytes and csv_bytes.strip():
-        details_df = parse_sparql_response(csv_bytes)
+        details_df = parse_sparql_response(csv_bytes).collect()
         for row in details_df.iter_rows(named=True):
             taxon_url = row.get("taxon", "")
             if taxon_url:
@@ -458,7 +458,7 @@ def resolve_taxon_to_qid(
         if not csv_bytes or not csv_bytes.strip():
             return None, None
 
-        df = parse_sparql_response(csv_bytes)
+        df = parse_sparql_response(csv_bytes).collect()
         del csv_bytes
 
         if df.is_empty():
@@ -781,7 +781,7 @@ def query_wikidata(
         return pl.DataFrame()
 
     # Parse response directly into DataFrame
-    df = parse_sparql_response(csv_bytes)
+    df = parse_sparql_response(csv_bytes).collect()
     del csv_bytes  # Free bytes immediately
 
     # Early return if no data rows

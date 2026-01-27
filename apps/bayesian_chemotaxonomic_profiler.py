@@ -1520,7 +1520,7 @@ def load_data_wd(effective_config):
                 """,
                 endpoint=effective_config["qlever_endpoint"],
             )
-        )
+        ).collect()
 
         compound_smiles = parse_sparql_response(
             execute_with_retry(
@@ -1532,9 +1532,9 @@ def load_data_wd(effective_config):
                 """,
                 endpoint=effective_config["qlever_endpoint"],
             )
-        )
+        ).lazy()
         _compound_ids = compound_taxon.select("compound").unique()
-        compound_smiles = compound_smiles.join(
+        compound_smiles = compound_smiles.collect().join(
             _compound_ids, on="compound", how="inner"
         )
 
@@ -1548,24 +1548,22 @@ def load_data_wd(effective_config):
                 """,
                 endpoint=effective_config["qlever_endpoint"],
             )
-        )
+        ).collect()
 
     with mo.status.spinner("Shrinking data and lineages..."):
-        lineage = (
-            build_hierarchy_lineage(
-                edges=taxon_parent,
-                child="taxon",
-                parent="taxon_parent",
-                focus=compound_taxon.select("taxon").unique(),
-            )
-            .rename(
-                {"ancestor": "taxon_ancestor", "distance": "taxon_distance"},
-            )
+        lineage = build_hierarchy_lineage(
+            edges=taxon_parent,
+            child="taxon",
+            parent="taxon_parent",
+            focus=compound_taxon.select("taxon").unique(),
+        ).rename(
+            {"ancestor": "taxon_ancestor", "distance": "taxon_distance"},
         )
 
-        _to_keep = lineage.select(
-            [pl.concat_list(["taxon", "taxon_ancestor"]).explode()]
-        ).to_series()
+        _to_keep = set(pl.concat([
+            lineage.select("taxon"),
+            lineage.select(pl.col("taxon_ancestor").alias("taxon"))
+        ]).to_series().unique())
         taxon_parent = taxon_parent.filter(pl.col("taxon").is_in(_to_keep))
 
         taxon_rank = parse_sparql_response(
@@ -1578,14 +1576,14 @@ def load_data_wd(effective_config):
                 """,
                 endpoint=effective_config["qlever_endpoint"],
             )
-        )
-        taxon_rank = taxon_rank.filter(pl.col("taxon").is_in(_to_keep))
+        ).lazy()
+        taxon_rank = taxon_rank.filter(pl.col("taxon").is_in(_to_keep)).collect()
 
         lineage = lineage.join(
-                taxon_rank.rename({"taxon": "taxon_ancestor"}),
-                on="taxon_ancestor",
-                how="left",
-            )
+            taxon_rank.rename({"taxon": "taxon_ancestor"}),
+            on="taxon_ancestor",
+            how="left",
+        )
 
         taxon_name = parse_sparql_response(
             execute_with_retry(
@@ -1597,8 +1595,8 @@ def load_data_wd(effective_config):
                 """,
                 endpoint=effective_config["qlever_endpoint"],
             )
-        )
-        taxon_name = taxon_name.filter(pl.col("taxon").is_in(_to_keep))
+        ).lazy()
+        taxon_name = taxon_name.filter(pl.col("taxon").is_in(_to_keep)).collect()
 
         logging.info(f"✓ Compound SMILES: {compound_smiles.height:,} compounds")
         logging.info(f"✓ Taxon names: {taxon_name.height:,}")
