@@ -31,10 +31,10 @@ def parse_sparql_response(response_bytes: bytes) -> pl.DataFrame:
     # Stream directly to Polars - most memory efficient path
     # Use low_memory=True to reduce peak memory usage for large datasets
     try:
-        return pl.read_csv(
+        return pl.scan_csv(
             io.BytesIO(response_bytes),
             low_memory=True,
-            rechunk=False,  # Avoid extra memory copy from rechunking
+            rechunk=False,
         )
     except Exception:
         return pl.DataFrame()
