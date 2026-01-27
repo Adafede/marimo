@@ -44,6 +44,7 @@ with app.setup:
     import sys
     import urllib.request
     import urllib.parse
+    from contextlib import contextmanager
     from dataclasses import dataclass, field
     from datetime import datetime
     from rdflib import Graph, Literal, URIRef, BNode
@@ -80,9 +81,6 @@ with app.setup:
     from modules.knowledge.wikidata.sparql.query_taxon_details import (
         query_taxon_details,
     )
-    from modules.knowledge.wikidata.sparql.query_taxon_connectivity import (
-        query_taxon_connectivity,
-    )
     from modules.knowledge.wikidata.sparql.query_sachem import query_sachem
     from modules.knowledge.wikidata.sparql.query_compounds import (
         query_compounds_by_taxon,
@@ -96,9 +94,6 @@ with app.setup:
     # indigo alternative
     # from modules.chem.indigo.depict.svg_from_mol import svg_from_mol
     # from modules.chem.indigo.mol.mol_from_smiles import mol_from_smiles
-    from modules.data.filter.mass import filter_mass
-    from modules.data.filter.year import filter_year
-    from modules.data.filter.formula import filter_formula
     from modules.knowledge.rdf.graph.add_literal import add_literal
     from modules.knowledge.rdf.namespace.wikidata import WIKIDATA_NAMESPACES
     from modules.text.formula.element_config import (
@@ -365,13 +360,46 @@ def resolve_ambiguous_matches(
     """Resolve ambiguous taxon matches by connectivity. Returns (selected_qid, warning_html)."""
     qids = [qid for qid, _ in matches]
 
-    # Query connectivity to find the most connected taxon (CSV for memory efficiency)
-    csv_bytes = execute_with_retry(
-        query_taxon_connectivity(values_clause("taxon", qids, prefix="wd:")),
-        endpoint=CONFIG["qlever_endpoint"],
-        fallback_endpoint=None,
-    )
+    # Combined SPARQL query (one network round-trip)
+    combined_query = f"""
+    {PREFIXES}
+    SELECT DISTINCT
+    (xsd:integer(STRAFTER(STR(?t), "Q")) AS ?taxon)
+    ?taxonLabel
+    ?taxonDescription
+    (xsd:integer(STRAFTER(STR(?tp), "Q")) AS ?taxon_parent)
+    ?taxon_parentLabel
+    (COUNT(DISTINCT ?c) AS ?compound_count)
+    WHERE {{
+        VALUES ?t {{ {" ".join(f"wd:Q{qid}" for qid in qids)} }}
+        OPTIONAL {{ ?t wdt:P171 ?tp }}
+        OPTIONAL {{ ?t rdfs:label ?taxonLabel . FILTER(LANG(?taxonLabel) = "en") }}
+        OPTIONAL {{ ?t schema:description ?taxonDescription . FILTER(LANG(?taxonDescription) = "en") }}
+        OPTIONAL {{ ?tp rdfs:label ?taxon_parentLabel . FILTER(LANG(?taxon_parentLabel) = "en") }}
+        OPTIONAL {{
+            ?c wdt:P235 ?inchikey ;
+               p:P703/ps:P703 ?descendant .
+            ?descendant (wdt:P171*) ?t .
+        }}
+    }}
+    GROUP BY ?t ?taxonLabel ?taxonDescription ?tp ?taxon_parentLabel
+    """
+
+    # Stream and build maps in single pass
     connectivity_map = {}
+    details_map = {}
+
+    lazy_df = execute_with_streaming(combined_query, CONFIG["qlever_endpoint"])
+
+    # Process in streaming fashion (never materialize full df)
+    for row in lazy_df.collect().iter_rows(named=True):
+        qid = str(row["taxon"])
+        connectivity_map[qid] = int(row.get("compound_count", 0))
+        details_map[qid] = (
+            row.get("taxonLabel", ""),
+            row.get("taxonDescription", ""),
+            row.get("taxon_parentLabel", ""),
+        )
     if csv_bytes and csv_bytes.strip():
         conn_df = parse_sparql_response(csv_bytes).collect()
         for row in conn_df.iter_rows(named=True):
@@ -741,29 +769,76 @@ def query_wikidata(
     2. SMILES-only: Find compounds by chemical structure (SACHEM)
     3. Combined: Find structures within a specific taxonomic group
     """
+
+    @contextmanager
+    def managed_sparql_query(query: str, endpoint: str, timeout: int = 120):
+        """
+        Execute SPARQL query with guaranteed cleanup.
+
+        Ensures CSV bytes are freed immediately after parsing.
+        """
+        csv_bytes = None
+        try:
+            client = Client(endpoint=endpoint, timeout=timeout)
+            csv_bytes = client.query_csv(query=query)
+            yield csv_bytes
+        finally:
+            if csv_bytes:
+                del csv_bytes
+
+    def optimize_dataframe_types(df: pl.DataFrame) -> pl.DataFrame:
+        """
+        Optimize DataFrame memory footprint.
+
+        Optimizations:
+        - Wikidata QIDs: Int64 → Int32 (50% saving)
+        - Repeated strings: → Categorical (70% saving)
+        - Mass: Float64 → Float32 (sufficient precision)
+        """
+        if df.is_empty():
+            return df
+        optimizations = []
+        # Wikidata QID columns: Int64 → Int32
+        for col in ["compound", "taxon", "reference"]:
+            if col in df.columns:
+                if df[col].dtype == pl.Int64:
+                    max_val = df[col].max()
+                    if max_val and max_val < 2**31:
+                        optimizations.append(pl.col(col).cast(pl.Int32).alias(col))
+                elif df[col].dtype == pl.String:
+                    # Handle string QIDs (extract number and cast to Int32)
+                    optimizations.append(
+                        pl.col(col)
+                        .str.replace("Q", "")
+                        .cast(pl.Int32, strict=False)
+                        .alias(col),
+                    )
+        # Categorical encoding for repeated strings
+        for col in ["taxon_name", "ref_title", "name"]:
+            if col in df.columns and df[col].dtype == pl.Utf8:
+                n_unique = df[col].n_unique()
+                n_total = len(df)
+                # If < 50% unique values, use categorical
+                if n_unique < n_total * 0.5 and n_unique < 10000:
+                    optimizations.append(pl.col(col).cast(pl.Categorical).alias(col))
+        # Mass as Float32 (sufficient precision for molecular mass)
+        if "mass" in df.columns:
+            if df["mass"].dtype == pl.Float64:
+                optimizations.append(pl.col("mass").cast(pl.Float32).alias("mass"))
+        if optimizations:
+            return df.with_columns(optimizations)
+        return df
+
     # Input validation
     if smiles_search_type not in ("substructure", "similarity"):
         raise ValueError(
             f"Invalid smiles_search_type: '{smiles_search_type}'. "
-            f"Must be one of: 'substructure', 'similarity'",
+            f"Must be 'substructure' or 'similarity'",
         )
 
     if not (0.0 <= smiles_threshold <= 1.0):
         raise ValueError(
-            f"Invalid smiles_threshold: {smiles_threshold}. "
-            f"Must be between 0.0 and 1.0",
-        )
-
-    if year_start is not None and year_end is not None and year_start > year_end:
-        raise ValueError(
-            f"Invalid year range: start ({year_start}) > end ({year_end}). "
-            f"Start year must be <= end year.",
-        )
-
-    if mass_min is not None and mass_max is not None and mass_min > mass_max:
-        raise ValueError(
-            f"Invalid mass range: min ({mass_min}) > max ({mass_max}). "
-            f"Minimum mass must be <= maximum mass.",
+            f"Invalid smiles_threshold: {smiles_threshold}. Must be 0.0-1.0",
         )
 
     # Build query based on search mode
@@ -772,109 +847,123 @@ def query_wikidata(
             escaped_smiles=validate_and_escape(smiles),
             search_type=smiles_search_type,
             threshold=smiles_threshold,
-            taxon_qid=qid,
+            taxon_qid=qid if qid != "*" else None,
         )
-    elif qid == "*" or qid is None:
+    elif qid == "*":
         query = query_all_compounds()
     else:
         query = query_compounds_by_taxon(qid)
 
-    # Execute query and get CSV bytes (memory efficient)
-    csv_bytes = execute_with_retry(
-        query,
-        endpoint=CONFIG["qlever_endpoint"],
-        fallback_endpoint=None,
+    # Execute with managed context (guaranteed cleanup)
+    with managed_sparql_query(query, CONFIG["qlever_endpoint"]) as csv_bytes:
+        # Early return for empty results
+        if not csv_bytes or csv_bytes.strip() == b"":
+            return pl.DataFrame()
+
+        # Parse to lazy frame (no materialization yet)
+        lazy_df = pl.scan_csv(
+            io.BytesIO(csv_bytes),
+            low_memory=True,
+            rechunk=False,
+        )
+
+        # Check if empty
+        if lazy_df.collect().is_empty():
+            return pl.DataFrame()
+
+        # Re-scan for pipeline (collect above was just for check)
+        lazy_df = pl.scan_csv(
+            io.BytesIO(csv_bytes),
+            low_memory=True,
+            rechunk=False,
+        )
+
+    # Build complete transformation pipeline (all lazy)
+    lazy_df = (
+        lazy_df
+        # Rename columns
+        .rename(
+            {
+                "compoundLabel": "name",
+                "compound_inchikey": "inchikey",
+                "ref_qid": "reference",
+                "ref_date": "pub_date",
+                "compound_mass": "mass",
+                "compound_formula": "mf",
+            },
+        )
+        # Combine SMILES columns (prefer isomeric over connectivity)
+        .with_columns(
+            [
+                pl.coalesce(["compound_smiles_iso", "compound_smiles_conn"]).alias(
+                    "smiles",
+                ),
+            ],
+        )
+        # DOI extraction (from URL to raw DOI)
+        .with_columns(
+            [
+                pl.when(pl.col("ref_doi").str.starts_with("http"))
+                .then(pl.col("ref_doi").str.split("doi.org/").list.last())
+                .otherwise(pl.col("ref_doi"))
+                .alias("ref_doi"),
+            ],
+        )
+        # Date parsing
+        .with_columns(
+            [
+                pl.when(pl.col("pub_date").is_not_null() & (pl.col("pub_date") != ""))
+                .then(
+                    pl.col("pub_date")
+                    .str.strptime(
+                        pl.Datetime,
+                        format="%Y-%m-%dT%H:%M:%SZ",
+                        strict=False,
+                    )
+                    .dt.date(),
+                )
+                .otherwise(None)
+                .alias("pub_date"),
+            ],
+        )
+        # Mass to float32 (sufficient precision)
+        .with_columns([pl.col("mass").cast(pl.Float32, strict=False)])
+        # Drop old SMILES columns
+        .drop(["compound_smiles_iso", "compound_smiles_conn"])
     )
 
-    # Early return for empty results
-    if not csv_bytes or csv_bytes.strip() == b"":
-        return pl.DataFrame()
+    # Apply filters lazily (before materialization)
+    if year_start or year_end:
+        year_conditions = []
+        if year_start:
+            year_conditions.append(pl.col("pub_date").dt.year() >= year_start)
+        if year_end:
+            year_conditions.append(pl.col("pub_date").dt.year() <= year_end)
+        if year_conditions:
+            lazy_df = lazy_df.filter(reduce(and_, year_conditions))
 
-    # Parse response directly into DataFrame
-    df = parse_sparql_response(csv_bytes).collect()
-    del csv_bytes  # Free bytes immediately
+    if mass_min or mass_max:
+        mass_conditions = []
+        if mass_min:
+            mass_conditions.append(pl.col("mass") >= mass_min)
+        if mass_max:
+            mass_conditions.append(pl.col("mass") <= mass_max)
+        if mass_conditions:
+            lazy_df = lazy_df.filter(reduce(and_, mass_conditions))
 
-    # Early return if no data rows
-    if df.is_empty():
-        return pl.DataFrame()
-
-    # Rename columns from SPARQL variable names to internal names
-    rename_dict = {
-        "compoundLabel": "name",
-        "compound_inchikey": "inchikey",
-        "ref_qid": "reference",
-        "ref_date": "pub_date",
-        "compound_mass": "mass",
-        "compound_formula": "mf",
-    }
-    # Only rename columns that exist
-    rename_dict = {k: v for k, v in rename_dict.items() if k in df.columns}
-    if rename_dict:
-        df = df.rename(rename_dict)
-
-    # Build all column transformations in a single batch
-    transforms = []
-
-    # Combine smiles columns (prefer isomeric over connectivity)
-    has_iso = "compound_smiles_iso" in df.columns
-    has_conn = "compound_smiles_conn" in df.columns
-    if has_iso and has_conn:
-        transforms.append(
-            pl.coalesce(["compound_smiles_iso", "compound_smiles_conn"]).alias(
-                "smiles",
+    if (
+        formula_filters
+        and hasattr(formula_filters, "is_active")
+        and formula_filters.is_active()
+    ):
+        lazy_df = lazy_df.filter(
+            pl.col("mf").map_elements(
+                lambda f: match_filters(f or "", formula_filters),
+                return_dtype=pl.Boolean,
             ),
         )
-    elif has_iso:
-        transforms.append(pl.col("compound_smiles_iso").alias("smiles"))
-    elif has_conn:
-        transforms.append(pl.col("compound_smiles_conn").alias("smiles"))
 
-    # DOI extraction (from URL to raw DOI)
-    if "ref_doi" in df.columns:
-        transforms.append(
-            pl.when(pl.col("ref_doi").str.starts_with("http"))
-            .then(pl.col("ref_doi").str.split("doi.org/").list.last())
-            .otherwise(pl.col("ref_doi"))
-            .alias("ref_doi"),
-        )
-
-    # Date parsing
-    if "pub_date" in df.columns:
-        transforms.append(
-            pl.when(pl.col("pub_date").is_not_null() & (pl.col("pub_date") != ""))
-            .then(
-                pl.col("pub_date")
-                .str.strptime(pl.Datetime, format="%Y-%m-%dT%H:%M:%SZ", strict=False)
-                .dt.date(),
-            )
-            .otherwise(None)
-            .alias("pub_date"),
-        )
-
-    # Mass to float
-    if "mass" in df.columns:
-        transforms.append(pl.col("mass").cast(pl.Float32, strict=False).alias("mass"))
-
-    # Apply all transformations in one go (single memory allocation)
-    if transforms:
-        df = df.with_columns(transforms)
-
-    # Drop old smiles columns if new one was created
-    drop_cols = []
-    if has_iso:
-        drop_cols.append("compound_smiles_iso")
-    if has_conn:
-        drop_cols.append("compound_smiles_conn")
-    if drop_cols:
-        df = df.drop([c for c in drop_cols if c in df.columns])
-
-    # Apply filters (Polars optimizes the execution plan)
-    df = filter_year(df, year_start, year_end)
-    df = filter_mass(df, mass_min, mass_max)
-    if formula_filters:
-        df = filter_formula(df, formula_filters, match_func=match_filters)
-
-    # Ensure required columns exist - batch add missing columns
+    # Add missing columns if needed (before materialization)
     required_columns = [
         "compound",
         "name",
@@ -891,29 +980,33 @@ def query_wikidata(
         "statement",
         "ref",
     ]
-    missing = [col for col in required_columns if col not in df.columns]
+    existing = lazy_df.columns
+    missing = [col for col in required_columns if col not in existing]
     if missing:
-        df = df.with_columns([pl.lit(None).alias(col) for col in missing])
+        lazy_df = lazy_df.with_columns([pl.lit(None).alias(col) for col in missing])
 
-    # Final operations: deduplicate and sort
-    # Note: unique() is efficient in Polars, keeps first occurrence
-    return df.unique(subset=["compound", "taxon", "reference"], keep="first").sort(
-        "name",
+    # SINGLE MATERIALIZATION: deduplicate and sort
+    df = (
+        lazy_df.unique(subset=["compound", "taxon", "reference"], keep="first")
+        .sort("name")
+        .collect()
     )
+
+    # Optimize types after collection
+    df = optimize_dataframe_types(df)
+
+    return df
 
 
 @app.function
 def build_display_dataframe(df: pl.DataFrame) -> pl.DataFrame:
-    """Build display DataFrame with HTML-formatted columns.
+    """Build display DataFrame with HTML-formatted columns."""
 
-    Returns a DataFrame with renamed columns and HTML strings for links/images.
-    Uses map_elements for link building to avoid Polars capacity overflow issues.
-    """
     # Pre-compute colors (avoid repeated dictionary lookups)
-    color_link = CONFIG["color_hyperlink"]
     color_compound = CONFIG["color_wikidata_red"]
     color_taxon = CONFIG["color_wikidata_green"]
     color_ref = CONFIG["color_wikidata_blue"]
+    color_link = CONFIG["color_hyperlink"]
 
     # Wrapper functions that capture colors via closure
     def _structure_img(smiles):
@@ -921,23 +1014,9 @@ def build_display_dataframe(df: pl.DataFrame) -> pl.DataFrame:
         # return html_from_image(svg_from_mol(mol_from_smiles(smiles))) if smiles else ""
         return html_from_image(svg_from_smiles(smiles)) if smiles else ""
 
-    def _compound_link(url):
-        return link_from_qid(url, color_compound)
-
-    def _taxon_link(url):
-        return link_from_qid(url, color_taxon)
-
-    def _ref_link(url):
-        return link_from_qid(url, color_ref)
-
-    def _doi_link(doi):
-        return link_from_doi(doi, color_link)
-
-    def _stmt_link(url):
-        return link_from_statement(url, color_link)
-
     return df.select(
         [
+            # Structure image (unavoidable map_elements - external function)
             pl.col("smiles")
             .map_elements(_structure_img, return_dtype=pl.String)
             .alias("Compound Depiction"),
@@ -949,20 +1028,46 @@ def build_display_dataframe(df: pl.DataFrame) -> pl.DataFrame:
             pl.col("taxon_name").alias("Taxon Name"),
             pl.col("ref_title").alias("Reference Title"),
             pl.col("pub_date").alias("Reference Date"),
-            pl.col("ref_doi")
-            .map_elements(_doi_link, return_dtype=pl.String)
+            pl.when(pl.col("ref_doi").is_not_null())
+            .then(
+                pl.lit(f'<a href="https://doi.org/')
+                + pl.col("ref_doi")
+                + pl.lit(f'" target="_blank" style="color:{color_link};">')
+                + pl.col("ref_doi")
+                + pl.lit("</a>")
+            )
+            .otherwise(pl.lit(""))
             .alias("Reference DOI"),
-            pl.col("compound")
-            .map_elements(_compound_link, return_dtype=pl.String)
-            .alias("Compound QID"),
-            pl.col("taxon")
-            .map_elements(_taxon_link, return_dtype=pl.String)
-            .alias("Taxon QID"),
-            pl.col("reference")
-            .map_elements(_ref_link, return_dtype=pl.String)
-            .alias("Reference QID"),
-            pl.col("statement")
-            .map_elements(_stmt_link, return_dtype=pl.String)
+            (
+                pl.lit(f'<a href="https://scholia.toolforge.org/Q')
+                + pl.col("compound").cast(pl.Utf8)
+                + pl.lit(f'" target="_blank" style="color:{color_compound};">Q')
+                + pl.col("compound").cast(pl.Utf8)
+                + pl.lit("</a>")
+            ).alias("Compound QID"),
+            (
+                pl.lit(f'<a href="https://scholia.toolforge.org/Q')
+                + pl.col("taxon").cast(pl.Utf8)
+                + pl.lit(f'" target="_blank" style="color:{color_taxon};">Q')
+                + pl.col("taxon").cast(pl.Utf8)
+                + pl.lit("</a>")
+            ).alias("Taxon QID"),
+            (
+                pl.lit(f'<a href="https://scholia.toolforge.org/Q')
+                + pl.col("reference").cast(pl.Utf8)
+                + pl.lit(f'" target="_blank" style="color:{color_ref};">Q')
+                + pl.col("reference").cast(pl.Utf8)
+                + pl.lit("</a>")
+            ).alias("Reference QID"),
+            pl.when(pl.col("statement").is_not_null())
+            .then(
+                pl.lit(f'<a href="')
+                + pl.col("statement")
+                + pl.lit(f'" target="_blank" style="color:{color_link};">')
+                + pl.col("statement").str.split("/").list.last()
+                + pl.lit("</a>")
+            )
+            .otherwise(pl.lit(""))
             .alias("Statement"),
         ],
     )
