@@ -3,6 +3,7 @@
 # dependencies = [
 #     "altair==6.0.0",
 #     "cmcrameri==1.9",
+#     "fsspec==2026.1.0",
 #     "marimo",
 #     "numpy==2.4.1",
 #     "polars==1.37.1",
@@ -106,6 +107,7 @@ __generated_with = "0.19.6"
 app = marimo.App(width="medium", app_title="Bayesian Chemotaxonomic Markers")
 
 with app.setup:
+    import fsspec
     import json
     import logging
     import sys
@@ -357,13 +359,13 @@ with app.setup:
     # ====================================================================
 
     DEFAULT_DATA_PATHS: Final[DataPathsDict] = {
-        "path_can_smi": "apps/public/mortar/lotus_canonical.smi.gz",
-        "path_frags_cdk": "apps/public/mortar/Fragments_Scaffold_Generator.csv.gz",
-        "path_frags_ert": "apps/public/mortar/Fragments_Ertl_algorithm.csv.gz",
-        "path_frags_sru": "apps/public/mortar/Fragments_Sugar_Removal_Utility.csv.gz",
-        "path_items_cdk": "apps/public/mortar/Items_Scaffold_Generator.csv.gz",
-        "path_items_ert": "apps/public/mortar/Items_Ertl_algorithm.csv.gz",
-        "path_items_sru": "apps/public/mortar/Items_Sugar_Removal_Utility.csv.gz",
+        "path_can_smi": "https://github.com/Adafede/marimo/raw/refs/heads/main/apps/public/mortar/lotus_canonical.smi.gz",
+        "path_frags_cdk": "https://github.com/Adafede/marimo/raw/refs/heads/main/apps/public/mortar/Fragments_Scaffold_Generator.csv.gz",
+        "path_frags_ert": "https://github.com/Adafede/marimo/raw/refs/heads/main/apps/public/mortar/Fragments_Ertl_algorithm.csv.gz",
+        "path_frags_sru": "https://github.com/Adafede/marimo/raw/refs/heads/main/apps/public/mortar/Fragments_Sugar_Removal_Utility.csv.gz",
+        "path_items_cdk": "https://github.com/Adafede/marimo/raw/refs/heads/main/apps/public/mortar/Items_Scaffold_Generator.csv.gz",
+        "path_items_ert": "https://github.com/Adafede/marimo/raw/refs/heads/main/apps/public/mortar/Items_Ertl_algorithm.csv.gz",
+        "path_items_sru": "https://github.com/Adafede/marimo/raw/refs/heads/main/apps/public/mortar/Items_Sugar_Removal_Utility.csv.gz",
     }
 
     # ====================================================================
@@ -439,19 +441,21 @@ def read_table(
     name: str = "table",
 ) -> pl.DataFrame:
     """Read CSV and optionally validate required columns."""
-    if not path.exists():
-        raise FileNotFoundError(f"Missing {name}: {path}")
     df = pl.read_csv(path, separator=separator)
     return validate_columns(df, expected, name) if expected else df
 
 
 @app.function
-def select_first_existing(cfg: Final[TypedDict], attrs: Sequence[str]) -> Path | None:
-    """Return the first path from cfg attributes that exists on disk."""
+def select_first_existing(
+    cfg: Final[TypedDict],
+    attrs: Sequence[str],
+) -> str | None:
+    """Return the first path/URL from cfg attributes that exists (local or remote)."""
     for attr in attrs:
-        p = Path(cfg[attr])
-        if p.exists():
-            return p
+        url = cfg[attr]
+        fs, path = fsspec.core.url_to_fs(url)
+        if fs.exists(path):
+            return url
     return None
 
 
