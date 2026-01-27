@@ -357,31 +357,22 @@ with app.setup:
     # ====================================================================
     # DEFAULT DATA PATHS
     # ====================================================================
-    NB_L = mo.notebook_location()
+    # The base URL where your files are hosted
+    BASE_URL = "https://github.com/Adafede/marimo/raw/refs/heads/main/apps/public/mortar"
+    PROXY = "https://corsproxy.marimo.app/"
+
+    def get_proxied_url(filename: str) -> str:
+        # Prepend the proxy to the full URL
+        return f"{PROXY}{BASE_URL}/{filename}"
 
     DEFAULT_DATA_PATHS: Final[DataPathsDict] = {
-        "path_can_smi": NB_L / "public" / "mortar" / "lotus_canonical.smi.gz",
-        "path_frags_cdk": NB_L
-        / "public"
-        / "mortar"
-        / "Fragments_Scaffold_Generator.csv.gz",
-        "path_frags_ert": NB_L
-        / "public"
-        / "mortar"
-        / "Fragments_Ertl_algorithm.csv.gz",
-        "path_frags_sru": NB_L
-        / "public"
-        / "mortar"
-        / "Fragments_Sugar_Removal_Utility.csv.gz",
-        "path_items_cdk": NB_L
-        / "public"
-        / "mortar"
-        / "Items_Scaffold_Generator.csv.gz",
-        "path_items_ert": NB_L / "public" / "mortar" / "Items_Ertl_algorithm.csv.gz",
-        "path_items_sru": NB_L
-        / "public"
-        / "mortar"
-        / "Items_Sugar_Removal_Utility.csv.gz",
+        "path_can_smi": get_proxied_url("lotus_canonical.smi.gz"),
+        "path_frags_cdk": get_proxied_url("Fragments_Scaffold_Generator.csv.gz"),
+        "path_frags_ert": get_proxied_url("Fragments_Ertl_algorithm.csv.gz"),
+        "path_frags_sru": get_proxied_url("Fragments_Sugar_Removal_Utility.csv.gz"),
+        "path_items_cdk": get_proxied_url("Items_Scaffold_Generator.csv.gz"),
+        "path_items_ert": get_proxied_url("Items_Ertl_algorithm.csv.gz"),
+        "path_items_sru": get_proxied_url("Items_Sugar_Removal_Utility.csv.gz"),
     }
 
     # ====================================================================
