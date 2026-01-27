@@ -357,15 +357,31 @@ with app.setup:
     # ====================================================================
     # DEFAULT DATA PATHS
     # ====================================================================
+    NB_L = mo.notebook_location()
 
     DEFAULT_DATA_PATHS: Final[DataPathsDict] = {
-        "path_can_smi": "https://github.com/Adafede/marimo/raw/refs/heads/main/apps/public/mortar/lotus_canonical.smi.gz",
-        "path_frags_cdk": "https://github.com/Adafede/marimo/raw/refs/heads/main/apps/public/mortar/Fragments_Scaffold_Generator.csv.gz",
-        "path_frags_ert": "https://github.com/Adafede/marimo/raw/refs/heads/main/apps/public/mortar/Fragments_Ertl_algorithm.csv.gz",
-        "path_frags_sru": "https://github.com/Adafede/marimo/raw/refs/heads/main/apps/public/mortar/Fragments_Sugar_Removal_Utility.csv.gz",
-        "path_items_cdk": "https://github.com/Adafede/marimo/raw/refs/heads/main/apps/public/mortar/Items_Scaffold_Generator.csv.gz",
-        "path_items_ert": "https://github.com/Adafede/marimo/raw/refs/heads/main/apps/public/mortar/Items_Ertl_algorithm.csv.gz",
-        "path_items_sru": "https://github.com/Adafede/marimo/raw/refs/heads/main/apps/public/mortar/Items_Sugar_Removal_Utility.csv.gz",
+        "path_can_smi": NB_L / "public" / "mortar" / "lotus_canonical.smi.gz",
+        "path_frags_cdk": NB_L
+        / "public"
+        / "mortar"
+        / "Fragments_Scaffold_Generator.csv.gz",
+        "path_frags_ert": NB_L
+        / "public"
+        / "mortar"
+        / "Fragments_Ertl_algorithm.csv.gz",
+        "path_frags_sru": NB_L
+        / "public"
+        / "mortar"
+        / "Fragments_Sugar_Removal_Utility.csv.gz",
+        "path_items_cdk": NB_L
+        / "public"
+        / "mortar"
+        / "Items_Scaffold_Generator.csv.gz",
+        "path_items_ert": NB_L / "public" / "mortar" / "Items_Ertl_algorithm.csv.gz",
+        "path_items_sru": NB_L
+        / "public"
+        / "mortar"
+        / "Items_Sugar_Removal_Utility.csv.gz",
     }
 
     # ====================================================================
@@ -441,7 +457,7 @@ def read_table(
     name: str = "table",
 ) -> pl.DataFrame:
     """Read CSV and optionally validate required columns."""
-    df = pl.read_csv(path, separator=separator)
+    df = pl.read_csv(str(path), separator=separator)
     return validate_columns(df, expected, name) if expected else df
 
 
