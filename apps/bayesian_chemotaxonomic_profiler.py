@@ -587,26 +587,6 @@ def build_hierarchy_lineage(
 
 
 @app.function
-def build_taxon_lineage(
-    taxon_parent: pl.DataFrame,
-    taxon_rank: pl.DataFrame | None = None,
-    focus: pl.Series | None = None,
-) -> pl.DataFrame:
-    """Build taxon ancestor lineage with optional rank annotation."""
-    lineage = build_hierarchy_lineage(taxon_parent, "taxon", "taxon_parent", focus)
-    lineage = lineage.rename(
-        {"ancestor": "taxon_ancestor", "distance": "taxon_distance"},
-    )
-    if taxon_rank is not None:
-        lineage = lineage.join(
-            taxon_rank.rename({"taxon": "taxon_ancestor"}),
-            on="taxon_ancestor",
-            how="left",
-        )
-    return lineage
-
-
-@app.function
 def build_compound_lineage(compound_scaffold: pl.DataFrame) -> pl.DataFrame:
     """Map compounds to their scaffolds (flat, distance=0)."""
     validate_columns(compound_scaffold, {"compound", "scaffold"}, "compound_scaffold")
@@ -1530,11 +1510,18 @@ def apply_config():
 @app.cell
 def load_data_wd(effective_config):
     with mo.status.spinner("Fetching data from Wikidata..."):
-        logging.info("=" * 55)
-        logging.info("Loading data from Wikidata SPARQL endpoint")
-        logging.info("=" * 55)
+        compound_taxon = parse_sparql_response(
+            execute_with_retry(
+                query="""
+                PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+                SELECT DISTINCT ?compound ?taxon WHERE {
+                  ?compound wdt:P703 ?taxon .
+                }
+                """,
+                endpoint=effective_config["qlever_endpoint"],
+            )
+        )
 
-        # Fetch compound SMILES from Wikidata (compound ID -> SMILES mapping)
         compound_smiles = parse_sparql_response(
             execute_with_retry(
                 query="""
@@ -1546,21 +1533,10 @@ def load_data_wd(effective_config):
                 endpoint=effective_config["qlever_endpoint"],
             )
         )
-        logging.info(f"✓ Compound SMILES: {compound_smiles.height:,} compounds")
-
-        # Fetch taxon data from Wikidata
-        taxon_name = parse_sparql_response(
-            execute_with_retry(
-                query="""
-                PREFIX wdt: <http://www.wikidata.org/prop/direct/>
-                SELECT DISTINCT ?taxon ?taxon_name WHERE {
-                  ?taxon wdt:P225 ?taxon_name .
-                }
-                """,
-                endpoint=effective_config["qlever_endpoint"],
-            )
+        _compound_ids = compound_taxon.select("compound").unique()
+        compound_smiles = compound_smiles.join(
+            _compound_ids, on="compound", how="inner"
         )
-        logging.info(f"✓ Taxon names: {taxon_name.height:,}")
 
         taxon_parent = parse_sparql_response(
             execute_with_retry(
@@ -1573,7 +1549,24 @@ def load_data_wd(effective_config):
                 endpoint=effective_config["qlever_endpoint"],
             )
         )
-        logging.info(f"✓ Taxon hierarchy: {taxon_parent.height:,} parent relationships")
+
+    with mo.status.spinner("Shrinking data and lineages..."):
+        lineage = (
+            build_hierarchy_lineage(
+                edges=taxon_parent,
+                child="taxon",
+                parent="taxon_parent",
+                focus=compound_taxon.select("taxon").unique(),
+            )
+            .rename(
+                {"ancestor": "taxon_ancestor", "distance": "taxon_distance"},
+            )
+        )
+
+        _to_keep = lineage.select(
+            [pl.concat_list(["taxon", "taxon_ancestor"]).explode()]
+        ).to_series()
+        taxon_parent = taxon_parent.filter(pl.col("taxon").is_in(_to_keep))
 
         taxon_rank = parse_sparql_response(
             execute_with_retry(
@@ -1586,52 +1579,26 @@ def load_data_wd(effective_config):
                 endpoint=effective_config["qlever_endpoint"],
             )
         )
-        logging.info(f"✓ Taxon ranks: {taxon_rank.height:,}")
+        taxon_rank = taxon_rank.filter(pl.col("taxon").is_in(_to_keep))
 
-        compound_taxon = parse_sparql_response(
+        lineage = lineage.join(
+                taxon_rank.rename({"taxon": "taxon_ancestor"}),
+                on="taxon_ancestor",
+                how="left",
+            )
+
+        taxon_name = parse_sparql_response(
             execute_with_retry(
                 query="""
                 PREFIX wdt: <http://www.wikidata.org/prop/direct/>
-                SELECT DISTINCT ?compound ?taxon WHERE {
-                  ?compound wdt:P703 ?taxon .
+                SELECT DISTINCT ?taxon ?taxon_name WHERE {
+                  ?taxon wdt:P225 ?taxon_name .
                 }
                 """,
                 endpoint=effective_config["qlever_endpoint"],
             )
         )
-        logging.info(f"✓ Compound-taxon annotations: {compound_taxon.height:,}")
-        logging.info("=" * 55)
-
-    with mo.status.spinner("Shrinking data and lineages..."):
-        # --- Filter compounds directly ---
-        compound_ids = compound_taxon.select("compound").unique()
-        compound_smiles = compound_smiles.join(compound_ids, on="compound", how="inner")
-
-        # --- Build full taxon lineage efficiently ---
-        lineage = (
-            build_hierarchy_lineage(
-                edges=taxon_parent,
-                child="taxon",
-                parent="taxon_parent",
-                focus=compound_taxon.select("taxon").unique(),
-            )
-            .rename(
-                {"ancestor": "taxon_ancestor", "distance": "taxon_distance"},
-            )
-            .join(
-                taxon_rank.rename({"taxon": "taxon_ancestor"}),
-                on="taxon_ancestor",
-                how="left",
-            )
-        )
-
-        # --- Filter taxon tables by lineage ---
-        _to_keep = lineage.select(
-            [pl.concat_list(["taxon", "taxon_rank"]).explode()]
-        ).to_series()
         taxon_name = taxon_name.filter(pl.col("taxon").is_in(_to_keep))
-        taxon_parent = taxon_parent.filter(pl.col("taxon").is_in(_to_keep))
-        taxon_rank = taxon_rank.filter(pl.col("taxon").is_in(_to_keep))
 
         logging.info(f"✓ Compound SMILES: {compound_smiles.height:,} compounds")
         logging.info(f"✓ Taxon names: {taxon_name.height:,}")
@@ -1639,14 +1606,6 @@ def load_data_wd(effective_config):
         logging.info(f"✓ Taxon ranks: {taxon_rank.height:,}")
         logging.info(f"✓ Compound-taxon annotations: {compound_taxon.height:,}")
         logging.info("=" * 55)
-    return (
-        compound_smiles,
-        compound_taxon,
-        taxon_name,
-        taxon_parent,
-        taxon_rank,
-        lineage,
-    )
 
 
 @app.cell
