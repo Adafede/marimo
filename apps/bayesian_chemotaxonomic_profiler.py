@@ -108,14 +108,10 @@ __generated_with = "0.19.6"
 app = marimo.App(width="medium", app_title="Bayesian Chemotaxonomic Markers")
 
 with app.setup:
-    import json
     import logging
     import sys
     import time
-    import urllib.request
-    import urllib.parse
-    from dataclasses import dataclass, field
-    from typing import Any, Iterable, Final, Sequence, TypedDict
+    from typing import Iterable, Final, TypedDict
 
     import altair as alt
     import marimo as mo
@@ -128,14 +124,6 @@ with app.setup:
     from modules.knowledge.wikidata.taxon.ranks import get_rank_label, get_rank_order
     from modules.net.sparql.execute_with_retry import execute_with_retry
     from modules.net.sparql.parse_response import parse_sparql_response
-    from modules.stats.bayesian.beta import (
-        credible_interval,
-        posterior_probability_above,
-    )
-    from modules.stats.bayesian.enrichment import (
-        fold_change_credible_interval,
-        rope_decision,
-    )
 
     # alt.data_transformers.enable("vegafusion")
 
@@ -496,7 +484,8 @@ def build_compound_scaffold_table(
     mapping: pl.DataFrame,
     fragments: pl.DataFrame,
 ) -> pl.DataFrame:
-    """Build compound-scaffold relationship table from fragment mapping."""
+    """Build compound-scaffold table with minimal memory footprint."""
+
     if (
         mapping is None
         or mapping.is_empty()
@@ -504,18 +493,39 @@ def build_compound_scaffold_table(
         or fragments.is_empty()
     ):
         return pl.DataFrame({"compound_smiles": [], "scaffold": []})
+
     unique = compounds.select("compound_smiles").unique()
+
+    # Create set of valid fragments for fast lookup
+    valid_scaffolds = set(fragments.get_column("SMILES").to_list())
+
+    # Filter fragments_str BEFORE exploding
+    # This reduces the explosion size
+    def filter_valid_fragments(fragments_str: str) -> str:
+        """Keep only valid fragments in comma-separated string."""
+        if not fragments_str:
+            return ""
+        frags = fragments_str.split(",")
+        valid = [f for f in frags if f in valid_scaffolds]
+        return ",".join(valid) if valid else None
+
+    mapping_filtered = mapping.with_columns(
+        pl.col("fragments_str")
+        .map_elements(filter_valid_fragments, return_dtype=pl.Utf8)
+        .alias("fragments_str"),
+    ).drop_nulls(subset=["fragments_str"])
+
+    # Now explode only the filtered data
     exploded = (
-        pl.concat([unique, mapping], how="horizontal")
+        pl.concat([unique, mapping_filtered], how="horizontal")
         .with_columns(pl.col("fragments_str").str.split(","))
         .explode("fragments_str")
         .rename({"fragments_str": "scaffold"})
-    )
-    return (
-        exploded.filter(pl.col("scaffold").is_in(fragments["SMILES"].to_list()))
         .select(["compound_smiles", "scaffold"])
         .unique()
     )
+
+    return exploded
 
 
 @app.function
@@ -531,6 +541,29 @@ def build_hierarchy_lineage(
     if e.is_empty():
         return pl.DataFrame({child: [], "ancestor": [], "distance": []})
 
+    # If focus provided, filter edges to relevant subgraph first
+    if focus is not None:
+        focus_set = set(focus.drop_nulls().unique().to_list())
+
+        # Only keep edges where child is in focus or could lead to focus
+        # This requires building ancestors incrementally
+        relevant_nodes = focus_set.copy()
+
+        # Add all ancestors of focus nodes
+        for _ in range(50):  # Max depth
+            parent_edges = e.filter(pl.col(child).is_in(list(relevant_nodes)))
+            if parent_edges.is_empty():
+                break
+            new_parents = set(parent_edges.get_column(parent).unique().to_list())
+            if new_parents.issubset(relevant_nodes):
+                break
+            relevant_nodes.update(new_parents)
+
+        # Filter edge table to relevant subgraph
+        e = e.filter(pl.col(child).is_in(list(relevant_nodes)))
+        logging.info(f"Lineage graph reduced: {len(relevant_nodes):,} relevant nodes")
+
+    # Now build lineage on smaller graph
     nodes = (
         pl.DataFrame({child: focus.drop_nulls().unique()})
         if focus is not None
@@ -639,19 +672,21 @@ def run_hierarchical_analysis(
     # Minimal scaffold filtering - only require appearing in ≥2 compounds
     # The Bayesian model handles ubiquitous scaffolds through θ₀ (baseline)
     scaffold_freq = base_evidence.group_by("compound_ancestor").agg(
-        pl.col("compound").n_unique().alias("n_compounds")
+        pl.col("compound").n_unique().alias("n_compounds"),
     )
 
     keep_scaffolds = scaffold_freq.filter(
-        pl.col("n_compounds") >= cfg["filtering"]["min_frequency_scaffold"]
+        pl.col("n_compounds") >= cfg["filtering"]["min_frequency_scaffold"],
     ).select("compound_ancestor")
 
     logging.info(
-        f"Scaffolds: {keep_scaffolds.height} (≥{cfg['filtering']['min_frequency_scaffold']} compounds)"
+        f"Scaffolds: {keep_scaffolds.height} (≥{cfg['filtering']['min_frequency_scaffold']} compounds)",
     )
 
     base_evidence = base_evidence.join(
-        keep_scaffolds, on="compound_ancestor", how="inner"
+        keep_scaffolds,
+        on="compound_ancestor",
+        how="inner",
     )
 
     if base_evidence.is_empty():
@@ -736,7 +771,7 @@ def run_hierarchical_analysis(
                     "taxon_ancestor",
                     "compound_ancestor",
                     pl.col("taxon").alias("source_taxon"),
-                ]
+                ],
             )
             .unique()
         )
@@ -749,19 +784,21 @@ def run_hierarchical_analysis(
 
         # Scaffold totals (before filtering)
         scaffold_totals_full = rank_evidence.group_by("compound_ancestor").agg(
-            pl.col("compound").n_unique().alias("scaffold_total")
+            pl.col("compound").n_unique().alias("scaffold_total"),
         )
 
         # Filter taxa by minimum frequency
         taxon_freq = rank_evidence.group_by("taxon_ancestor").agg(
-            pl.col("compound").n_unique().alias("taxon_obs")
+            pl.col("compound").n_unique().alias("taxon_obs"),
         )
         keep_taxa = taxon_freq.filter(
-            pl.col("taxon_obs") >= cfg["filtering"]["min_frequency_taxa"]
+            pl.col("taxon_obs") >= cfg["filtering"]["min_frequency_taxa"],
         ).select("taxon_ancestor")
 
         rank_evidence_filtered = rank_evidence.join(
-            keep_taxa, on="taxon_ancestor", how="inner"
+            keep_taxa,
+            on="taxon_ancestor",
+            how="inner",
         )
 
         if rank_evidence_filtered.is_empty():
@@ -778,7 +815,7 @@ def run_hierarchical_analysis(
                 [
                     pl.col("compound").n_unique().alias("a_raw"),
                     pl.col("source_taxon").n_unique().alias("n_source_taxa"),
-                ]
+                ],
             )
             .with_columns(
                 [
@@ -789,13 +826,13 @@ def run_hierarchical_analysis(
                     .round(0)
                     .cast(pl.Int32)
                     .clip(lower_bound=1)
-                    .alias("a")
-                ]
+                    .alias("a"),
+                ],
             )
         )
 
         taxon_totals = rank_evidence_filtered.group_by("taxon_ancestor").agg(
-            pl.col("compound").n_unique().alias("taxon_total")
+            pl.col("compound").n_unique().alias("taxon_total"),
         )
 
         # Build contingency table and statistics in chained pipeline
@@ -831,7 +868,7 @@ def run_hierarchical_analysis(
                     .alias("d"),
                     pl.lit(N).alias("N"),
                     pl.lit(rank).alias("taxon_rank"),
-                ]
+                ],
             )
         )
 
@@ -928,13 +965,13 @@ def run_hierarchical_analysis(
                 )
                 .clip(0, 1)
                 .alias("fpr"),
-            ]
+            ],
         ).with_columns(
             [
                 (pl.col("sensitivity") / (pl.col("fpr") + CONTINUITY_CORRECTION)).alias(
-                    "likelihood_ratio"
+                    "likelihood_ratio",
                 ),
-            ]
+            ],
         )
 
         # Baseline θ₀
@@ -943,7 +980,7 @@ def run_hierarchical_analysis(
                 (pl.col("scaffold_total").cast(pl.Float64) / pl.lit(N).cast(pl.Float64))
                 .clip(lower_bound=MIN_THETA_0)
                 .alias("theta_0"),
-            ]
+            ],
         )
 
         # HIERARCHICAL PRIORS: Blend parent posterior with global baseline.
@@ -965,20 +1002,22 @@ def run_hierarchical_analysis(
 
             if parent_posteriors is not None:
                 child_to_parent = parent_child_maps[rank].rename(
-                    {"child_taxon": "taxon_ancestor"}
+                    {"child_taxon": "taxon_ancestor"},
                 )
 
                 # Only select needed columns for join
                 rank_data = rank_data.join(
-                    child_to_parent, on="taxon_ancestor", how="left"
+                    child_to_parent,
+                    on="taxon_ancestor",
+                    how="left",
                 ).join(
                     parent_posteriors.select(
-                        ["compound_ancestor", "taxon_ancestor", "posterior_mean"]
+                        ["compound_ancestor", "taxon_ancestor", "posterior_mean"],
                     ).rename(
                         {
                             "taxon_ancestor": "parent_taxon",
                             "posterior_mean": "parent_mean",
-                        }
+                        },
                     ),
                     on=["compound_ancestor", "parent_taxon"],
                     how="left",
@@ -1027,21 +1066,21 @@ def run_hierarchical_analysis(
                         [
                             pl.when(pl.col("parent_mean").is_not_null())
                             .then(
-                                W * pl.col("parent_mean") + (1 - W) * pl.col("theta_0")
+                                W * pl.col("parent_mean") + (1 - W) * pl.col("theta_0"),
                             )
                             .otherwise(pl.col("theta_0"))
-                            .alias("prior_center")
-                        ]
+                            .alias("prior_center"),
+                        ],
                     )
                     .with_columns(
                         [
                             (pl.col("prior_center") * LAMBDA_PRIOR).alias(
-                                "alpha_prior"
+                                "alpha_prior",
                             ),
                             ((1 - pl.col("prior_center")) * LAMBDA_PRIOR).alias(
-                                "beta_prior"
+                                "beta_prior",
                             ),
-                        ]
+                        ],
                     )
                     .drop(["parent_taxon", "parent_mean", "prior_center"])
                 )
@@ -1051,7 +1090,7 @@ def run_hierarchical_analysis(
                     [
                         (pl.col("theta_0") * LAMBDA_PRIOR).alias("alpha_prior"),
                         ((1 - pl.col("theta_0")) * LAMBDA_PRIOR).alias("beta_prior"),
-                    ]
+                    ],
                 )
         else:
             LAMBDA_PRIOR = cfg["priors"]["prior_strength"]
@@ -1059,7 +1098,7 @@ def run_hierarchical_analysis(
                 [
                     (pl.col("theta_0") * LAMBDA_PRIOR).alias("alpha_prior"),
                     ((1 - pl.col("theta_0")) * LAMBDA_PRIOR).alias("beta_prior"),
-                ]
+                ],
             )
 
         # Compute posterior
@@ -1068,7 +1107,7 @@ def run_hierarchical_analysis(
                 [
                     (pl.col("alpha_prior") + pl.col("a")).alias("alpha_post"),
                     (pl.col("beta_prior") + pl.col("c_eff")).alias("beta_post"),
-                ]
+                ],
             )
             .with_columns(
                 [
@@ -1079,11 +1118,11 @@ def run_hierarchical_analysis(
                     pl.when((pl.col("alpha_post") > 1) & (pl.col("beta_post") > 1))
                     .then(
                         (pl.col("alpha_post") - 1)
-                        / (pl.col("alpha_post") + pl.col("beta_post") - 2)
+                        / (pl.col("alpha_post") + pl.col("beta_post") - 2),
                     )
                     .otherwise(
                         pl.col("alpha_post")
-                        / (pl.col("alpha_post") + pl.col("beta_post"))
+                        / (pl.col("alpha_post") + pl.col("beta_post")),
                     )
                     .clip(0, 1)
                     .alias("posterior_mode"),
@@ -1093,7 +1132,7 @@ def run_hierarchical_analysis(
                         - pl.col("alpha_prior")
                         - pl.col("beta_prior")
                     ).alias("effective_sample_size"),
-                ]
+                ],
             )
             .with_columns(
                 [
@@ -1104,7 +1143,7 @@ def run_hierarchical_analysis(
                     (
                         (pl.col("posterior_mean") / (pl.col("theta_0") + 1e-10)).log(2)
                     ).alias("log2_enrichment"),
-                ]
+                ],
             )
         )
 
@@ -1168,7 +1207,7 @@ def run_hierarchical_analysis(
                     pl.Series("rope_decision", decisions_arr),
                     pl.Series("p_above_rope", p_above_arr),
                     pl.Series("p_below_rope", p_below_arr),
-                ]
+                ],
             )
 
             batched_results.append(batch_result)
@@ -1181,12 +1220,12 @@ def run_hierarchical_analysis(
 
         rank_data = pl.concat(batched_results, how="vertical")
         rank_data = rank_data.with_columns(
-            [(pl.col("ci_upper") - pl.col("ci_lower")).alias("ci_width")]
+            [(pl.col("ci_upper") - pl.col("ci_lower")).alias("ci_width")],
         )
 
         # Store posteriors for hierarchical flow (keep minimal columns)
         posteriors_by_rank[rank] = rank_data.select(
-            ["compound_ancestor", "taxon_ancestor", "posterior_mean"]
+            ["compound_ancestor", "taxon_ancestor", "posterior_mean"],
         )
 
         logging.info(f"    {rank_data.height} associations")
@@ -1200,7 +1239,7 @@ def run_hierarchical_analysis(
     # Statistical quality flags
     MIN_ESS = cfg["stats"]["min_ess"]
     result = result.with_columns(
-        [(pl.col("effective_sample_size") >= MIN_ESS).alias("reliable")]
+        [(pl.col("effective_sample_size") >= MIN_ESS).alias("reliable")],
     )
 
     # Add taxon names
@@ -1273,7 +1312,7 @@ def discover_top_taxa(
                 pl.col("posterior_enrich_prob").mean().alias("avg_prob"),
                 pl.col("log2_enrichment").mean().alias("avg_fc"),
                 pl.col("effective_sample_size").sum().alias("total_ess"),
-            ]
+            ],
         )
         .with_columns(
             [
@@ -1283,8 +1322,8 @@ def discover_top_taxa(
                     + pl.col("avg_fc").cast(pl.Float32) * 1.5
                     + pl.col("avg_prob").cast(pl.Float32) * 2.0
                     + (pl.col("total_ess") / 100.0).clip(0, 2.0)
-                ).alias("distinctiveness")
-            ]
+                ).alias("distinctiveness"),
+            ],
         )
         .sort(["distinctiveness", "taxon_ancestor"], descending=[True, False])
         .head(top_n)
@@ -1328,8 +1367,8 @@ def get_markers_for_top_taxa(
                     pl.col("posterior_enrich_prob") * 2.0
                     + pl.col("log2_enrichment") / 10.0
                     + (pl.col("effective_sample_size") / 100.0).clip(0, 1)
-                ).alias("marker_quality")
-            ]
+                ).alias("marker_quality"),
+            ],
         )
         .sort(["taxon_ancestor", "marker_quality"], descending=[False, True])
         .group_by("taxon_ancestor")
@@ -1354,7 +1393,7 @@ def create_taxa_marker_heatmap(
     plot_data = markers_df.with_columns(
         [
             pl.col("compound_ancestor").alias("scaffold_short"),
-        ]
+        ],
     ).select(
         [
             "taxon_name",
@@ -1363,7 +1402,7 @@ def create_taxa_marker_heatmap(
             "posterior_enrich_prob",
             "effective_sample_size",
             "a_raw",
-        ]
+        ],
     )
 
     # Get colormap
@@ -1372,7 +1411,7 @@ def create_taxa_marker_heatmap(
 
         cmap = cmc.batlow
         colors = [
-            f"#{int(c[0]*255):02x}{int(c[1]*255):02x}{int(c[2]*255):02x}"
+            f"#{int(c[0] * 255):02x}{int(c[1] * 255):02x}{int(c[2] * 255):02x}"
             for c in [cmap(i / 10) for i in range(11)]
         ]
     except:
@@ -1386,7 +1425,9 @@ def create_taxa_marker_heatmap(
                 "taxon_name:N",
                 title=None,
                 sort=alt.EncodingSortField(
-                    field="log2_enrichment", op="mean", order="descending"
+                    field="log2_enrichment",
+                    op="mean",
+                    order="descending",
                 ),
                 axis=alt.Axis(labelFontSize=11, labelFontWeight="bold"),
             ),
@@ -1394,7 +1435,9 @@ def create_taxa_marker_heatmap(
                 "scaffold_short:N",
                 title=None,
                 sort=alt.EncodingSortField(
-                    field="log2_enrichment", op="max", order="descending"
+                    field="log2_enrichment",
+                    op="max",
+                    order="descending",
                 ),
                 axis=alt.Axis(labelAngle=-45, labelFontSize=9),
             ),
@@ -1412,7 +1455,9 @@ def create_taxa_marker_heatmap(
                 alt.Tooltip("taxon_name:N", title="Taxon"),
                 alt.Tooltip("scaffold_short:N", title="Scaffold"),
                 alt.Tooltip(
-                    "posterior_enrich_prob:Q", format=".3f", title="P(enriched)"
+                    "posterior_enrich_prob:Q",
+                    format=".3f",
+                    title="P(enriched)",
                 ),
                 alt.Tooltip("log2_enrichment:Q", format=".2f", title="log₂ FC"),
                 alt.Tooltip("effective_sample_size:Q", format=".1f", title="ESS"),
@@ -1458,7 +1503,7 @@ def create_taxa_summary_table(
                 pl.col("log2_enrichment").max().alias("max_fc"),
                 pl.col("effective_sample_size").sum().alias("total_ess"),
                 pl.col("a_raw").sum().alias("total_obs"),
-            ]
+            ],
         )
         .sort("avg_prob", descending=True)
         .select(
@@ -1470,7 +1515,7 @@ def create_taxa_summary_table(
                 pl.col("max_fc").round(2).alias("Max log₂FC"),
                 pl.col("total_ess").round(1).alias("Total ESS"),
                 pl.col("total_obs").alias("Total Obs"),
-            ]
+            ],
         )
     )
 
@@ -1488,7 +1533,8 @@ def create_markers_detail_table(
 
     return (
         markers_df.sort(
-            ["taxon_name", "posterior_enrich_prob"], descending=[False, True]
+            ["taxon_name", "posterior_enrich_prob"],
+            descending=[False, True],
         )
         .select(
             [
@@ -1498,14 +1544,14 @@ def create_markers_detail_table(
                 pl.col("log2_enrichment").round(2).alias("log₂FC"),
                 pl.col("effective_sample_size").round(1).alias("ESS"),
                 pl.col("a_raw").alias("Obs"),
-            ]
+            ],
         )
         .with_columns(
             [
                 pl.col("Scaffold")
                 .map_elements(lambda s: mo.image(svg_from_smiles(s)))
-                .alias("Structure")
-            ]
+                .alias("Structure"),
+            ],
         )
     )
 
@@ -1536,13 +1582,13 @@ def load_data_wd(effective_config):
                 PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
                 SELECT DISTINCT
                 (xsd:integer(STRAFTER(STR(?c), "Q")) AS ?compound)
-                (xsd:integer(STRAFTER(STR(?t), "Q")) AS ?taxon) 
+                (xsd:integer(STRAFTER(STR(?t), "Q")) AS ?taxon)
                 WHERE {
                   ?c wdt:P703 ?t .
                 }
                 """,
                 endpoint=effective_config["qlever_endpoint"],
-            )
+            ),
         ).collect()
 
         compound_smiles = (
@@ -1559,7 +1605,7 @@ def load_data_wd(effective_config):
                 }
                 """,
                     endpoint=effective_config["qlever_endpoint"],
-                )
+                ),
             )
             .select(
                 pl.col("compound").cast(pl.Int64, strict=False),
@@ -1570,7 +1616,9 @@ def load_data_wd(effective_config):
         )
         _compound_ids = compound_taxon.select("compound").unique()
         compound_smiles = compound_smiles.collect().join(
-            _compound_ids, on="compound", how="inner"
+            _compound_ids,
+            on="compound",
+            how="inner",
         )
 
         taxon_parent = parse_sparql_response(
@@ -1579,14 +1627,14 @@ def load_data_wd(effective_config):
                 PREFIX wdt: <http://www.wikidata.org/prop/direct/>
                 PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
                 SELECT DISTINCT
-                (xsd:integer(STRAFTER(STR(?t), "Q")) AS ?taxon) 
-                (xsd:integer(STRAFTER(STR(?tp), "Q")) AS ?taxon_parent) 
+                (xsd:integer(STRAFTER(STR(?t), "Q")) AS ?taxon)
+                (xsd:integer(STRAFTER(STR(?tp), "Q")) AS ?taxon_parent)
                 WHERE {
                   ?t wdt:P171 ?tp .
                 }
                 """,
                 endpoint=effective_config["qlever_endpoint"],
-            )
+            ),
         ).collect()
 
     with mo.status.spinner("Shrinking data and lineages..."):
@@ -1594,7 +1642,7 @@ def load_data_wd(effective_config):
             edges=taxon_parent,
             child="taxon",
             parent="taxon_parent",
-            focus=compound_taxon.select("taxon").unique(),
+            focus=compound_taxon.get_column("taxon").unique(),
         ).rename(
             {"ancestor": "taxon_ancestor", "distance": "taxon_distance"},
         )
@@ -1604,10 +1652,10 @@ def load_data_wd(effective_config):
                 [
                     lineage.select("taxon"),
                     lineage.select(pl.col("taxon_ancestor").alias("taxon")),
-                ]
+                ],
             )
             .to_series()
-            .unique()
+            .unique(),
         )
         taxon_parent = taxon_parent.filter(pl.col("taxon").is_in(_to_keep))
 
@@ -1617,15 +1665,15 @@ def load_data_wd(effective_config):
                     query="""
                 PREFIX wdt: <http://www.wikidata.org/prop/direct/>
                 PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
-                SELECT DISTINCT 
-                (xsd:integer(STRAFTER(STR(?t), "Q")) AS ?taxon) 
+                SELECT DISTINCT
+                (xsd:integer(STRAFTER(STR(?t), "Q")) AS ?taxon)
                 (xsd:integer(STRAFTER(STR(?tr), "Q")) AS ?taxon_rank)
                 WHERE {
                   ?t wdt:P105 ?tr .
                 }
                 """,
                     endpoint=effective_config["qlever_endpoint"],
-                )
+                ),
             )
             .select(
                 pl.col("taxon").cast(pl.Int64, strict=False),
@@ -1649,14 +1697,14 @@ def load_data_wd(effective_config):
                 PREFIX wdt: <http://www.wikidata.org/prop/direct/>
                 PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
                 SELECT DISTINCT
-                (xsd:integer(STRAFTER(STR(?t), "Q")) AS ?taxon) 
+                (xsd:integer(STRAFTER(STR(?t), "Q")) AS ?taxon)
                 ?taxon_name
                 WHERE {
                   ?t wdt:P225 ?taxon_name .
                 }
                 """,
                     endpoint=effective_config["qlever_endpoint"],
-                )
+                ),
             )
             .select(
                 pl.col("taxon").cast(pl.Int64, strict=False),
@@ -1706,7 +1754,7 @@ def load_data_mortar(effective_config, compound_smiles):
         else pl.DataFrame({"SMILES": [], "MoleculeFrequency": []})
     )
     logging.info(
-        f"✓ Scaffold fragments: {scaffold_fragments.height:,} (≥{effective_config["filtering"]["min_frequency_scaffold"]} occurrences)",
+        f"✓ Scaffold fragments: {scaffold_fragments.height:,} (≥{effective_config['filtering']['min_frequency_scaffold']} occurrences)",
     )
 
     scaffolds_base = build_compound_scaffold_table(
@@ -1739,7 +1787,7 @@ def load_data_mortar(effective_config, compound_smiles):
     _out = mo.md(
         """
         For now, scaffolds and fragments come from [MORTAR](https://github.com/FelixBaensch/MORTAR) (which requires a local installation and local files), but the long-term goal is to pull everything directly from Wikidata.
-        """
+        """,
     ).callout(
         kind="info",
     )
@@ -1867,8 +1915,8 @@ def scaffold_compound_stats(compound_scaffold):
                 [
                     pl.col("scaffold")
                     .map_elements(lambda s: mo.image(svg_from_smiles(s)))
-                    .alias("Structure")
-                ]
+                    .alias("Structure"),
+                ],
             )
             .select(["Structure", "n_compounds"])
             .rename({"n_compounds": "Compounds"})
@@ -1942,7 +1990,7 @@ def scaffold_trace_diagnostic(markers):
 
     # Add a small legend explaining status badges used in the table
     legend_md = mo.md(
-        "**Legend:** 🟢 enriched | 🔴 depleted | 🟡 undecided | (rows with n ≤ 1 removed)"
+        "**Legend:** 🟢 enriched | 🔴 depleted | 🟡 undecided | (rows with n ≤ 1 removed)",
     )
 
     _out = mo.vstack(
@@ -2015,7 +2063,7 @@ def discovery_mode(effective_config, markers):
             pl.col("taxon_name").fill_null(pl.col("taxon_ancestor")).alias("Taxon"),
             # Use taxon_rank_label if present, otherwise fall back to raw taxon_rank
             pl.coalesce([pl.col("taxon_rank_label"), pl.col("taxon_rank")]).alias(
-                "Rank"
+                "Rank",
             ),
             pl.col("a_raw").alias("n"),
             pl.col("n_source_taxa").alias("Taxa"),
@@ -2400,7 +2448,7 @@ def markers_kin(
             mo.ui.table(kingdom_detail, selection=None)
             if not kingdom_detail.is_empty()
             else mo.md("*No data*"),
-        ]
+        ],
     )
 
     _out
@@ -2428,7 +2476,7 @@ def markers_fam(
             mo.ui.table(family_detail, selection=None)
             if not family_detail.is_empty()
             else mo.md("*No data*"),
-        ]
+        ],
     )
 
     _out
@@ -2456,7 +2504,7 @@ def markers_gen(
             mo.ui.table(genus_detail, selection=None)
             if not genus_detail.is_empty()
             else mo.md("*No data*"),
-        ]
+        ],
     )
 
     _out

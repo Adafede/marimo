@@ -113,7 +113,11 @@ def rope_decision(
 
     # Get CI on fold-change scale
     fc_lower, fc_upper = fold_change_credible_interval(
-        a, b, t, ci_probability, log_base
+        a,
+        b,
+        t,
+        ci_probability,
+        log_base,
     )
 
     # Classify based on CI position relative to ROPE
@@ -224,7 +228,7 @@ def hierarchical_prior_center(
     """
     if not (0 <= hierarchical_weight <= 1):
         raise ValueError(
-            f"hierarchical_weight must be in [0, 1], got {hierarchical_weight}"
+            f"hierarchical_weight must be in [0, 1], got {hierarchical_weight}",
         )
 
     w = hierarchical_weight
