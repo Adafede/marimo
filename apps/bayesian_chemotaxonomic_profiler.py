@@ -368,13 +368,13 @@ with app.setup:
         return f"{PROXY}{BASE_URL}/{filename}"
 
     DEFAULT_DATA_PATHS: Final[DataPathsDict] = {
-        "path_can_smi": get_proxied_url("lotus_canonical.smi.gz"),
-        "path_frags_cdk": get_proxied_url("Fragments_Scaffold_Generator.csv.gz"),
-        "path_frags_ert": get_proxied_url("Fragments_Ertl_algorithm.csv.gz"),
-        "path_frags_sru": get_proxied_url("Fragments_Sugar_Removal_Utility.csv.gz"),
-        "path_items_cdk": get_proxied_url("Items_Scaffold_Generator.csv.gz"),
-        "path_items_ert": get_proxied_url("Items_Ertl_algorithm.csv.gz"),
-        "path_items_sru": get_proxied_url("Items_Sugar_Removal_Utility.csv.gz"),
+        "path_can_smi": get_proxied_url("lotus_canonical.smi"),
+        "path_frags_cdk": get_proxied_url("Fragments_Scaffold_Generator.csv"),
+        "path_frags_ert": get_proxied_url("Fragments_Ertl_algorithm.csv"),
+        "path_frags_sru": get_proxied_url("Fragments_Sugar_Removal_Utility.csv"),
+        "path_items_cdk": get_proxied_url("Items_Scaffold_Generator.csv"),
+        "path_items_ert": get_proxied_url("Items_Ertl_algorithm.csv"),
+        "path_items_sru": get_proxied_url("Items_Sugar_Removal_Utility.csv"),
     }
 
     # ====================================================================
