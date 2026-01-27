@@ -1514,8 +1514,12 @@ def load_data_wd(effective_config):
             execute_with_retry(
                 query="""
                 PREFIX wdt: <http://www.wikidata.org/prop/direct/>
-                SELECT DISTINCT ?compound ?taxon WHERE {
-                  ?compound wdt:P703 ?taxon .
+                PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+                SELECT DISTINCT
+                (xsd:integer(STRAFTER(STR(?c), "Q")) AS ?compound)
+                (xsd:integer(STRAFTER(STR(?t), "Q")) AS ?taxon) 
+                WHERE {
+                  ?c wdt:P703 ?t .
                 }
                 """,
                 endpoint=effective_config["qlever_endpoint"],
@@ -1526,8 +1530,12 @@ def load_data_wd(effective_config):
             execute_with_retry(
                 query="""
                 PREFIX wdt: <http://www.wikidata.org/prop/direct/>
-                                    SELECT DISTINCT ?compound ?compound_smiles WHERE {
-                ?compound wdt:P233 ?compound_smiles .
+                PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+                SELECT DISTINCT
+                (xsd:integer(STRAFTER(STR(?c), "Q")) AS ?compound)
+                ?compound_smiles
+                WHERE {
+                  ?c wdt:P233 ?compound_smiles .
                 }
                 """,
                 endpoint=effective_config["qlever_endpoint"],
@@ -1542,8 +1550,12 @@ def load_data_wd(effective_config):
             execute_with_retry(
                 query="""
                 PREFIX wdt: <http://www.wikidata.org/prop/direct/>
-                SELECT DISTINCT ?taxon ?taxon_parent WHERE {
-                  ?taxon wdt:P171 ?taxon_parent .
+                PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+                SELECT DISTINCT
+                (xsd:integer(STRAFTER(STR(?t), "Q")) AS ?taxon) 
+                (xsd:integer(STRAFTER(STR(?tp), "Q")) AS ?taxon_parent) 
+                WHERE {
+                  ?t wdt:P171 ?tp .
                 }
                 """,
                 endpoint=effective_config["qlever_endpoint"],
@@ -1576,8 +1588,12 @@ def load_data_wd(effective_config):
             execute_with_retry(
                 query="""
                 PREFIX wdt: <http://www.wikidata.org/prop/direct/>
-                SELECT DISTINCT ?taxon ?taxon_rank WHERE {
-                  ?taxon wdt:P105 ?taxon_rank .
+                PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+                SELECT DISTINCT 
+                (xsd:integer(STRAFTER(STR(?t), "Q")) AS ?taxon) 
+                (xsd:integer(STRAFTER(STR(?tr), "Q")) AS ?taxon_rank)
+                WHERE {
+                  ?t wdt:P105 ?tr .
                 }
                 """,
                 endpoint=effective_config["qlever_endpoint"],
@@ -1595,8 +1611,12 @@ def load_data_wd(effective_config):
             execute_with_retry(
                 query="""
                 PREFIX wdt: <http://www.wikidata.org/prop/direct/>
-                SELECT DISTINCT ?taxon ?taxon_name WHERE {
-                  ?taxon wdt:P225 ?taxon_name .
+                PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+                SELECT DISTINCT
+                (xsd:integer(STRAFTER(STR(?t), "Q")) AS ?taxon) 
+                ?taxon_name
+                WHERE {
+                  ?t wdt:P225 ?taxon_name .
                 }
                 """,
                 endpoint=effective_config["qlever_endpoint"],
