@@ -433,11 +433,11 @@ def resolve_ambiguous_matches(
 
 @app.function
 def resolve_taxon_to_qid(
-    taxon_input: str|int,
+    taxon_input: str | int,
 ) -> tuple[str | None, mo.Html | None]:
     """Resolve taxon name or QID (int or string) to a valid QID."""
     taxon_input = taxon_input.strip()
-    
+
     if taxon_input is None:
         return None, None
 
@@ -994,13 +994,13 @@ def prepare_export_dataframe(
         pl.col("pub_date").alias("reference_date"),
         # QID extractions inline
         (pl.concat_str([pl.lit("Q"), pl.col("compound").cast(pl.Utf8)])).alias(
-            "compound_qid"
+            "compound_qid",
         ),
         (pl.concat_str([pl.lit("Q"), pl.col("taxon").cast(pl.Utf8)])).alias(
-            "taxon_qid"
+            "taxon_qid",
         ),
         (pl.concat_str([pl.lit("Q"), pl.col("reference").cast(pl.Utf8)])).alias(
-            "reference_qid"
+            "reference_qid",
         ),
     ]
 

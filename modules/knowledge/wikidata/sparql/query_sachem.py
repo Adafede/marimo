@@ -70,7 +70,7 @@ def query_sachem(
         return f"""
 {PREFIXES}
 {PREFIXES_SACHEM}
-SELECT 
+SELECT
 {SELECT_VARS_FULL}
 WHERE {{
     # Filter compounds with taxonomic data FIRST (much smaller set)
