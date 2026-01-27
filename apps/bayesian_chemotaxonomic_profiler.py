@@ -457,7 +457,7 @@ def read_table(
     name: str = "table",
 ) -> pl.DataFrame:
     """Read CSV/CSV.GZ from local or remote path and optionally validate columns."""
-    df = pl.read_csv(path, separator=separator)
+    df = pl.read_csv(str(path), separator=separator)
     return validate_columns(df, expected, name) if expected else df
 
 
@@ -2337,29 +2337,6 @@ def show_lineage_profile(markers, scaffold_select, taxon_lineage):
                         lp_pattern,
                     ],
                 )
-    _out
-    return
-
-
-@app.cell
-def top10_md(
-    effective_config,
-    ):
-    _out = mo.vstack(
-        [
-            mo.md("# Top 10 Taxa by Chemical Distinctiveness"),
-            mo.md(f"""
-        For each rank, we find the **10 taxa with most distinctive chemistry**, 
-        then show all their enriched scaffolds.
-
-        **Selection criteria:**
-        - P(enriched) ≥ {MIN_PROB}
-        - ESS ≥ {effective_config["stats"]["min_ess"]}
-        - OBS ≥ {MIN_OBS}
-        - log₂FC ≥ {MIN_LOG2FC}
-        """),
-        ]
-    )
     _out
     return
 
