@@ -4,12 +4,20 @@ version = "0.1.0"
 description = "Minimal, reusable utilities for marimo applications"
 requires-python = ">=3.13"
 dependencies = [
+  "altair>=6.0.0",
+  "cmcrameri>=1.9",
   "epam-indigo>=1.36.1",
   "marimo>=0.19.6",
+  "numpy>=2.4.1",
   "polars>=1.37.1",
+  "pyarrow>=23.0.0",
   "pydantic-ai>=1.47.0",
   "rdflib>=7.5.0",
   "rdkit>=2025.9.3",
+  "scipy>=1.17.0",
+  "simple-parsing>=0.1.8",
+  "vegafusion>=2.0.3",
+  "vl-convert-python>=1.9.0.post1",
 ]
 
 [project.scripts]

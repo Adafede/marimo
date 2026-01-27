@@ -5,12 +5,12 @@
 #     "cmcrameri==1.9",
 #     "marimo",
 #     "numpy==2.4.1",
-#     "polars==1.37.0",
-#     "pyarrow==22.0.0",
-#     "scipy==1.16.3",
+#     "polars==1.37.1",
+#     "pyarrow==23.0.0",
+#     "scipy==1.17.0",
 #     "simple-parsing==0.1.7",
 #     "vegafusion==2.0.3",
-#     "vl-convert-python",
+#     "vl-convert-python==1.9.0.post1",
 # ]
 # ///
 """
