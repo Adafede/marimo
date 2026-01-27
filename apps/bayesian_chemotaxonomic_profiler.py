@@ -1542,9 +1542,7 @@ def apply_config():
 
 
 @app.cell
-def load_data(effective_config):
-    """Load compound, scaffold, and taxonomy data from Wikidata via SPARQL."""
-
+def load_data_wd(effective_config):
     with mo.status.spinner("Fetching data from Wikidata..."):
         logging.info("=" * 55)
         logging.info("Loading data from Wikidata SPARQL endpoint")
@@ -1563,74 +1561,6 @@ def load_data(effective_config):
             )
         )
         logging.info(f"✓ Compound SMILES: {compound_smiles.height:,} compounds")
-
-        # Load canonical SMILES from local file - REQUIRED for MORTAR row mapping
-        # The MORTAR fragment files map by row order to this file
-        compound_can_smiles = pl.read_csv(
-            str(effective_config["data_paths"]["path_can_smi"]),
-            low_memory=True,
-            rechunk=False,
-            has_header=False,
-            new_columns=["compound_smiles"],
-        )
-        logging.info(
-            f"✓ Canonical SMILES (local): {compound_can_smiles.height:,} compounds",
-        )
-
-        data_path = effective_config["data_paths"]
-
-        compound_mappings = {
-            key: load_compound_fragment_mapping(data_path[key])
-            if key in data_path
-            else None
-            for key in ["path_items_cdk", "path_items_ert", "path_items_sru"]
-        }
-
-        frag_tables = []
-        for attr in ["path_frags_cdk", "path_frags_ert", "path_frags_sru"]:
-            p = data_path[attr]
-            frag_tables.append(
-                load_fragments(
-                    p, effective_config["filtering"]["min_frequency_scaffold"]
-                ),
-            )
-
-        scaffold_fragments = (
-            pl.concat(frag_tables).unique(subset=["SMILES"])
-            if frag_tables
-            else pl.DataFrame({"SMILES": [], "MoleculeFrequency": []})
-        )
-        logging.info(
-            f"✓ Scaffold fragments: {scaffold_fragments.height:,} (≥{effective_config["filtering"]["min_frequency_scaffold"]} occurrences)",
-        )
-
-        scaffolds_base = build_compound_scaffold_table(
-            compound_can_smiles,
-            compound_mappings,
-            scaffold_fragments,
-        )
-        logging.info(
-            f"✓ Base scaffolds: {scaffolds_base.height:,} compound-scaffold pairs",
-        )
-
-        if effective_config["filtering"]["include_compounds_as_scaffolds"]:
-            compound_self = compound_can_smiles.select(
-                [
-                    pl.col("compound_smiles"),
-                    pl.col("compound_smiles").alias("scaffold"),
-                ],
-            )
-            scaffolds_base = pl.concat([scaffolds_base, compound_self]).unique()
-            logging.info(
-                f"✓ Including compounds as scaffolds: +{compound_self.height:,} whole molecules",
-            )
-
-        compound_scaffold = compound_smiles.join(
-            scaffolds_base,
-            on="compound_smiles",
-            how="inner",
-        )
-        logging.info(f"✓ Total compound-scaffold pairs: {compound_scaffold.height:,}")
 
         # Fetch taxon data from Wikidata
         taxon_name = parse_sparql_response(
@@ -1686,12 +1616,86 @@ def load_data(effective_config):
         logging.info(f"✓ Compound-taxon annotations: {compound_taxon.height:,}")
         logging.info("=" * 55)
     return (
-        compound_scaffold,
+        compound_smiles,
         compound_taxon,
         taxon_name,
         taxon_parent,
         taxon_rank,
     )
+
+
+@app.cell
+def load_data_mortar(effective_config, compound_smiles):
+    # Load canonical SMILES from local file - REQUIRED for MORTAR row mapping
+    # The MORTAR fragment files map by row order to this file
+    compound_can_smiles = pl.read_csv(
+        str(effective_config["data_paths"]["path_can_smi"]),
+        low_memory=True,
+        rechunk=False,
+        has_header=False,
+        new_columns=["compound_smiles"],
+    )
+    logging.info(
+        f"✓ Canonical SMILES (local): {compound_can_smiles.height:,} compounds",
+    )
+
+    data_path = effective_config["data_paths"]["path_items_ert"]
+
+    compound_mappings = load_compound_fragment_mapping(
+        effective_config["data_paths"]["path_items_ert"]
+    )
+    frag_tables = []
+    for attr in ["path_frags_cdk", "path_frags_ert", "path_frags_sru"]:
+        p = data_path[attr]
+        frag_tables.append(
+            load_fragments(p, effective_config["filtering"]["min_frequency_scaffold"]),
+        )
+
+    scaffold_fragments = (
+        pl.concat(frag_tables).unique(subset=["SMILES"])
+        if frag_tables
+        else pl.DataFrame({"SMILES": [], "MoleculeFrequency": []})
+    )
+    logging.info(
+        f"✓ Scaffold fragments: {scaffold_fragments.height:,} (≥{effective_config["filtering"]["min_frequency_scaffold"]} occurrences)",
+    )
+
+    scaffolds_base = build_compound_scaffold_table(
+        compound_can_smiles,
+        compound_mappings,
+        scaffold_fragments,
+    )
+    logging.info(
+        f"✓ Base scaffolds: {scaffolds_base.height:,} compound-scaffold pairs",
+    )
+
+    if effective_config["filtering"]["include_compounds_as_scaffolds"]:
+        compound_self = compound_can_smiles.select(
+            [
+                pl.col("compound_smiles"),
+                pl.col("compound_smiles").alias("scaffold"),
+            ],
+        )
+        scaffolds_base = pl.concat([scaffolds_base, compound_self]).unique()
+        logging.info(
+            f"✓ Including compounds as scaffolds: +{compound_self.height:,} whole molecules",
+        )
+
+    compound_scaffold = compound_smiles.join(
+        scaffolds_base,
+        on="compound_smiles",
+        how="inner",
+    )
+    logging.info(f"✓ Total compound-scaffold pairs: {compound_scaffold.height:,}")
+    _out = mo.md(
+        """
+        For now, scaffolds and fragments come from [MORTAR](https://github.com/FelixBaensch/MORTAR) (which requires a local installation and local files), but the long-term goal is to pull everything directly from Wikidata.
+        """
+    ).callout(
+        kind="info",
+    )
+    _out
+    return compound_scaffold
 
 
 @app.cell
@@ -1833,13 +1837,6 @@ def scaffold_compound_stats(compound_scaffold):
     _out = mo.vstack(
         [
             mo.md("### Chemical Fragment Coverage"),
-            mo.md(
-                """
-            For now, scaffolds and fragments come from [MORTAR](https://github.com/FelixBaensch/MORTAR) (which requires a local installation and local files), but the long-term goal is to pull everything directly from Wikidata.
-            """
-            ).callout(
-                kind="info",
-            ),
             mo.md(
                 f"**{scs_total:,}** unique fragments | Median: **{scs_median:.0f}** compounds/fragment | Max: **{scs_max}**",
             ),
