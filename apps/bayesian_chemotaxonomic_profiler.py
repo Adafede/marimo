@@ -1526,9 +1526,10 @@ def load_data_wd(effective_config):
             )
         ).collect()
 
-        compound_smiles = parse_sparql_response(
-            execute_with_retry(
-                query="""
+        compound_smiles = (
+            parse_sparql_response(
+                execute_with_retry(
+                    query="""
                 PREFIX wdt: <http://www.wikidata.org/prop/direct/>
                 PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
                 SELECT DISTINCT
@@ -1538,13 +1539,16 @@ def load_data_wd(effective_config):
                   ?c wdt:P233 ?compound_smiles .
                 }
                 """,
-                endpoint=effective_config["qlever_endpoint"],
+                    endpoint=effective_config["qlever_endpoint"],
+                )
             )
-        ).select(
-            pl.col("compound").cast(pl.Int64, strict=False),
-            pl.col("compound_smiles").cast(pl.String, strict=False),
-        ).drop_nulls(
-        ).lazy()
+            .select(
+                pl.col("compound").cast(pl.Int64, strict=False),
+                pl.col("compound_smiles").cast(pl.String, strict=False),
+            )
+            .drop_nulls()
+            .lazy()
+        )
         _compound_ids = compound_taxon.select("compound").unique()
         compound_smiles = compound_smiles.collect().join(
             _compound_ids, on="compound", how="inner"
@@ -1588,9 +1592,10 @@ def load_data_wd(effective_config):
         )
         taxon_parent = taxon_parent.filter(pl.col("taxon").is_in(_to_keep))
 
-        taxon_rank = parse_sparql_response(
-            execute_with_retry(
-                query="""
+        taxon_rank = (
+            parse_sparql_response(
+                execute_with_retry(
+                    query="""
                 PREFIX wdt: <http://www.wikidata.org/prop/direct/>
                 PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
                 SELECT DISTINCT 
@@ -1600,13 +1605,16 @@ def load_data_wd(effective_config):
                   ?t wdt:P105 ?tr .
                 }
                 """,
-                endpoint=effective_config["qlever_endpoint"],
+                    endpoint=effective_config["qlever_endpoint"],
+                )
             )
-        ).select(
-            pl.col("taxon").cast(pl.Int64, strict=False),
-            pl.col("taxon_rank").cast(pl.Int64, strict=False),
-        ).drop_nulls(
-        ).lazy()
+            .select(
+                pl.col("taxon").cast(pl.Int64, strict=False),
+                pl.col("taxon_rank").cast(pl.Int64, strict=False),
+            )
+            .drop_nulls()
+            .lazy()
+        )
         taxon_rank = taxon_rank.filter(pl.col("taxon").is_in(_to_keep)).collect()
 
         lineage = lineage.join(
@@ -1615,9 +1623,10 @@ def load_data_wd(effective_config):
             how="left",
         )
 
-        taxon_name = parse_sparql_response(
-            execute_with_retry(
-                query="""
+        taxon_name = (
+            parse_sparql_response(
+                execute_with_retry(
+                    query="""
                 PREFIX wdt: <http://www.wikidata.org/prop/direct/>
                 PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
                 SELECT DISTINCT
@@ -1627,13 +1636,16 @@ def load_data_wd(effective_config):
                   ?t wdt:P225 ?taxon_name .
                 }
                 """,
-                endpoint=effective_config["qlever_endpoint"],
+                    endpoint=effective_config["qlever_endpoint"],
+                )
             )
-        ).select(
-            pl.col("taxon").cast(pl.Int64, strict=False),
-            pl.col("taxon_name").cast(pl.String, strict=False),
-        ).drop_nulls(
-        ).lazy()
+            .select(
+                pl.col("taxon").cast(pl.Int64, strict=False),
+                pl.col("taxon_name").cast(pl.String, strict=False),
+            )
+            .drop_nulls()
+            .lazy()
+        )
         taxon_name = taxon_name.filter(pl.col("taxon").is_in(_to_keep)).collect()
 
         logging.info(f"✓ Compound SMILES: {compound_smiles.height:,} compounds")
