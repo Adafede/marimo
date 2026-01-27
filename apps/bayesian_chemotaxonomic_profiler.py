@@ -1588,7 +1588,7 @@ def load_data(effective_config):
 
         frag_tables = []
         for attr in ["path_frags_cdk", "path_frags_ert", "path_frags_sru"]:
-            p = effective_config["data_paths"][attr]
+            p = data_path[attr]
             frag_tables.append(
                 load_fragments(
                     p, effective_config["filtering"]["min_frequency_scaffold"]
@@ -1606,7 +1606,7 @@ def load_data(effective_config):
 
         scaffolds_base = build_compound_scaffold_table(
             compound_can_smiles,
-            compound_mapping,
+            compound_mappings,
             scaffold_fragments,
         )
         logging.info(
