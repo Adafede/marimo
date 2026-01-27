@@ -487,6 +487,7 @@ def load_compound_fragment_mapping(path: str) -> pl.DataFrame:
             ],
         )
         .select(["compound_name", "fragments_str"])
+        .collect()
     )
 
 
@@ -1560,10 +1561,16 @@ def load_data_wd(effective_config):
             {"ancestor": "taxon_ancestor", "distance": "taxon_distance"},
         )
 
-        _to_keep = set(pl.concat([
-            lineage.select("taxon"),
-            lineage.select(pl.col("taxon_ancestor").alias("taxon"))
-        ]).to_series().unique())
+        _to_keep = set(
+            pl.concat(
+                [
+                    lineage.select("taxon"),
+                    lineage.select(pl.col("taxon_ancestor").alias("taxon")),
+                ]
+            )
+            .to_series()
+            .unique()
+        )
         taxon_parent = taxon_parent.filter(pl.col("taxon").is_in(_to_keep))
 
         taxon_rank = parse_sparql_response(
@@ -1610,7 +1617,7 @@ def load_data_wd(effective_config):
 def load_data_mortar(effective_config, compound_smiles):
     # Load canonical SMILES from local file - REQUIRED for MORTAR row mapping
     # The MORTAR fragment files map by row order to this file
-    compound_can_smiles = pl.scan_csv(
+    compound_can_smiles = pl.read_csv(
         str(effective_config["data_paths"]["path_can_smi"]),
         low_memory=True,
         rechunk=False,
