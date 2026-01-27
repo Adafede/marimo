@@ -9,8 +9,8 @@
 #     "pyarrow==23.0.0",
 #     "scipy==1.17.0",
 #     "simple-parsing==0.1.7",
-#     "vegafusion==2.0.3",
-#     "vl-convert-python==1.9.0.post1",
+#     # "vegafusion==2.0.3",
+#     # "vl-convert-python==1.9.0.post1",
 # ]
 # ///
 """
