@@ -1639,10 +1639,10 @@ def load_data_mortar(effective_config, compound_smiles):
         f"✓ Canonical SMILES (local): {compound_can_smiles.height:,} compounds",
     )
 
-    data_path = effective_config["data_paths"]["path_items_ert"]
+    data_path = effective_config["data_paths"]
 
     compound_mappings = load_compound_fragment_mapping(
-        effective_config["data_paths"]["path_items_ert"]
+        data_path["path_items_ert"]
     )
     frag_tables = []
     for attr in ["path_frags_cdk", "path_frags_ert", "path_frags_sru"]:
