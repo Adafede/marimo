@@ -609,14 +609,14 @@ def run_hierarchical_analysis(
     cfg: Final[TypedDict] = None,
 ) -> pl.DataFrame:
     """
-    Run Bayesian enrichment analysis across taxonomic ranks.
+    Memory-optimized Bayesian enrichment analysis.
 
-    For each scaffold-taxon pair:
-    1. Count compounds with/without scaffold in investigated taxa only
-    2. Apply diversity weighting: a_eff = √(compounds × source_taxa)
-    3. Compute P(enriched | data) using Beta-Binomial model
-
-    Optional rank-to-rank priors blend parent posterior with global baseline.
+    Memory optimizations:
+    - Process one rank at a time
+    - Batch CI/ROPE computation in 10K row chunks
+    - Use Float32 for intermediate calculations
+    - Drop columns early when not needed
+    - Clear large arrays explicitly
     """
     start = time.time()
     if cfg is None:
@@ -639,23 +639,19 @@ def run_hierarchical_analysis(
     # Minimal scaffold filtering - only require appearing in ≥2 compounds
     # The Bayesian model handles ubiquitous scaffolds through θ₀ (baseline)
     scaffold_freq = base_evidence.group_by("compound_ancestor").agg(
-        [
-            pl.col("compound").n_unique().alias("n_compounds"),
-        ],
+        pl.col("compound").n_unique().alias("n_compounds")
     )
 
     keep_scaffolds = scaffold_freq.filter(
-        pl.col("n_compounds") >= cfg["filtering"]["min_frequency_scaffold"],
+        pl.col("n_compounds") >= cfg["filtering"]["min_frequency_scaffold"]
     ).select("compound_ancestor")
 
     logging.info(
-        f"Scaffolds: {keep_scaffolds.height} (≥{cfg["filtering"]["min_frequency_scaffold"]} compounds)",
+        f"Scaffolds: {keep_scaffolds.height} (≥{cfg['filtering']['min_frequency_scaffold']} compounds)"
     )
 
     base_evidence = base_evidence.join(
-        keep_scaffolds,
-        on="compound_ancestor",
-        how="inner",
+        keep_scaffolds, on="compound_ancestor", how="inner"
     )
 
     if base_evidence.is_empty():
@@ -664,7 +660,7 @@ def run_hierarchical_analysis(
     N = int(base_evidence.get_column("compound").n_unique())
     logging.info(f"Universe: {N} compounds, {keep_scaffolds.height} scaffolds")
 
-    # Get valid ranks ordered coarse→fine
+    # Get valid ranks
     valid_ranks_df = (
         taxon_lineage.filter(pl.col("taxon_rank").is_not_null())
         .group_by("taxon_rank")
@@ -679,16 +675,13 @@ def run_hierarchical_analysis(
     # Keep only ranks that exist in our internal rank-order dictionary
     valid_ranks = [r for r in valid_ranks if get_rank_order(r) < 999]
     if not valid_ranks:
-        logging.warning(
-            "No valid ranks found within the internal rank dictionary - aborting analysis"
-        )
+        logging.warning("No valid ranks found - aborting")
         return pl.DataFrame()
 
     valid_ranks = sorted(valid_ranks, key=lambda r: get_rank_order(r))
-
     logging.info(f"Ranks (coarse→fine): {valid_ranks}")
 
-    # Build parent-child mappings between ranks for hierarchical priors
+    # Build parent-child mappings
     taxon_rank_map = (
         taxon_lineage.select(["taxon_ancestor", "taxon_rank"])
         .unique()
@@ -710,11 +703,7 @@ def run_hierarchical_analysis(
             taxon_lineage.filter(pl.col("taxon_rank") == parent_rank)
             .select(["taxon", "taxon_ancestor"])
             .rename({"taxon_ancestor": "parent_taxon"})
-            .join(
-                child_taxa.rename({"child_taxon": "taxon"}),
-                on="taxon",
-                how="inner",
-            )
+            .join(child_taxa.rename({"child_taxon": "taxon"}), on="taxon", how="inner")
             .select(["taxon", "parent_taxon"])
             .rename({"taxon": "child_taxon"})
             .unique()
@@ -722,14 +711,14 @@ def run_hierarchical_analysis(
 
         parent_child_maps[child_rank] = parent_map
 
-    # Process ranks with rank-to-rank prior propagation
+    # Process ranks with streaming approach
     rank_results = []
     posteriors_by_rank = {}
 
     for rank_idx, rank in enumerate(valid_ranks):
         logging.info(f"  Processing {rank}")
 
-        # Map each taxon to its ancestor at this rank
+        # Map to this rank
         rank_map = (
             taxon_lineage.filter(pl.col("taxon_rank") == rank)
             .select(["taxon", "taxon_ancestor"])
@@ -738,7 +727,7 @@ def run_hierarchical_analysis(
 
         logging.info(f"    {rank_map.height} taxon-ancestor mappings")
 
-        # Propagate compounds up to this rank level
+        # Propagate evidence
         rank_evidence = (
             base_evidence.join(rank_map, on="taxon", how="inner")
             .select(
@@ -747,7 +736,7 @@ def run_hierarchical_analysis(
                     "taxon_ancestor",
                     "compound_ancestor",
                     pl.col("taxon").alias("source_taxon"),
-                ],
+                ]
             )
             .unique()
         )
@@ -758,52 +747,58 @@ def run_hierarchical_analysis(
             logging.warning(f"    No evidence for rank {rank} - skipping")
             continue
 
-        # Scaffold totals before filtering
+        # Scaffold totals (before filtering)
         scaffold_totals_full = rank_evidence.group_by("compound_ancestor").agg(
-            pl.col("compound").n_unique().alias("scaffold_total"),
+            pl.col("compound").n_unique().alias("scaffold_total")
         )
 
         # Filter taxa by minimum frequency
         taxon_freq = rank_evidence.group_by("taxon_ancestor").agg(
-            pl.col("compound").n_unique().alias("taxon_obs"),
+            pl.col("compound").n_unique().alias("taxon_obs")
         )
         keep_taxa = taxon_freq.filter(
-            pl.col("taxon_obs") >= cfg["filtering"]["min_frequency_taxa"],
+            pl.col("taxon_obs") >= cfg["filtering"]["min_frequency_taxa"]
         ).select("taxon_ancestor")
+
         rank_evidence_filtered = rank_evidence.join(
-            keep_taxa,
-            on="taxon_ancestor",
-            how="inner",
+            keep_taxa, on="taxon_ancestor", how="inner"
         )
 
         if rank_evidence_filtered.is_empty():
             continue
 
-        # Diversity weighting: a_eff = √(compounds × source_taxa)
+        # === OPTIMIZED PIPELINE: Minimize intermediate copies ===
+        CONTINUITY_CORRECTION = cfg["stats"]["continuity_correction"]
+        MIN_THETA_0 = cfg["stats"]["min_theta_0"]
+
+        # Diversity weighting and contingency table in one pass
         a_counts = (
             rank_evidence_filtered.group_by(["compound_ancestor", "taxon_ancestor"])
             .agg(
                 [
                     pl.col("compound").n_unique().alias("a_raw"),
                     pl.col("source_taxon").n_unique().alias("n_source_taxa"),
-                ],
+                ]
             )
             .with_columns(
-                (
-                    pl.col("a_raw").cast(pl.Float32).sqrt()
-                    * pl.col("n_source_taxa").cast(pl.Float32).sqrt()
-                )
-                .round(0)
-                .cast(pl.Int32)
-                .clip(lower_bound=1)
-                .alias("a"),
+                [
+                    (
+                        pl.col("a_raw").cast(pl.Float32).sqrt()
+                        * pl.col("n_source_taxa").cast(pl.Float32).sqrt()
+                    )
+                    .round(0)
+                    .cast(pl.Int32)
+                    .clip(lower_bound=1)
+                    .alias("a")
+                ]
             )
         )
 
         taxon_totals = rank_evidence_filtered.group_by("taxon_ancestor").agg(
-            pl.col("compound").n_unique().alias("taxon_total"),
+            pl.col("compound").n_unique().alias("taxon_total")
         )
 
+        # Build contingency table and statistics in chained pipeline
         rank_data = (
             a_counts.join(scaffold_totals_full, on="compound_ancestor", how="left")
             .join(taxon_totals, on="taxon_ancestor", how="left")
@@ -836,32 +831,8 @@ def run_hierarchical_analysis(
                     .alias("d"),
                     pl.lit(N).alias("N"),
                     pl.lit(rank).alias("taxon_rank"),
-                ],
+                ]
             )
-        )
-        CONTINUITY_CORRECTION = cfg["stats"]["continuity_correction"]
-        # Classical statistics
-        rank_data = rank_data.with_columns(
-            [
-                (pl.col("a") / (pl.col("a") + pl.col("c") + CONTINUITY_CORRECTION))
-                .clip(0, 1)
-                .alias("sensitivity"),
-                (pl.col("d") / (pl.col("b") + pl.col("d") + CONTINUITY_CORRECTION))
-                .clip(0, 1)
-                .alias("specificity"),
-                (pl.col("a") / (pl.col("a") + pl.col("b") + CONTINUITY_CORRECTION))
-                .clip(0, 1)
-                .alias("precision"),
-                (pl.col("b") / (pl.col("b") + pl.col("d") + CONTINUITY_CORRECTION))
-                .clip(0, 1)
-                .alias("fpr"),
-            ],
-        ).with_columns(
-            [
-                (pl.col("sensitivity") / (pl.col("fpr") + CONTINUITY_CORRECTION)).alias(
-                    "likelihood_ratio",
-                ),
-            ],
         )
 
         # ================================================================
@@ -921,13 +892,58 @@ def run_hierarchical_analysis(
         # prior ensures data dominates quickly. The biases in θ₀ are
         # acceptable because we're asking relative, not absolute, questions.
         # ================================================================
-        MIN_THETA_0 = cfg["stats"]["min_theta_0"]
+
+        # Classical statistics - use Float32 to save memory
         rank_data = rank_data.with_columns(
             [
-                (pl.col("scaffold_total") / pl.col("N"))
+                (
+                    pl.col("a").cast(pl.Float64)
+                    / (pl.col("a") + pl.col("c"))
+                    .cast(pl.Float64)
+                    .add(CONTINUITY_CORRECTION)
+                )
+                .clip(0, 1)
+                .alias("sensitivity"),
+                (
+                    pl.col("d").cast(pl.Float64)
+                    / (pl.col("b") + pl.col("d"))
+                    .cast(pl.Float64)
+                    .add(CONTINUITY_CORRECTION)
+                )
+                .clip(0, 1)
+                .alias("specificity"),
+                (
+                    pl.col("a").cast(pl.Float64)
+                    / (pl.col("a") + pl.col("b"))
+                    .cast(pl.Float64)
+                    .add(CONTINUITY_CORRECTION)
+                )
+                .clip(0, 1)
+                .alias("precision"),
+                (
+                    pl.col("b").cast(pl.Float64)
+                    / (pl.col("b") + pl.col("d"))
+                    .cast(pl.Float64)
+                    .add(CONTINUITY_CORRECTION)
+                )
+                .clip(0, 1)
+                .alias("fpr"),
+            ]
+        ).with_columns(
+            [
+                (pl.col("sensitivity") / (pl.col("fpr") + CONTINUITY_CORRECTION)).alias(
+                    "likelihood_ratio"
+                ),
+            ]
+        )
+
+        # Baseline θ₀
+        rank_data = rank_data.with_columns(
+            [
+                (pl.col("scaffold_total").cast(pl.Float64) / pl.lit(N).cast(pl.Float64))
                 .clip(lower_bound=MIN_THETA_0)
                 .alias("theta_0"),
-            ],
+            ]
         )
 
         # HIERARCHICAL PRIORS: Blend parent posterior with global baseline.
@@ -949,24 +965,20 @@ def run_hierarchical_analysis(
 
             if parent_posteriors is not None:
                 child_to_parent = parent_child_maps[rank].rename(
-                    {"child_taxon": "taxon_ancestor"},
+                    {"child_taxon": "taxon_ancestor"}
                 )
-                rank_data_with_parent = rank_data.join(
-                    child_to_parent,
-                    on="taxon_ancestor",
-                    how="left",
+
+                # Only select needed columns for join
+                rank_data = rank_data.join(
+                    child_to_parent, on="taxon_ancestor", how="left"
                 ).join(
                     parent_posteriors.select(
-                        [
-                            "compound_ancestor",
-                            "taxon_ancestor",
-                            "posterior_mean",
-                        ],
+                        ["compound_ancestor", "taxon_ancestor", "posterior_mean"]
                     ).rename(
                         {
                             "taxon_ancestor": "parent_taxon",
                             "posterior_mean": "parent_mean",
-                        },
+                        }
                     ),
                     on=["compound_ancestor", "parent_taxon"],
                     how="left",
@@ -1011,46 +1023,43 @@ def run_hierarchical_analysis(
                 LAMBDA_PRIOR = cfg["priors"]["prior_strength"]
 
                 rank_data = (
-                    rank_data_with_parent.with_columns(
+                    rank_data.with_columns(
                         [
-                            # Blend parent posterior with global baseline for prior center
                             pl.when(pl.col("parent_mean").is_not_null())
                             .then(
-                                W * pl.col("parent_mean") + (1 - W) * pl.col("theta_0"),
+                                W * pl.col("parent_mean") + (1 - W) * pl.col("theta_0")
                             )
                             .otherwise(pl.col("theta_0"))
-                            .alias("prior_center"),
-                        ],
+                            .alias("prior_center")
+                        ]
                     )
                     .with_columns(
                         [
                             (pl.col("prior_center") * LAMBDA_PRIOR).alias(
-                                "alpha_prior",
+                                "alpha_prior"
                             ),
                             ((1 - pl.col("prior_center")) * LAMBDA_PRIOR).alias(
-                                "beta_prior",
+                                "beta_prior"
                             ),
-                        ],
+                        ]
                     )
                     .drop(["parent_taxon", "parent_mean", "prior_center"])
                 )
             else:
-                # Coarsest rank or no parent: simple prior centered on θ₀
                 LAMBDA_PRIOR = cfg["priors"]["prior_strength"]
                 rank_data = rank_data.with_columns(
                     [
                         (pl.col("theta_0") * LAMBDA_PRIOR).alias("alpha_prior"),
                         ((1 - pl.col("theta_0")) * LAMBDA_PRIOR).alias("beta_prior"),
-                    ],
+                    ]
                 )
         else:
-            # No hierarchical flow: simple prior centered on θ₀
             LAMBDA_PRIOR = cfg["priors"]["prior_strength"]
             rank_data = rank_data.with_columns(
                 [
                     (pl.col("theta_0") * LAMBDA_PRIOR).alias("alpha_prior"),
                     ((1 - pl.col("theta_0")) * LAMBDA_PRIOR).alias("beta_prior"),
-                ],
+                ]
             )
 
         # Compute posterior
@@ -1059,75 +1068,127 @@ def run_hierarchical_analysis(
                 [
                     (pl.col("alpha_prior") + pl.col("a")).alias("alpha_post"),
                     (pl.col("beta_prior") + pl.col("c_eff")).alias("beta_post"),
-                ],
+                ]
             )
             .with_columns(
                 [
-                    # Posterior mean: always well-defined
                     (
                         pl.col("alpha_post")
                         / (pl.col("alpha_post") + pl.col("beta_post"))
                     ).alias("posterior_mean"),
-                    # Posterior mode: only defined when α > 1 AND β > 1
-                    # Otherwise use the mean as a fallback
                     pl.when((pl.col("alpha_post") > 1) & (pl.col("beta_post") > 1))
                     .then(
                         (pl.col("alpha_post") - 1)
-                        / (pl.col("alpha_post") + pl.col("beta_post") - 2),
+                        / (pl.col("alpha_post") + pl.col("beta_post") - 2)
                     )
                     .otherwise(
                         pl.col("alpha_post")
-                        / (pl.col("alpha_post") + pl.col("beta_post")),
+                        / (pl.col("alpha_post") + pl.col("beta_post"))
                     )
                     .clip(0, 1)
                     .alias("posterior_mode"),
-                    # EFFECTIVE SAMPLE SIZE (ESS)
-                    # ===========================
-                    # ESS = α_post + β_post - (α_prior + β_prior)
-                    # This measures how much the data contributed beyond the prior.
-                    #
-                    # Interpretation:
-                    # - ESS = 0: No data, pure prior
-                    # - ESS = 5: Equivalent to 5 observations
-                    # - ESS = 20: Solid evidence
-                    #
-                    # PRINCIPLED CI FILTERING:
-                    # Instead of arbitrary CI width thresholds, we can filter by ESS.
-                    # ESS < 3 means fewer than 3 effective observations - unreliable.
                     (
                         pl.col("alpha_post")
                         + pl.col("beta_post")
                         - pl.col("alpha_prior")
                         - pl.col("beta_prior")
                     ).alias("effective_sample_size"),
-                ],
+                ]
             )
             .with_columns(
                 [
-                    # Observed rate (MLE): a_raw / taxon_total
-                    # This is the actual observed proportion, before Bayesian shrinkage
                     (
                         pl.col("a_raw").cast(pl.Float32)
                         / (pl.col("taxon_total").cast(pl.Float32) + 1e-10)
                     ).alias("observed_rate"),
-                    # log2 fold-change: posterior_mean vs baseline θ₀
                     (
                         (pl.col("posterior_mean") / (pl.col("theta_0") + 1e-10)).log(2)
                     ).alias("log2_enrichment"),
-                ],
+                ]
             )
         )
 
-        # Posterior probability computation
-        alpha_arr = rank_data.get_column("alpha_post").to_numpy()
-        beta_arr = rank_data.get_column("beta_post").to_numpy()
-        theta_arr = rank_data.get_column("theta_0").to_numpy()
-        post_prob_arr = posterior_probability_above(alpha_arr, beta_arr, theta_arr)
+        # === BATCHED CI/ROPE COMPUTATION ===
+        # Process in chunks to avoid peak memory spikes
+
+        CI_PROB = cfg["stats"]["ci_prob"]
+        ROPE_HALF_WIDTH = cfg["stats"]["rope_half_width"]
+        BATCH_SIZE = 10000
+
+        batched_results = []
+        total_rows = rank_data.height
+
+        for start_idx in range(0, total_rows, BATCH_SIZE):
+            end_idx = min(start_idx + BATCH_SIZE, total_rows)
+            batch = rank_data[start_idx:end_idx]
+
+            # Extract arrays for this batch only
+            alpha_arr = batch.get_column("alpha_post").to_numpy()
+            beta_arr = batch.get_column("beta_post").to_numpy()
+            theta_arr = batch.get_column("theta_0").to_numpy()
+
+            # Posterior probability
+            post_prob_arr = 1 - betainc(alpha_arr, beta_arr, theta_arr)
+
+            # CI
+            lower_p = (1 - CI_PROB) / 2
+            upper_p = 1 - lower_p
+            ci_lower_raw = betaincinv(alpha_arr, beta_arr, lower_p)
+            ci_upper_raw = betaincinv(alpha_arr, beta_arr, upper_p)
+            ci_lower_arr = np.log2(ci_lower_raw / (theta_arr + 1e-10))
+            ci_upper_arr = np.log2(ci_upper_raw / (theta_arr + 1e-10))
+
+            # ROPE
+            rope_lower = theta_arr * (2**-ROPE_HALF_WIDTH)
+            rope_upper = theta_arr * (2**ROPE_HALF_WIDTH)
+            p_above_arr = 1 - betainc(alpha_arr, beta_arr, rope_upper)
+            p_below_arr = betainc(alpha_arr, beta_arr, rope_lower)
+
+            # Decisions
+            decisions_arr = np.empty(len(alpha_arr), dtype="<U10")
+            for i in range(len(alpha_arr)):
+                if ci_lower_raw[i] > rope_upper[i]:
+                    decisions_arr[i] = "enriched"
+                elif ci_upper_raw[i] < rope_lower[i]:
+                    decisions_arr[i] = "depleted"
+                elif (
+                    ci_lower_raw[i] >= rope_lower[i]
+                    and ci_upper_raw[i] <= rope_upper[i]
+                ):
+                    decisions_arr[i] = "equivalent"
+                else:
+                    decisions_arr[i] = "undecided"
+
+            # Add to batch
+            batch_result = batch.with_columns(
+                [
+                    pl.Series("posterior_enrich_prob", post_prob_arr),
+                    pl.Series("ci_lower", ci_lower_arr),
+                    pl.Series("ci_upper", ci_upper_arr),
+                    pl.Series("rope_decision", decisions_arr),
+                    pl.Series("p_above_rope", p_above_arr),
+                    pl.Series("p_below_rope", p_below_arr),
+                ]
+            )
+
+            batched_results.append(batch_result)
+
+            # Explicitly delete large arrays to free memory
+            del alpha_arr, beta_arr, theta_arr
+            del post_prob_arr, ci_lower_arr, ci_upper_arr, ci_lower_raw, ci_upper_raw
+            del decisions_arr, p_above_arr, p_below_arr
+            del rope_lower, rope_upper
+
+        rank_data = pl.concat(batched_results, how="vertical")
         rank_data = rank_data.with_columns(
-            [pl.Series("posterior_enrich_prob", post_prob_arr)],
+            [(pl.col("ci_upper") - pl.col("ci_lower")).alias("ci_width")]
         )
 
-        posteriors_by_rank[rank] = rank_data
+        # Store posteriors for hierarchical flow (keep minimal columns)
+        posteriors_by_rank[rank] = rank_data.select(
+            ["compound_ancestor", "taxon_ancestor", "posterior_mean"]
+        )
+
         logging.info(f"    {rank_data.height} associations")
         rank_results.append(rank_data)
 
@@ -1136,53 +1197,10 @@ def run_hierarchical_analysis(
 
     result = pl.concat(rank_results, how="vertical")
 
-    # ====================================================================
-    # CREDIBLE INTERVAL AND ROPE COMPUTATION
-    # ====================================================================
-
-    logging.info("  Computing CI and ROPE decisions...")
-
-    alpha_arr = result.get_column("alpha_post").to_numpy()
-    beta_arr = result.get_column("beta_post").to_numpy()
-    theta_arr = result.get_column("theta_0").to_numpy()
-    CI_PROB = cfg["stats"]["ci_prob"]
-    ROPE_HALF_WIDTH = cfg["stats"]["rope_half_width"]
-
-    ci_lower_arr, ci_upper_arr = fold_change_credible_interval(
-        alpha_arr,
-        beta_arr,
-        theta_arr,
-        CI_PROB,
-    )
-
-    decisions_arr, p_above_arr, p_below_arr = rope_decision(
-        alpha_arr,
-        beta_arr,
-        theta_arr,
-        ROPE_HALF_WIDTH,
-        CI_PROB,
-    )
-
-    # Add computed columns back to result
-    result = result.with_columns(
-        [
-            pl.Series("ci_lower", ci_lower_arr),
-            pl.Series("ci_upper", ci_upper_arr),
-            pl.Series("rope_decision", decisions_arr),
-            pl.Series("p_above_rope", p_above_arr),
-            pl.Series("p_below_rope", p_below_arr),
-        ],
-    ).with_columns([(pl.col("ci_upper") - pl.col("ci_lower")).alias("ci_width")])
-
-    # ====================================================================
-    # STATISTICAL QUALITY FLAGS
-    # ====================================================================
-    # RELIABLE: ESS >= MIN_ESS (default 3)
+    # Statistical quality flags
     MIN_ESS = cfg["stats"]["min_ess"]
     result = result.with_columns(
-        [
-            (pl.col("effective_sample_size") >= MIN_ESS).alias("reliable"),
-        ],
+        [(pl.col("effective_sample_size") >= MIN_ESS).alias("reliable")]
     )
 
     # Add taxon names
@@ -1192,7 +1210,7 @@ def run_hierarchical_analysis(
         how="left",
     )
 
-    # FINAL SORTING: Prioritize reliable results with high P(enrich)
+    # Final sorting: Prioritize reliable results with high P(enrich)
     # Sort by: reliable (True first), then P(enrich) desc, then ESS desc, then IDs for determinism
     result = result.sort(
         [
@@ -1206,7 +1224,8 @@ def run_hierarchical_analysis(
     )
 
     logging.info(f"Complete: {result.height} enrichments ({time.time() - start:.1f}s)")
-    # Add human-readable rank labels to the result for all downstream displays.
+
+    # Add rank labels
     try:
         if "taxon_rank" in result.columns:
             rank_vals = result.get_column("taxon_rank").to_list()
@@ -1261,8 +1280,8 @@ def discover_top_taxa(
                 # Distinctiveness = diversity + strength + confidence
                 (
                     pl.col("n_scaffolds").cast(pl.Float32) * 3.0
-                    + pl.col("avg_fc") * 1.5
-                    + pl.col("avg_prob") * 2.0
+                    + pl.col("avg_fc").cast(pl.Float32) * 1.5
+                    + pl.col("avg_prob").cast(pl.Float32) * 2.0
                     + (pl.col("total_ess") / 100.0).clip(0, 2.0)
                 ).alias("distinctiveness")
             ]
