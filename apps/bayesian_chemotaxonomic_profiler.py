@@ -137,7 +137,7 @@ with app.setup:
         rope_decision,
     )
 
-    alt.data_transformers.enable("vegafusion")
+    # alt.data_transformers.enable("vegafusion")
 
     # Patch urllib for Pyodide/WASM (browser) compatibility
     IS_PYODIDE = "pyodide" in sys.modules
@@ -456,20 +456,6 @@ def read_table(
         separator=separator,
     )
     return validate_columns(df, expected, name) if expected else df
-
-
-@app.function
-def select_first_existing(
-    cfg: Final[TypedDict],
-    attrs: Sequence[str],
-) -> str | None:
-    """Return the first path/URL from cfg attributes that exists (local or remote)."""
-    for attr in attrs:
-        url = cfg[attr]
-        fs, path = fsspec.core.url_to_fs(url)
-        if fs.exists(path):
-            return url
-    return None
 
 
 @app.function
@@ -1615,12 +1601,51 @@ def load_data_wd(effective_config):
         )
         logging.info(f"✓ Compound-taxon annotations: {compound_taxon.height:,}")
         logging.info("=" * 55)
+
+    with mo.status.spinner("Shrinking data and lineages..."):
+        # --- Filter compounds directly ---
+        compound_ids = compound_taxon.select("compound").unique()
+        compound_smiles = compound_smiles.join(compound_ids, on="compound", how="inner")
+
+        # --- Build full taxon lineage efficiently ---
+        lineage = (
+            build_hierarchy_lineage(
+                edges=taxon_parent,
+                child="taxon",
+                parent="taxon_parent",
+                focus=compound_taxon.select("taxon").unique(),
+            )
+            .rename(
+                {"ancestor": "taxon_ancestor", "distance": "taxon_distance"},
+            )
+            .join(
+                taxon_rank.rename({"taxon": "taxon_ancestor"}),
+                on="taxon_ancestor",
+                how="left",
+            )
+        )
+
+        # --- Filter taxon tables by lineage ---
+        _to_keep = lineage.select(
+            [pl.concat_list(["taxon", "taxon_rank"]).explode()]
+        ).to_series()
+        taxon_name = taxon_name.filter(pl.col("taxon").is_in(_to_keep))
+        taxon_parent = taxon_parent.filter(pl.col("taxon").is_in(_to_keep))
+        taxon_rank = taxon_rank.filter(pl.col("taxon").is_in(_to_keep))
+
+        logging.info(f"✓ Compound SMILES: {compound_smiles.height:,} compounds")
+        logging.info(f"✓ Taxon names: {taxon_name.height:,}")
+        logging.info(f"✓ Taxon hierarchy: {taxon_parent.height:,} parent relationships")
+        logging.info(f"✓ Taxon ranks: {taxon_rank.height:,}")
+        logging.info(f"✓ Compound-taxon annotations: {compound_taxon.height:,}")
+        logging.info("=" * 55)
     return (
         compound_smiles,
         compound_taxon,
         taxon_name,
         taxon_parent,
         taxon_rank,
+        lineage,
     )
 
 
@@ -1641,9 +1666,7 @@ def load_data_mortar(effective_config, compound_smiles):
 
     data_path = effective_config["data_paths"]
 
-    compound_mappings = load_compound_fragment_mapping(
-        data_path["path_items_ert"]
-    )
+    compound_mappings = load_compound_fragment_mapping(data_path["path_items_ert"])
     frag_tables = []
     for attr in ["path_frags_cdk", "path_frags_ert", "path_frags_sru"]:
         p = data_path[attr]
@@ -1699,19 +1722,10 @@ def load_data_mortar(effective_config, compound_smiles):
 
 
 @app.cell
-def build_lineages(
-    compound_scaffold,
-    compound_taxon,
-    taxon_parent,
-    taxon_rank,
-):
+def build_lineages(compound_scaffold, lineage):
     with mo.status.spinner("Building taxonomic lineages..."):
         compound_lineage = build_compound_lineage(compound_scaffold)
-        taxon_lineage = build_taxon_lineage(
-            taxon_parent,
-            taxon_rank,
-            compound_taxon.get_column("taxon"),
-        )
+        taxon_lineage = lineage
     return compound_lineage, taxon_lineage
 
 
