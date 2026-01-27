@@ -102,7 +102,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import marimo
 
-__generated_with = "0.18.1"
+__generated_with = "0.19.6"
 app = marimo.App(width="medium", app_title="Bayesian Chemotaxonomic Markers")
 
 with app.setup:
@@ -117,7 +117,6 @@ with app.setup:
     from typing import Any, Iterable, Final, Sequence, TypedDict
 
     import altair as alt
-    import cmcrameri.cm as cmc
     import marimo as mo
     import numpy as np
     import polars as pl
@@ -393,8 +392,8 @@ with app.setup:
     MIN_PROB = 0.89
     MIN_LOG2FC = 1.5
 
-    TOP_N_TAXA = 10  # Select only top 10 taxa
-    TOP_N_MARKERS_PER_TAXON = 10  # Show top 10 markers per selected taxon
+    TOP_N_TAXA = 10
+    TOP_N_MARKERS_PER_TAXON = 10
 
 
 @app.function
@@ -1996,7 +1995,7 @@ def discovery_mode(effective_config, markers):
         ],
     )
     _out
-    return
+    return (MIN_ESS,)
 
 
 @app.cell
@@ -2330,7 +2329,7 @@ def top10_md():
             mo.md("""
         For each rank, we find the **10 taxa with most distinctive chemistry**, 
         then show all their enriched scaffolds.
-        
+
         **Selection criteria:**
         - P(enriched) ≥ 0.89 (high confidence)
         - ESS ≥ 3 (reliable data)
@@ -2344,7 +2343,9 @@ def top10_md():
 
 
 @app.cell
-def markers_kin(markers):
+def markers_kin(
+    markers,
+):
     kingdom_top_taxa = discover_top_taxa(markers, "Kingdom")
     kingdom_markers = get_markers_for_top_taxa(markers, "Kingdom", kingdom_top_taxa)
     kingdom_summary = create_taxa_summary_table(kingdom_markers, "Kingdom")
@@ -2370,7 +2371,9 @@ def markers_kin(markers):
 
 
 @app.cell
-def markers_fam(markers):
+def markers_fam(
+    markers,
+):
     family_top_taxa = discover_top_taxa(markers, "Family")
     family_markers = get_markers_for_top_taxa(markers, "Family", family_top_taxa)
     family_summary = create_taxa_summary_table(family_markers, "Family")
@@ -2396,7 +2399,9 @@ def markers_fam(markers):
 
 
 @app.cell
-def markers_gen(markers):
+def markers_gen(
+    markers,
+):
     genus_top_taxa = discover_top_taxa(markers, "Genus")
     genus_markers = get_markers_for_top_taxa(markers, "Genus", genus_top_taxa)
     genus_summary = create_taxa_summary_table(genus_markers, "Genus")
