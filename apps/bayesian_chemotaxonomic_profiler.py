@@ -450,13 +450,13 @@ def validate_columns(
 
 
 @app.function
-@app.
 def read_table(
     path: str | Path,
     separator: str = ",",
     expected: Iterable[str] | None = None,
     name: str = "table",
 ) -> pl.DataFrame:
+    """Read CSV/CSV.GZ from local or remote path and optionally validate columns."""
     df = pl.read_csv(path, separator=separator)
     return validate_columns(df, expected, name) if expected else df
 
