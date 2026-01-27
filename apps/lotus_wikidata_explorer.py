@@ -1591,7 +1591,9 @@ def export_to_rdf_turtle(
 
 @app.cell
 def md_title():
-    mo.md("# LOTUS Wikidata Explorer")
+    mo.md("""
+    # LOTUS Wikidata Explorer
+    """)
     return
 
 

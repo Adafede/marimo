@@ -35,7 +35,6 @@ def imports():
     # Modules will be auto-inlined by the build script
     from modules.text.formula.parse import parse
     from modules.chem.cdk.depict.svg_from_smiles import svg_from_smiles
-
     return parse, svg_from_smiles
 
 
