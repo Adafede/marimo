@@ -13,26 +13,43 @@ __all__ = [
 ]
 
 SELECT_VARS_FULL = """
-?compound ?compoundLabel ?compound_inchikey ?compound_smiles_conn
-?compound_smiles_iso ?compound_mass ?compound_formula
-?taxon_name ?taxon
-?ref_qid ?ref_title ?ref_doi ?ref_date
-?statement ?ref
+(xsd:integer(STRAFTER(STR(?c), "Q")) AS ?compound)
+?compoundLabel
+?compound_inchikey
+?compound_smiles_conn
+?compound_smiles_iso
+?compound_mass
+?compound_formula
+(xsd:integer(STRAFTER(STR(?t), "Q")) AS ?taxon)
+?taxon_name
+(xsd:integer(STRAFTER(STR(?r), "Q")) AS ?ref_qid)
+?ref
+?ref_title
+?ref_doi
+?ref_date
+?statement
 """
 
 SELECT_VARS_MINIMAL = """
-?compound ?compoundLabel ?compound_inchikey ?compound_smiles_conn
+?c
+?compoundLabel
+?compound_inchikey
+?compound_smiles_conn
 """
 
 SELECT_VARS_INTERIM = (
     SELECT_VARS_MINIMAL
     + """
-?taxon ?taxon_name ?ref_qid ?statement ?ref
+?t
+?taxon_name
+?r
+?ref
+?statement
 """
 )
 
 IDENTIFIERS = """
-?compound wdt:P235 ?compound_inchikey;
+?c wdt:P235 ?compound_inchikey;
           wdt:P233 ?compound_smiles_conn.
 """
 
@@ -40,42 +57,42 @@ IDENTIFIERS = """
 COMPOUND_IDENTIFIERS = IDENTIFIERS
 
 TAXON_REFERENCE_ASSOCIATION = """
-?compound p:P703 ?statement.
-?statement ps:P703 ?taxon;
+?c p:P703 ?statement.
+?statement ps:P703 ?t;
            prov:wasDerivedFrom ?ref.
-?ref pr:P248 ?ref_qid.
-?taxon wdt:P225 ?taxon_name.
+?ref pr:P248 ?r.
+?t wdt:P225 ?taxon_name.
 """
 
 PROPERTIES_OPTIONAL = """
-OPTIONAL { ?compound wdt:P2017 ?compound_smiles_iso. }
-OPTIONAL { ?compound wdt:P2067 ?compound_mass. }
-OPTIONAL { ?compound wdt:P274 ?compound_formula. }
+OPTIONAL { ?c wdt:P2017 ?compound_smiles_iso. }
+OPTIONAL { ?c wdt:P2067 ?compound_mass. }
+OPTIONAL { ?c wdt:P274 ?compound_formula. }
 OPTIONAL {
-    ?compound rdfs:label ?compoundLabel.
+    ?c rdfs:label ?compoundLabel.
     FILTER(LANG(?compoundLabel) = "en")
 }
 OPTIONAL {
-    ?compound rdfs:label ?compoundLabel.
+    ?c rdfs:label ?compoundLabel.
     FILTER(LANG(?compoundLabel) = "mul")
 }
 """
 
 TAXONOMIC_REFERENCE_OPTIONAL = """
 OPTIONAL {
-    ?statement ps:P703 ?taxon;
+    ?statement ps:P703 ?t;
                prov:wasDerivedFrom ?ref.
-    ?ref pr:P248 ?ref_qid.
-    ?compound p:P703 ?statement.
-    ?taxon wdt:P225 ?taxon_name.
-    OPTIONAL { ?ref_qid wdt:P1476 ?ref_title. }
-    OPTIONAL { ?ref_qid wdt:P356 ?ref_doi. }
-    OPTIONAL { ?ref_qid wdt:P577 ?ref_date. }
+    ?ref pr:P248 ?r.
+    ?c p:P703 ?statement.
+    ?t wdt:P225 ?taxon_name.
+    OPTIONAL { ?r wdt:P1476 ?ref_title. }
+    OPTIONAL { ?r wdt:P356 ?ref_doi. }
+    OPTIONAL { ?r wdt:P577 ?ref_date. }
 }
 """
 
 REFERENCE_METADATA_OPTIONAL = """
-OPTIONAL { ?ref_qid wdt:P1476 ?ref_title. }
-OPTIONAL { ?ref_qid wdt:P356 ?ref_doi. }
-OPTIONAL { ?ref_qid wdt:P577 ?ref_date. }
+OPTIONAL { ?r wdt:P1476 ?ref_title. }
+OPTIONAL { ?r wdt:P356 ?ref_doi. }
+OPTIONAL { ?r wdt:P577 ?ref_date. }
 """

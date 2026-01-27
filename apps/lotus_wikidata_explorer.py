@@ -433,16 +433,26 @@ def resolve_ambiguous_matches(
 
 @app.function
 def resolve_taxon_to_qid(
-    taxon_input: str,
+    taxon_input: str|int,
 ) -> tuple[str | None, mo.Html | None]:
-    """Resolve taxon name or QID to a valid QID."""
+    """Resolve taxon name or QID (int or string) to a valid QID."""
     taxon_input = taxon_input.strip()
+    
+    if taxon_input is None:
+        return None, None
+
+    # Convert ints to QID string
+    if isinstance(taxon_input, int):
+        return f"Q{taxon_input}", None
+
+    # Ensure we have a stripped string
+    taxon_input = str(taxon_input).strip()
 
     # Handle wildcard for all taxa
     if taxon_input == "*":
         return "*", None
 
-    # Early return if input is already a QID
+    # Early return if input is already a QID like "Q42"
     if taxon_input.upper().startswith("Q") and taxon_input[1:].isdigit():
         return taxon_input.upper(), None
 
@@ -983,15 +993,15 @@ def prepare_export_dataframe(
         pl.col("ref_doi").alias("reference_doi"),
         pl.col("pub_date").alias("reference_date"),
         # QID extractions inline
-        pl.col("compound")
-        .str.replace(WIKIDATA_ENTITY_PREFIX, "", literal=True)
-        .alias("compound_qid"),
-        pl.col("taxon")
-        .str.replace(WIKIDATA_ENTITY_PREFIX, "", literal=True)
-        .alias("taxon_qid"),
-        pl.col("reference")
-        .str.replace(WIKIDATA_ENTITY_PREFIX, "", literal=True)
-        .alias("reference_qid"),
+        (pl.concat_str([pl.lit("Q"), pl.col("compound").cast(pl.Utf8)])).alias(
+            "compound_qid"
+        ),
+        (pl.concat_str([pl.lit("Q"), pl.col("taxon").cast(pl.Utf8)])).alias(
+            "taxon_qid"
+        ),
+        (pl.concat_str([pl.lit("Q"), pl.col("reference").cast(pl.Utf8)])).alias(
+            "reference_qid"
+        ),
     ]
 
     # Add statement ID if present

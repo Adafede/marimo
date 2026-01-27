@@ -22,7 +22,7 @@ def build_sachem_service(
     SERVICE idsm:wikidata {{
         VALUES ?QUERY_SMILES {{ "{escaped_smiles}" }}
         VALUES ?CUTOFF {{ "{threshold}"^^xsd:double }}
-        ?compound sachem:similarCompoundSearch [
+        ?c sachem:similarCompoundSearch [
             sachem:query ?QUERY_SMILES;
             sachem:cutoff ?CUTOFF
         ].
@@ -30,7 +30,7 @@ def build_sachem_service(
     else:
         return f"""
     SERVICE idsm:wikidata {{
-        ?compound sachem:substructureSearch [
+        ?c sachem:substructureSearch [
             sachem:query "{escaped_smiles}"
         ].
     }}"""
@@ -70,23 +70,25 @@ def query_sachem(
         return f"""
 {PREFIXES}
 {PREFIXES_SACHEM}
-SELECT {SELECT_VARS_FULL} WHERE {{
+SELECT 
+{SELECT_VARS_FULL}
+WHERE {{
     # Filter compounds with taxonomic data FIRST (much smaller set)
-    ?compound p:P703 ?statement .
+    ?c p:P703 ?statement .
     ?statement wikibase:rank wikibase:NormalRank ;
-               ps:P703 ?taxon ;
+               ps:P703 ?t ;
                prov:wasDerivedFrom ?ref .
-    ?ref pr:P248 ?ref_qid .
-    ?taxon wdt:P225 ?taxon_name .
+    ?ref pr:P248 ?r .
+    ?t wdt:P225 ?taxon_name .
 
     # Filter by taxon hierarchy
-    ?taxon (wdt:P171*) wd:{taxon_qid} .
+    ?t (wdt:P171*) wd:{taxon_qid} .
 
     # Then check structural match (filters pre-filtered compounds)
     {sachem_clause}
 
     # Get compound identifiers
-    ?compound wdt:P235 ?compound_inchikey ;
+    ?c wdt:P235 ?compound_inchikey ;
               wdt:P233 ?compound_smiles_conn .
 
     {REFERENCE_METADATA_OPTIONAL}
@@ -98,23 +100,24 @@ SELECT {SELECT_VARS_FULL} WHERE {{
         return f"""
 {PREFIXES}
 {PREFIXES_SACHEM}
-SELECT {SELECT_VARS_FULL} WHERE {{
+SELECT
+{SELECT_VARS_FULL}
+WHERE {{
     {sachem_clause}
 
     # Get compound identifiers
-    ?compound wdt:P235 ?compound_inchikey ;
+    ?c wdt:P235 ?compound_inchikey ;
               wdt:P233 ?compound_smiles_conn .
 
     # Get taxonomic associations with provenance (optional)
     OPTIONAL {{
         ?compound p:P703 ?statement .
-        ?statement ps:P703 ?taxon ;
+        ?statement ps:P703 ?t ;
                    prov:wasDerivedFrom ?ref .
-        ?ref pr:P248 ?ref_qid .
-        ?taxon wdt:P225 ?taxon_name .
+        ?ref pr:P248 ?r .
+        ?t wdt:P225 ?taxon_name .
         {REFERENCE_METADATA_OPTIONAL}
     }}
-
     {PROPERTIES_OPTIONAL}
 }}
 """

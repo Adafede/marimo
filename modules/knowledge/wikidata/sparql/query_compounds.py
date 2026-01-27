@@ -25,14 +25,18 @@ def query_compounds_by_taxon(qid: str) -> str:
     """
     return f"""
     {PREFIXES}
-    SELECT {SELECT_VARS_FULL} WHERE {{
+    SELECT
+    {SELECT_VARS_FULL}
+    WHERE {{
       {{
-        SELECT {SELECT_VARS_INTERIM} WHERE {{
+        SELECT
+        {SELECT_VARS_INTERIM}
+        WHERE {{
           {COMPOUND_IDENTIFIERS}
           {TAXON_REFERENCE_ASSOCIATION}
         }}
       }}
-      ?taxon (wdt:P171*) wd:{qid}.
+      ?t (wdt:P171*) wd:{qid}.
       {REFERENCE_METADATA_OPTIONAL}
       {PROPERTIES_OPTIONAL}
     }}
@@ -48,9 +52,13 @@ def query_all_compounds() -> str:
     """
     return f"""
     {PREFIXES}
-    SELECT {SELECT_VARS_FULL} WHERE {{
+    SELECT
+    {SELECT_VARS_FULL}
+    WHERE {{
         {{
-            SELECT {SELECT_VARS_INTERIM} WHERE {{
+            SELECT
+            {SELECT_VARS_INTERIM}
+            WHERE {{
                 {COMPOUND_IDENTIFIERS}
                 {TAXON_REFERENCE_ASSOCIATION}
             }}
