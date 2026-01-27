@@ -74,9 +74,6 @@ with app.setup:
     from modules.knowledge.wikidata.url.constants import WIKIDATA_HTTP_BASE
     from modules.knowledge.wikidata.url.constants import WIKI_PREFIX
     from modules.knowledge.wikidata.html.scholia import scholia_url
-    from modules.knowledge.wikidata.html.link_from_qid import link_from_qid
-    from modules.knowledge.wikidata.html.link_from_doi import link_from_doi
-    from modules.knowledge.wikidata.html.link_from_statement import link_from_statement
     from modules.knowledge.wikidata.sparql.query_taxon_search import query_taxon_search
     from modules.knowledge.wikidata.sparql.query_taxon_details import (
         query_taxon_details,
@@ -1030,30 +1027,30 @@ def build_display_dataframe(df: pl.DataFrame) -> pl.DataFrame:
             pl.col("pub_date").alias("Reference Date"),
             pl.when(pl.col("ref_doi").is_not_null())
             .then(
-                pl.lit(f'<a href="https://doi.org/')
+                pl.lit('<a href="https://doi.org/')
                 + pl.col("ref_doi")
                 + pl.lit(f'" target="_blank" style="color:{color_link};">')
                 + pl.col("ref_doi")
-                + pl.lit("</a>")
+                + pl.lit("</a>"),
             )
             .otherwise(pl.lit(""))
             .alias("Reference DOI"),
             (
-                pl.lit(f'<a href="https://scholia.toolforge.org/Q')
+                pl.lit('<a href="https://scholia.toolforge.org/Q')
                 + pl.col("compound").cast(pl.Utf8)
                 + pl.lit(f'" target="_blank" style="color:{color_compound};">Q')
                 + pl.col("compound").cast(pl.Utf8)
                 + pl.lit("</a>")
             ).alias("Compound QID"),
             (
-                pl.lit(f'<a href="https://scholia.toolforge.org/Q')
+                pl.lit('<a href="https://scholia.toolforge.org/Q')
                 + pl.col("taxon").cast(pl.Utf8)
                 + pl.lit(f'" target="_blank" style="color:{color_taxon};">Q')
                 + pl.col("taxon").cast(pl.Utf8)
                 + pl.lit("</a>")
             ).alias("Taxon QID"),
             (
-                pl.lit(f'<a href="https://scholia.toolforge.org/Q')
+                pl.lit('<a href="https://scholia.toolforge.org/Q')
                 + pl.col("reference").cast(pl.Utf8)
                 + pl.lit(f'" target="_blank" style="color:{color_ref};">Q')
                 + pl.col("reference").cast(pl.Utf8)
@@ -1061,11 +1058,11 @@ def build_display_dataframe(df: pl.DataFrame) -> pl.DataFrame:
             ).alias("Reference QID"),
             pl.when(pl.col("statement").is_not_null())
             .then(
-                pl.lit(f'<a href="')
+                pl.lit('<a href="')
                 + pl.col("statement")
                 + pl.lit(f'" target="_blank" style="color:{color_link};">')
                 + pl.col("statement").str.split("/").list.last()
-                + pl.lit("</a>")
+                + pl.lit("</a>"),
             )
             .otherwise(pl.lit(""))
             .alias("Statement"),
