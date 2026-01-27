@@ -140,6 +140,7 @@ with app.setup:
         rope_decision,
     )
 
+    fs = fsspec.filesystem("http", asynchronous=False, use_requests=True)
     alt.data_transformers.enable("vegafusion")
 
     # Patch urllib for Pyodide/WASM (browser) compatibility
