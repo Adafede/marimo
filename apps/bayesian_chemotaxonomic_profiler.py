@@ -449,7 +449,7 @@ def read_table(
     name: str = "table",
 ) -> pl.DataFrame:
     """Read CSV/CSV.GZ from local or remote path and optionally validate columns."""
-    df = pl.read_csv(
+    df = pl.scan_csv(
         str(path),
         low_memory=True,
         rechunk=False,
@@ -472,7 +472,7 @@ def load_fragments(path: str, min_freq: int) -> pl.DataFrame:
 def load_compound_fragment_mapping(path: str) -> pl.DataFrame:
     """Parse compound-to-fragment mapping file."""
     return (
-        pl.read_csv(
+        pl.scan_csv(
             path,
             low_memory=True,
             rechunk=False,
@@ -1612,7 +1612,7 @@ def load_data_wd(effective_config):
 def load_data_mortar(effective_config, compound_smiles):
     # Load canonical SMILES from local file - REQUIRED for MORTAR row mapping
     # The MORTAR fragment files map by row order to this file
-    compound_can_smiles = pl.read_csv(
+    compound_can_smiles = pl.scan_csv(
         str(effective_config["data_paths"]["path_can_smi"]),
         low_memory=True,
         rechunk=False,

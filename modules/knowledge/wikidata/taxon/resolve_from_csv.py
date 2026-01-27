@@ -19,7 +19,7 @@ def extract_qid_from_url(url: str) -> str:
 
 def parse_search_results(csv_bytes: bytes) -> list[tuple[str, str]]:
     """Parse search results CSV into list of (qid, name) tuples."""
-    df = pl.read_csv(source=io.BytesIO(csv_bytes))
+    df = pl.scan_csv(source=io.BytesIO(csv_bytes))
     if df.is_empty():
         return []
 
@@ -32,7 +32,7 @@ def parse_search_results(csv_bytes: bytes) -> list[tuple[str, str]]:
 
 def parse_connectivity(csv_bytes: bytes) -> dict[str, int]:
     """Parse connectivity CSV into qid -> compound_count mapping."""
-    df = pl.read_csv(source=io.BytesIO(csv_bytes))
+    df = pl.scan_csv(source=io.BytesIO(csv_bytes))
     return {
         extract_qid_from_url(row.get("taxon", "")): int(
             row.get("compound_count", 0) or 0,
@@ -44,7 +44,7 @@ def parse_connectivity(csv_bytes: bytes) -> dict[str, int]:
 
 def parse_details(csv_bytes: bytes) -> dict[str, dict[str, str | None]]:
     """Parse details CSV into qid -> {description, parent} mapping."""
-    df = pl.read_csv(source=io.BytesIO(csv_bytes))
+    df = pl.scan_csv(source=io.BytesIO(csv_bytes))
     return {
         extract_qid_from_url(row.get("taxon", "")): {
             "description": row.get("taxonDescription"),
