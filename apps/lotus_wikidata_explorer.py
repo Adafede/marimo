@@ -100,7 +100,6 @@ with app.setup:
     from modules.text.formula.element_config import (
         ELEMENT_DEFAULTS,
     )
-    from modules.ui.html_from_image import html_from_image
     from modules.ui.marimo.wrap_html import wrap_html
     from modules.ui.marimo.wrap_image import wrap_image
     from modules.io.compress.if_large import compress_if_large
@@ -885,9 +884,10 @@ def build_display_dataframe(df: pl.LazyFrame) -> pl.DataFrame:
     df = df.with_columns(
         pl.col("smiles")
         .map_elements(
-            lambda s: mo.image(svg_from_smiles(s)) if s else "", return_dtype=pl.Object
+            lambda s: mo.image(svg_from_smiles(s)) if s else "",
+            return_dtype=pl.Object,
         )
-        .alias("Compound Depiction")
+        .alias("Compound Depiction"),
     )
 
     # Add vectorized HTML columns in small groups
@@ -901,7 +901,7 @@ def build_display_dataframe(df: pl.LazyFrame) -> pl.DataFrame:
                     pl.col("compound"),
                     pl.lit(CONFIG["color_wikidata_red"]),
                     pl.col("compound"),
-                )
+                ),
             )
             .otherwise(pl.lit(""))
             .alias("Compound QID"),
@@ -912,11 +912,11 @@ def build_display_dataframe(df: pl.LazyFrame) -> pl.DataFrame:
                     pl.col("taxon"),
                     pl.lit(CONFIG["color_wikidata_green"]),
                     pl.col("taxon"),
-                )
+                ),
             )
             .otherwise(pl.lit(""))
             .alias("Taxon QID"),
-        ]
+        ],
     )
 
     # Add remaining columns in a second batch
@@ -929,7 +929,7 @@ def build_display_dataframe(df: pl.LazyFrame) -> pl.DataFrame:
                     pl.col("reference"),
                     pl.lit(CONFIG["color_wikidata_blue"]),
                     pl.col("reference"),
-                )
+                ),
             )
             .otherwise(pl.lit(""))
             .alias("Reference QID"),
@@ -941,11 +941,11 @@ def build_display_dataframe(df: pl.LazyFrame) -> pl.DataFrame:
                     pl.col("ref_doi"),
                     pl.lit(CONFIG["color_hyperlink"]),
                     pl.col("ref_doi"),
-                )
+                ),
             )
             .otherwise(pl.lit(""))
             .alias("Reference DOI"),
-        ]
+        ],
     )
     df = df.select(
         [
@@ -963,7 +963,7 @@ def build_display_dataframe(df: pl.LazyFrame) -> pl.DataFrame:
             "Taxon QID",
             "Reference QID",
             pl.col("statement").alias("Statement"),
-        ]
+        ],
     )
 
     return df
@@ -2358,12 +2358,30 @@ def df_to_csv_bytes(df: pl.LazyFrame | pl.DataFrame) -> bytes:
 
 
 @app.function
-def df_to_json_bytes(df: pl.LazyFrame | pl.DataFrame) -> bytes:
-    """Convert a Polars DataFrame to CSV safely in batches for WASM."""
-    if isinstance(df, pl.LazyFrame):
-        df = df.collect()
-    json_str = df.write_json()
-    return json_str.encode("utf-8")
+def df_to_json_bytes_streaming(df: pl.LazyFrame, batch_size: int = 10000) -> bytes:
+    """Process in 10K row chunks instead of all at once."""
+    buffer = io.BytesIO()
+    buffer.write(b"[")
+
+    for offset in range(0, total_rows, batch_size):
+        batch = df.slice(offset, batch_size).collect()
+        # Write batch, then delete it
+        buffer.write(batch.write_json())
+        del batch
+
+    buffer.write(b"]")
+    return buffer.getvalue()
+
+
+@app.function
+def df_to_json_bytes(df, max_rows_for_standard=5000):
+    """Choose method based on size."""
+    total_rows = df.select(pl.count()).collect()["count"][0]
+
+    if total_rows <= max_rows_for_standard:
+        return df.collect().write_json().encode("utf-8")  # Fast
+    else:
+        return df_to_json_bytes_streaming(df)  # Memory-safe
 
 
 @app.cell

@@ -430,7 +430,9 @@ def write_parquet_stream(
         first_table = first_chunk.to_arrow()
 
         with pq.ParquetWriter(
-            path, first_table.schema, compression=compression
+            path,
+            first_table.schema,
+            compression=compression,
         ) as writer:
             writer.write_table(first_table)
 
@@ -1623,7 +1625,9 @@ def load_data_wd(effective_config):
         )
         _compound_ids = compound_taxon.select(pl.col("compound")).unique()
         compound_smiles = compound_smiles.join(
-            _compound_ids.lazy(), on="compound", how="inner"
+            _compound_ids.lazy(),
+            on="compound",
+            how="inner",
         ).collect()
 
         taxon_parent = parse_sparql_response(
@@ -1925,7 +1929,7 @@ def scaffold_compound_stats(compound_scaffold):
         SAFE_PREVIEW_LIMIT = 800
 
         scs_df_base = scs_counts.select(["scaffold", "n_compounds"]).rename(
-            {"n_compounds": "Compounds"}
+            {"n_compounds": "Compounds"},
         )
 
         if scs_df_base.height > SAFE_PREVIEW_LIMIT:
