@@ -305,7 +305,7 @@ with app.setup:
 
         @staticmethod
         def cast_types(df: pl.LazyFrame) -> pl.LazyFrame:
-            return df.with_columns([pl.col("mass").cast(pl.Float32, strict=False)])
+            return df.with_columns([pl.col("mass").cast(pl.Float16, strict=False)])
 
         @staticmethod
         def drop_old_columns(df: pl.LazyFrame) -> pl.LazyFrame:
@@ -553,7 +553,7 @@ with app.setup:
             # Result hash
             result_hasher = hashlib.sha256()
             for val in (
-                df.select(pl.col("compound_qid").cast(pl.Utf8))
+                df.select(pl.col("compound_qid").cast(pl.Categorical))
                 .to_series()
                 .drop_nulls()
                 .unique()
@@ -743,13 +743,13 @@ with app.setup:
                 pl.col("ref_title").alias("reference_title"),
                 pl.col("ref_doi").alias("reference_doi"),
                 pl.col("pub_date").alias("reference_date"),
-                pl.concat_str([pl.lit("Q"), pl.col("compound").cast(pl.Utf8)]).alias(
+                pl.concat_str([pl.lit("Q"), pl.col("compound").cast(pl.Categorical)]).alias(
                     "compound_qid",
                 ),
-                pl.concat_str([pl.lit("Q"), pl.col("taxon").cast(pl.Utf8)]).alias(
+                pl.concat_str([pl.lit("Q"), pl.col("taxon").cast(pl.Categorical)]).alias(
                     "taxon_qid",
                 ),
-                pl.concat_str([pl.lit("Q"), pl.col("reference").cast(pl.Utf8)]).alias(
+                pl.concat_str([pl.lit("Q"), pl.col("reference").cast(pl.Categorical)]).alias(
                     "reference_qid",
                 ),
             ]
@@ -806,7 +806,7 @@ with app.setup:
             result_hasher = hashlib.sha256()
             try:
                 df_temp = (
-                    df.select(pl.col("compound").cast(pl.Utf8))
+                    df.select(pl.col("compound").cast(pl.Categorical))
                     .drop_nulls()
                     .unique()
                     .sort("compound")
