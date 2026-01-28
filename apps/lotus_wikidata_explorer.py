@@ -2344,18 +2344,23 @@ def display_summary(
 
 
 @app.function
-def df_to_csv_bytes(df: pl.DataFrame) -> bytes:
+def df_to_csv_bytes(df: pl.LazyFrame | pl.DataFrame) -> bytes:
     """Convert a Polars DataFrame to CSV safely in batches for WASM."""
-    buffer = io.StringIO()
+    if isinstance(df, pl.LazyFrame):
+        df = df.collect()
+    buffer = io.BytesIO()
     df.write_csv(buffer)
-    return buffer.getvalue().encode("utf-8")
+    return buffer.getvalue()
+
 
 @app.function
-def df_to_json_bytes(df: pl.DataFrame) -> bytes:
+def df_to_json_bytes(df: pl.LazyFrame | pl.DataFrame) -> bytes:
     """Convert a Polars DataFrame to CSV safely in batches for WASM."""
-    buffer = io.StringIO()
-    df.write_json(buffer)
-    return buffer.getvalue().encode("utf-8")
+    if isinstance(df, pl.LazyFrame):
+        df = df.collect()
+    json_str = df.write_json()
+    return json_str.encode("utf-8")
+
 
 @app.cell
 def generate_results(
