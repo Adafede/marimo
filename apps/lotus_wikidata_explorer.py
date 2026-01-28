@@ -101,8 +101,6 @@ with app.setup:
     from modules.text.formula.element_config import (
         ELEMENT_DEFAULTS,
     )
-    from modules.ui.marimo.wrap_html import wrap_html
-    from modules.ui.marimo.wrap_image import wrap_image
     from modules.io.compress.if_large import compress_if_large
 
     # Patch urllib for Pyodide/WASM (browser) compatibility
@@ -897,7 +895,7 @@ def build_display_dataframe(df: pl.LazyFrame) -> pl.DataFrame:
             pl.col("taxon").alias("Taxon QID"),
             pl.col("reference").alias("Reference QID"),
             pl.col("statement").alias("Statement"),
-        ]
+        ],
     )
 
     return df
@@ -2022,8 +2020,7 @@ def launch_query(
                 )
         elapsed = round(time.time() - start_time, 2)
         _ = mo.md(f"Query executed in **{elapsed}s**")
-
-    return qid, lazy_results, taxon_warning
+    return lazy_results, qid, taxon_warning
 
 
 @app.function
@@ -2066,7 +2063,7 @@ def get_counts_lazy(lazy_results):
     else:
         # *** ONLY MATERIALIZES 1 ROW (4 integers) ***
         counts = get_counts(lazy_results)
-    return counts
+    return (counts,)
 
 
 @app.cell
@@ -2075,6 +2072,7 @@ def display_summary(
     c_max,
     c_min,
     cl_state,
+    counts,
     download_ui,
     exact_formula,
     f_state,
@@ -2094,7 +2092,6 @@ def display_summary(
     qid,
     query_hash,
     result_hash,
-    counts,
     run_button,
     s_max,
     s_min,
@@ -2452,11 +2449,6 @@ def export_to_rdf_turtle_batched(
     return g.serialize(format="turtle")
 
 
-# ============================================================================
-# Alternative: Streaming JSON with Minimal Changes
-# ============================================================================
-
-
 @app.function
 def df_to_json_bytes_batched(
     df: pl.LazyFrame | pl.DataFrame,
@@ -2505,11 +2497,6 @@ def df_to_json_bytes_batched(
     buffer.write(b"\n]")
 
     return buffer.getvalue()
-
-
-# ============================================================================
-# Smart Wrappers - Use Standard for Small, Batched for Large
-# ============================================================================
 
 
 @app.function
@@ -2563,12 +2550,14 @@ def generate_results(
     c_max,
     c_min,
     cl_state,
+    counts,
     exact_formula,
     f_state,
     formula_filter,
     h_max,
     h_min,
     i_state,
+    lazy_results,
     mass_filter,
     mass_max,
     mass_min,
@@ -2579,8 +2568,6 @@ def generate_results(
     p_max,
     p_min,
     qid,
-    lazy_results,
-    counts,
     run_button,
     s_max,
     s_min,
@@ -2837,7 +2824,7 @@ def generate_results(
                 return ""
             url = f"https://scholia.toolforge.org/Q{qid}"
             return mo.Html(
-                f'<a href="{url}" style="color:{color};" target="_blank">Q{qid}</a>'
+                f'<a href="{url}" style="color:{color};" target="_blank">Q{qid}</a>',
             )
 
         def wrap_doi(doi: str, color: str):
@@ -2845,7 +2832,7 @@ def generate_results(
                 return ""
             url = f"https://doi.org/{doi}"
             return mo.Html(
-                f'<a href="{url}" style="color:{color};" target="_blank">{doi}</a>'
+                f'<a href="{url}" style="color:{color};" target="_blank">{doi}</a>',
             )
 
         def wrap_statement(statement: str):
@@ -2855,7 +2842,7 @@ def generate_results(
             statement_id = statement.split("/")[-1]
             url = f"https://www.wikidata.org/entity/statement/{statement_id}"
             return mo.Html(
-                f'<a href="{url}" style="color:{CONFIG["color_hyperlink"]};" target="_blank">{statement_id}</a>'
+                f'<a href="{url}" style="color:{CONFIG["color_hyperlink"]};" target="_blank">{statement_id}</a>',
             )
 
         # Tables UI
@@ -2870,16 +2857,20 @@ def generate_results(
                             format_mapping={
                                 "Compound Depiction": wrap_image2,
                                 "Compound QID": lambda x: wrap_qid(
-                                    x, CONFIG["color_wikidata_red"]
+                                    x,
+                                    CONFIG["color_wikidata_red"],
                                 ),
                                 "Taxon QID": lambda x: wrap_qid(
-                                    x, CONFIG["color_wikidata_green"]
+                                    x,
+                                    CONFIG["color_wikidata_green"],
                                 ),
                                 "Reference QID": lambda x: wrap_qid(
-                                    x, CONFIG["color_wikidata_blue"]
+                                    x,
+                                    CONFIG["color_wikidata_blue"],
                                 ),
                                 "Reference DOI": lambda x: wrap_doi(
-                                    x, CONFIG["color_hyperlink"]
+                                    x,
+                                    CONFIG["color_hyperlink"],
                                 ),
                                 "Statement": wrap_statement,
                             },
@@ -2894,18 +2885,18 @@ def generate_results(
             ],
         )
     return (
-        tables_ui,
-        download_ui,
-        taxon_name,
-        active_filters,
         csv_generate_button,
-        json_generate_button,
-        rdf_generate_button,
         csv_generation_data,
+        download_ui,
+        json_generate_button,
         json_generation_data,
-        rdf_generation_data,
         query_hash,
+        rdf_generate_button,
+        rdf_generation_data,
         result_hash,
+        tables_ui,
+        taxon_name,
+        total_rows,
     )
 
 
@@ -3108,6 +3099,7 @@ def generate_downloads(
         gc.collect()
 
     mo.vstack([csv_ui, json_ui, rdf_ui], gap=2)
+    return
 
 
 @app.cell

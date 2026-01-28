@@ -1737,10 +1737,11 @@ def load_data_wd(effective_config):
         logging.info(f"✓ Taxon ranks: {taxon_rank.height:,}")
         logging.info(f"✓ Compound-taxon annotations: {compound_taxon.height:,}")
         logging.info("=" * 55)
+    return compound_smiles, compound_taxon, lineage, taxon_name, taxon_rank
 
 
 @app.cell
-def load_data_mortar(effective_config, compound_smiles):
+def load_data_mortar(compound_smiles, effective_config):
     # Load canonical SMILES from local file - REQUIRED for MORTAR row mapping
     # The MORTAR fragment files map by row order to this file
     compound_can_smiles = pl.read_csv(
@@ -1808,7 +1809,7 @@ def load_data_mortar(effective_config, compound_smiles):
         kind="info",
     )
     _out
-    return compound_scaffold
+    return (compound_scaffold,)
 
 
 @app.cell
