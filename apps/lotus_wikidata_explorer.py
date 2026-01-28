@@ -801,7 +801,7 @@ def query_wikidata(
     # Drop old columns
     columns_to_drop = ["compound_smiles_iso", "compound_smiles_conn"]
     lazy_df = lazy_df.drop(
-        [col for col in columns_to_drop if col in lazy_df.collect_schema().names()]
+        [col for col in columns_to_drop if col in lazy_df.collect_schema().names()],
     )
 
     # Year filter
@@ -873,23 +873,23 @@ def build_display_dataframe(df: pl.LazyFrame) -> pl.DataFrame:
     color_link = CONFIG["color_hyperlink"]
     limit = CONFIG["table_row_limit"]
 
-    # Limit (lazy)
+    # Physical limit
     if limit:
         df = df.limit(limit)
 
-    # --- 2. Collect early (only limited rows!) ---
+    # Collect once
     df = df.collect()
 
-    # --- 3. Python-only functions AFTER collect ---
+    # Create depiction FIRST
     def _structure_img(smiles):
         return html_from_image(svg_from_smiles(smiles)) if smiles else ""
 
     df = df.with_columns(
-        pl.col("smiles").map_elements(_structure_img).alias("Compound Depiction")
+        pl.col("smiles").map_elements(_structure_img).alias("Compound Depiction"),
     )
 
-    # --- 4. Pure Polars expressions for everything else ---
-    df = df.select(
+    # Now select
+    return df.select(
         [
             pl.col("Compound Depiction"),
             pl.col("name").alias("Compound Name"),
@@ -900,57 +900,50 @@ def build_display_dataframe(df: pl.LazyFrame) -> pl.DataFrame:
             pl.col("taxon_name").alias("Taxon Name"),
             pl.col("ref_title").alias("Reference Title"),
             pl.col("pub_date").alias("Reference Date"),
-            # DOI link
             pl.when(pl.col("ref_doi").is_not_null() & (pl.col("ref_doi") != ""))
             .then(
-                pl.lit('<a href="https://doi.org/')
-                + pl.col("ref_doi")
-                + pl.lit(f'" target="_blank" style="color:{color_link};">')
-                + pl.col("ref_doi")
-                + pl.lit("</a>")
+                pl.format(
+                    '<a href="https://doi.org/{}" target="_blank" style="color:{};">{}</a>',
+                    pl.col("ref_doi"),
+                    pl.lit(color_link),
+                    pl.col("ref_doi"),
+                ),
             )
-            .otherwise("")
+            .otherwise(pl.lit(""))
             .alias("Reference DOI"),
-            # Compound QID
             pl.when(pl.col("compound").is_not_null())
             .then(
                 pl.format(
-                    '<a href="https://scholia.toolforge.org/Q{}" '
-                    'target="_blank" style="color:{};">Q{}</a>',
+                    '<a href="https://scholia.toolforge.org/Q{}" target="_blank" style="color:{};">Q{}</a>',
                     pl.col("compound"),
                     pl.lit(color_compound),
                     pl.col("compound"),
-                )
+                ),
             )
-            .otherwise("")
+            .otherwise(pl.lit(""))
             .alias("Compound QID"),
-            # Taxon QID
             pl.when(pl.col("taxon").is_not_null())
             .then(
                 pl.format(
-                    '<a href="https://scholia.toolforge.org/Q{}" '
-                    'target="_blank" style="color:{};">Q{}</a>',
+                    '<a href="https://scholia.toolforge.org/Q{}" target="_blank" style="color:{};">Q{}</a>',
                     pl.col("taxon"),
                     pl.lit(color_taxon),
                     pl.col("taxon"),
-                )
+                ),
             )
-            .otherwise("")
+            .otherwise(pl.lit(""))
             .alias("Taxon QID"),
-            # Reference QID
             pl.when(pl.col("reference").is_not_null())
             .then(
                 pl.format(
-                    '<a href="https://scholia.toolforge.org/Q{}" '
-                    'target="_blank" style="color:{};">Q{}</a>',
+                    '<a href="https://scholia.toolforge.org/Q{}" target="_blank" style="color:{};">Q{}</a>',
                     pl.col("reference"),
                     pl.lit(color_ref),
                     pl.col("reference"),
-                )
+                ),
             )
-            .otherwise("")
+            .otherwise(pl.lit(""))
             .alias("Reference QID"),
-            # Statement link
             pl.when(pl.col("statement").is_not_null() & (pl.col("statement") != ""))
             .then(
                 pl.format(
@@ -958,21 +951,19 @@ def build_display_dataframe(df: pl.LazyFrame) -> pl.DataFrame:
                     pl.col("statement"),
                     pl.lit(color_link),
                     pl.col("statement").str.split("/").list.last(),
-                )
+                ),
             )
-            .otherwise("")
+            .otherwise(pl.lit(""))
             .alias("Statement"),
-        ]
+        ],
     )
-
-    return df
 
 
 @app.function
 def prepare_export_dataframe(
     lazy_df: pl.LazyFrame,
     include_rdf_ref: bool = False,
-) -> pl.DataFrame:
+) -> pl.LazyFrame:
     """
     Prepare export transformations lazily.
 
@@ -2607,13 +2598,13 @@ def generate_results(
             rdf_generation_data = None
             buttons = [
                 create_download_button(
-                    export_df.write_csv(),
+                    export_df.collect().write_csv(),
                     generate_filename(taxon_input.value, "csv", filters=active_filters),
                     "CSV",
                     "text/csv",
                 ),
                 create_download_button(
-                    export_df.write_json(),
+                    export_df.collect().write_json(),
                     generate_filename(
                         taxon_input.value,
                         "json",
@@ -2746,7 +2737,7 @@ def generate_downloads(
             [
                 mo.callout(
                     mo.md(
-                        f"**{format_name} Ready** - {len(export_df):,} entries"
+                        f"**{format_name} Ready** - {len(export_df.collect()):,} entries"
                         + (
                             " (compressed)"
                             if final_mimetype == "application/gzip"
@@ -2769,7 +2760,7 @@ def generate_downloads(
         csv_generation_data,
         "CSV",
         "csv",
-        lambda df, d: df.write_csv(),
+        lambda df, d: df.collect().write_csv(),
         "text/csv",
         ui_is_large_dataset,
     )
@@ -2780,7 +2771,7 @@ def generate_downloads(
         json_generation_data,
         "JSON",
         "json",
-        lambda df, d: df.write_json(),
+        lambda df, d: df.collect().write_json(),
         "application/json",
         ui_is_large_dataset,
     )
@@ -3210,19 +3201,19 @@ def main():
                     df,
                     include_rdf_ref=False,
                 )
-                data = export_df.write_csv().encode("utf-8")
+                data = export_df.collect().write_csv().encode("utf-8")
             elif args.format == "json":
                 # JSON export: exclude ref column (statement included for transparency)
                 export_df = prepare_export_dataframe(
                     df,
                     include_rdf_ref=False,
                 )
-                data = export_df.write_json().encode("utf-8")
+                data = export_df.collect().write_json().encode("utf-8")
             elif args.format == "ttl":
                 # RDF export: include ref column for full provenance
                 export_df = prepare_export_dataframe(df, include_rdf_ref=True)
                 data = export_to_rdf_turtle(
-                    export_df,
+                    export_df.collect(),
                     args.taxon,
                     qid,
                     filters if filters else None,
