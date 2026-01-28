@@ -223,6 +223,13 @@ with app.setup:
                     "taxon": pl.UInt32,
                     "reference": pl.UInt32,
                     "compound_mass": pl.Float32,
+                    "name": pl.Categorical,
+                    "inchikey": pl.Categorical,
+                    "smiles": pl.Categorical,
+                    "taxon_name": pl.Categorical,
+                    "ref_title": pl.Categorical,
+                    "ref_doi": pl.Categorical,
+                    "mf": pl.Categorical,
                 },
             )
 
@@ -285,8 +292,13 @@ with app.setup:
         def extract_doi(df: pl.LazyFrame) -> pl.LazyFrame:
             return df.with_columns(
                 [
-                    pl.when(pl.col("ref_doi").str.starts_with("http"))
-                    .then(pl.col("ref_doi").str.split("doi.org/").list.last())
+                    pl.when(pl.col("ref_doi").cast(pl.Utf8).str.starts_with("http"))
+                    .then(
+                        pl.col("ref_doi")
+                        .cast(pl.Utf8)
+                        .str.split("doi.org/")
+                        .list.last()
+                    )
                     .otherwise(pl.col("ref_doi"))
                     .alias("ref_doi"),
                 ],
@@ -769,22 +781,30 @@ with app.setup:
                 pl.col("ref_title").alias("reference_title"),
                 pl.col("ref_doi").alias("reference_doi"),
                 pl.col("pub_date").alias("reference_date"),
-                pl.concat_str([pl.lit("Q"), pl.col("compound")]).alias(
+                pl.concat_str([pl.lit("Q"), pl.col("compound").cast(pl.Utf8)])
+                .alias(
                     "compound_qid",
-                ),
-                pl.concat_str([pl.lit("Q"), pl.col("taxon")]).alias(
+                )
+                .cast(pl.Categorical),
+                pl.concat_str([pl.lit("Q"), pl.col("taxon").cast(pl.Utf8)])
+                .alias(
                     "taxon_qid",
-                ),
-                pl.concat_str([pl.lit("Q"), pl.col("reference")]).alias(
+                )
+                .cast(pl.Categorical),
+                pl.concat_str([pl.lit("Q"), pl.col("reference").cast(pl.Utf8)])
+                .alias(
                     "reference_qid",
-                ),
+                )
+                .cast(pl.Categorical),
             ]
 
             if "statement" in df.collect_schema().names():
                 exprs.append(
                     pl.col("statement")
+                    .cast(pl.Utf8)
                     .str.replace(WIKIDATA_STATEMENT_PREFIX, "", literal=True)
-                    .alias("statement_id"),
+                    .alias("statement_id")
+                    .cast(pl.Categorical),
                 )
 
             if include_rdf_ref and "ref" in df.collect_schema().names():
@@ -793,11 +813,7 @@ with app.setup:
             return df.select(exprs)
 
         def build_display_dataframe(self, df: pl.LazyFrame, limit: int) -> pl.DataFrame:
-            df = (
-                df.limit(limit).collect()
-                if limit
-                else df.collect()
-            )
+            df = df.limit(limit).collect() if limit else df.collect()
             return df.select(
                 [
                     pl.col("smiles").alias("Compound Depiction"),
@@ -1244,7 +1260,9 @@ def display_results(
         def wrap_statement(statement: str):
             if not statement:
                 return ""
-            statement_id = statement.replace(WIKIDATA_STATEMENT_PREFIX, "")
+            statement_id = statement.cast(pl.Utf8).replace(
+                WIKIDATA_STATEMENT_PREFIX, ""
+            )
             url = f"https://www.wikidata.org/entity/statement/{statement_id}"
             return mo.Html(
                 f'<a href="{url}" style="color:{CONFIG["color_hyperlink"]};" target="_blank">{statement_id}</a>',
