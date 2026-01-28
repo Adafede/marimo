@@ -863,7 +863,7 @@ def query_wikidata(
 
 
 @app.function
-def build_display_dataframe(df: pl.LazyFrame) -> pl.LazyFrame:
+def build_display_dataframe(df: pl.LazyFrame) -> pl.DataFrame:
     """Build display DataFrame with HTML-formatted columns."""
 
     # Pre-compute colors (avoid repeated dictionary lookups)
@@ -953,7 +953,7 @@ def build_display_dataframe(df: pl.LazyFrame) -> pl.LazyFrame:
         ],
     )
 
-    return display_lazy
+    return display_lazy.collect()
 
 
 @app.function
