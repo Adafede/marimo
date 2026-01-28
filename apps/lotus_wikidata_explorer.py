@@ -2343,6 +2343,20 @@ def display_summary(
     return
 
 
+@app.function
+def df_to_csv_bytes(df: pl.DataFrame) -> bytes:
+    """Convert a Polars DataFrame to CSV safely in batches for WASM."""
+    buffer = io.StringIO()
+    df.write_csv(buffer)
+    return buffer.getvalue().encode("utf-8")
+
+@app.function
+def df_to_json_bytes(df: pl.DataFrame) -> bytes:
+    """Convert a Polars DataFrame to CSV safely in batches for WASM."""
+    buffer = io.StringIO()
+    df.write_json(buffer)
+    return buffer.getvalue().encode("utf-8")
+
 @app.cell
 def generate_results(
     br_state,
@@ -2604,7 +2618,7 @@ def generate_results(
             rdf_generation_data = None
             buttons = [
                 create_download_button(
-                    export_df.collect().write_csv(),
+                    df_to_csv_bytes(export_df.collect()),
                     generate_filename(taxon_input.value, "csv", filters=active_filters),
                     "CSV",
                     "text/csv",
@@ -2766,7 +2780,7 @@ def generate_downloads(
         csv_generation_data,
         "CSV",
         "csv",
-        lambda df, d: df.collect().write_csv(),
+        lambda df, d: df_to_csv_bytes(df.collect()),
         "text/csv",
         ui_is_large_dataset,
     )
@@ -2777,7 +2791,7 @@ def generate_downloads(
         json_generation_data,
         "JSON",
         "json",
-        lambda df, d: df.collect().write_json(),
+        lambda df, d: df_to_json_bytes(df.collect()),
         "application/json",
         ui_is_large_dataset,
     )
