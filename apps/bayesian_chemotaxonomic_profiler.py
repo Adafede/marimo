@@ -127,6 +127,41 @@ with app.setup:
     from modules.net.sparql.execute_with_retry import execute_with_retry
     from modules.net.sparql.parse_response import parse_sparql_response
 
+    # Memory-friendly Parquet writer for WASM / low-memory environments
+    def write_parquet_stream(df: pl.DataFrame, path: str, compression: str = "snappy", row_group_size: int = 2000) -> None:
+        """Write a Polars DataFrame to Parquet in a memory-friendly way.
+
+        Strategy:
+        - Prefer PyArrow ParquetWriter and write RecordBatches in row groups to
+          avoid large single-shot allocations.
+        - Fall back to Polars' write_parquet if PyArrow is unavailable or fails.
+
+        This uses 'snappy' by default for broad portability in many environments.
+        """
+        try:
+            import pyarrow as pa
+            import pyarrow.parquet as pq
+
+            # Convert to Arrow table (Polars -> Arrow is typically zero-copy)
+            table = df.to_arrow()
+
+            # Use ParquetWriter to write row groups (less peak memory on write)
+            with pq.ParquetWriter(path, table.schema, compression=compression) as writer:
+                for rb in table.to_batches(max_chunksize=row_group_size):
+                    writer.write_batch(rb)
+            return
+        except Exception:
+            # Last-resort fallback (may be less memory-friendly depending on engine)
+            try:
+                # Use a portable compression algorithm
+                df.write_parquet(path, compression=compression)
+                return
+            except Exception:
+                # As a final fallback, write an uncompressed parquet to maximize
+                # chance of success (some engines reject unknown compression)
+                df.write_parquet(path, compression=None)
+                return
+
     # alt.data_transformers.enable("vegafusion")
 
     # Patch urllib for Pyodide/WASM (browser) compatibility
@@ -768,7 +803,8 @@ def run_hierarchical_analysis(
 
             # Stream to disk immediately
             temp_file = os.path.join(temp_dir, f"rank_{rank_idx}.parquet")
-            rank_data.write_parquet(temp_file, compression="lz4")
+            # Use memory-friendly writer and portable compression
+            write_parquet_stream(rank_data, temp_file, compression="snappy")
             rank_files.append(temp_file)
 
             logging.info(f"    Saved {rank_data.height} associations")
@@ -1499,35 +1535,35 @@ def apply_config():
 @app.cell
 def load_data_wd(effective_config):
     with mo.status.spinner("Fetching data from Wikidata..."):
-        compound_taxon_lf = parse_sparql_response(
+        compound_taxon = parse_sparql_response(
             execute_with_retry(
                 query="""
-                PREFIX wdt: <http://www.wikidata.org/prop/direct/>
-                PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
-                SELECT DISTINCT
-                (xsd:integer(STRAFTER(STR(?c), "Q")) AS ?compound)
-                (xsd:integer(STRAFTER(STR(?t), "Q")) AS ?taxon)
-                WHERE {
-                  ?c wdt:P703 ?t .
-                }
-                """,
+            PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+            PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+            SELECT DISTINCT
+            (xsd:integer(STRAFTER(STR(?c), "Q")) AS ?compound)
+            (xsd:integer(STRAFTER(STR(?t), "Q")) AS ?taxon)
+            WHERE {
+              ?c wdt:P703 ?t .
+            }
+            """,
                 endpoint=effective_config["qlever_endpoint"],
             ),
-        )
+        ).collect()
 
         compound_smiles = (
             parse_sparql_response(
                 execute_with_retry(
                     query="""
-                PREFIX wdt: <http://www.wikidata.org/prop/direct/>
-                PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
-                SELECT DISTINCT
-                (xsd:integer(STRAFTER(STR(?c), "Q")) AS ?compound)
-                ?compound_smiles
-                WHERE {
-                  ?c wdt:P233 ?compound_smiles .
-                }
-                """,
+            PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+            PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+            SELECT DISTINCT
+            (xsd:integer(STRAFTER(STR(?c), "Q")) AS ?compound)
+            ?compound_smiles
+            WHERE {
+              ?c wdt:P233 ?compound_smiles .
+            }
+            """,
                     endpoint=effective_config["qlever_endpoint"],
                 ),
             )
@@ -1538,28 +1574,28 @@ def load_data_wd(effective_config):
             .drop_nulls()
             .lazy()
         )
-        _compound_ids_lf = compound_taxon_lf.select(pl.col("compound")).unique()
-        compound_smiles = compound_smiles.join(_compound_ids_lf, on="compound", how="inner").collect()
+        _compound_ids = compound_taxon.select(pl.col("compound")).unique()
+        compound_smiles = compound_smiles.join(_compound_ids.lazy(), on="compound", how="inner").collect()
 
         taxon_parent = parse_sparql_response(
             execute_with_retry(
                 query="""
-                PREFIX wdt: <http://www.wikidata.org/prop/direct/>
-                PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
-                SELECT DISTINCT
-                (xsd:integer(STRAFTER(STR(?t), "Q")) AS ?taxon)
-                (xsd:integer(STRAFTER(STR(?tp), "Q")) AS ?taxon_parent)
-                WHERE {
-                  ?t wdt:P171 ?tp .
-                }
-                """,
+            PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+            PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+            SELECT DISTINCT
+            (xsd:integer(STRAFTER(STR(?t), "Q")) AS ?taxon)
+            (xsd:integer(STRAFTER(STR(?tp), "Q")) AS ?taxon_parent)
+            WHERE {
+              ?t wdt:P171 ?tp .
+            }
+            """,
                 endpoint=effective_config["qlever_endpoint"],
             ),
         ).collect()
 
     with mo.status.spinner("Shrinking data and lineages..."):
         focus_taxa = (
-            compound_taxon_lf.select(pl.col("taxon")).unique().collect().to_series().drop_nulls().unique()
+            compound_taxon.select(pl.col("taxon")).unique().to_series().drop_nulls().unique()
         )
         lineage = build_hierarchy_lineage(
             edges=taxon_parent,
@@ -1579,7 +1615,7 @@ def load_data_wd(effective_config):
             )
             .to_series()
             .unique(),
-        )
+            )
         taxon_parent = taxon_parent.filter(pl.col("taxon").is_in(_to_keep))
 
         taxon_rank = (
