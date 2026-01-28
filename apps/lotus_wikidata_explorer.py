@@ -74,6 +74,9 @@ with app.setup:
     from modules.knowledge.wikidata.url.constants import WIKI_PREFIX
     from modules.knowledge.wikidata.html.scholia import scholia_url
     from modules.knowledge.wikidata.sparql.query_taxon_search import query_taxon_search
+    from modules.knowledge.wikidata.sparql.query_taxon_connectivity import (
+        query_taxon_connectivity,
+    )
     from modules.knowledge.wikidata.sparql.query_taxon_details import (
         query_taxon_details,
     )
@@ -307,7 +310,7 @@ def create_taxon_warning_html(
         name = match_data[1]
         description = match_data[2] if len(match_data) > 2 else None
         parent = match_data[3] if len(match_data) > 3 else None
-        compound_count = match_data[4] if len(match_data) > 4 else None
+        edges_count = match_data[4] if len(match_data) > 4 else None
 
         # Create clickable link using module function with custom styling
         link_html = f'<a href="{scholia_url(qid)}" target="_blank" rel="noopener noreferrer" style="color: {CONFIG["color_hyperlink"]}; font-weight: bold;">{qid}</a>'
@@ -320,15 +323,15 @@ def create_taxon_warning_html(
             details.append(f"{description}")
         if parent:
             details.append(f"parent: {parent}")
-        if compound_count is not None:
-            details.append(f"<strong>{compound_count:,} compounds</strong>")
+        if edges_count is not None:
+            details.append(f"<strong>{edges_count:,} edges</strong>")
 
         details_str = " - ".join(details) if details else ""
 
         # Highlight the selected one
         if qid == selected_qid:
             items.append(
-                f"<li>{link_html} {details_str} <strong>< USING THIS ONE (most compounds)</strong></li>",
+                f"<li>{link_html} {details_str} <strong>< USING THIS ONE (most edges)</strong></li>",
             )
         else:
             items.append(f"<li>{link_html} {details_str}</li>")
@@ -353,101 +356,52 @@ def resolve_ambiguous_matches(
     matches: list[tuple[str, str]],
     is_exact: bool,
 ) -> tuple[str, mo.Html]:
-    """Resolve ambiguous taxon matches by connectivity. Returns (selected_qid, warning_html)."""
-    qids = [qid for qid, _ in matches]
+    qids = tuple(qid for qid, _ in matches)
+    info = {qid: [0, "", "", ""] for qid in qids}
 
-    # Combined SPARQL query (one network round-trip)
-    combined_query = f"""
-    {PREFIXES}
-    SELECT DISTINCT
-    (xsd:integer(STRAFTER(STR(?t), "Q")) AS ?taxon)
-    ?taxonLabel
-    ?taxonDescription
-    (xsd:integer(STRAFTER(STR(?tp), "Q")) AS ?taxon_parent)
-    ?taxon_parentLabel
-    (COUNT(DISTINCT ?c) AS ?compound_count)
-    WHERE {{
-        VALUES ?t {{ {" ".join(f"wd:Q{qid}" for qid in qids)} }}
-        OPTIONAL {{ ?t wdt:P171 ?tp }}
-        OPTIONAL {{ ?t rdfs:label ?taxonLabel . FILTER(LANG(?taxonLabel) = "en") }}
-        OPTIONAL {{ ?t schema:description ?taxonDescription . FILTER(LANG(?taxonDescription) = "en") }}
-        OPTIONAL {{ ?tp rdfs:label ?taxon_parentLabel . FILTER(LANG(?taxon_parentLabel) = "en") }}
-        OPTIONAL {{
-            ?c wdt:P235 ?inchikey ;
-               p:P703/ps:P703 ?descendant .
-            ?descendant (wdt:P171*) ?t .
-        }}
-    }}
-    GROUP BY ?t ?taxonLabel ?taxonDescription ?tp ?taxon_parentLabel
-    """
-
-    # Stream and build maps in single pass
-    connectivity_map = {}
-    details_map = {}
-
-    lazy_df = execute_with_streaming(combined_query, CONFIG["qlever_endpoint"])
-
-    # Process in streaming fashion (never materialize full df)
-    for row in lazy_df.collect().iter_rows(named=True):
-        qid = str(row["taxon"])
-        connectivity_map[qid] = int(row.get("compound_count", 0))
-        details_map[qid] = (
-            row.get("taxonLabel", ""),
-            row.get("taxonDescription", ""),
-            row.get("taxon_parentLabel", ""),
-        )
+    # --- connectivity ---
+    csv_bytes = execute_with_retry(
+        query_taxon_connectivity(values_clause("taxon", qids, prefix="wd:")),
+        endpoint=CONFIG["qlever_endpoint"],
+        fallback_endpoint=None,
+    )
     if csv_bytes and csv_bytes.strip():
-        conn_df = parse_sparql_response(csv_bytes).collect()
-        for row in conn_df.iter_rows(named=True):
-            taxon_url = row.get("taxon", "")
-            count = row.get("compound_count", 0)
+        for row in parse_sparql_response(csv_bytes).collect().iter_rows(named=True):
+            taxon_url = row.get("taxon")
             if taxon_url:
                 qid = extract_from_url(taxon_url, WIKIDATA_ENTITY_PREFIX)
-                connectivity_map[qid] = int(count) if count else 0
-        del conn_df
+                info[qid][0] = int(row.get("count") or 0)
     del csv_bytes
 
-    # Sort by connectivity (descending)
-    sorted_matches = sorted(
-        matches,
-        key=lambda x: connectivity_map.get(x[0], 0),
-        reverse=True,
-    )
-
-    # Get details for display (CSV for memory efficiency)
     csv_bytes = execute_with_retry(
         query_taxon_details(values_clause("taxon", qids, prefix="wd:")),
         endpoint=CONFIG["qlever_endpoint"],
         fallback_endpoint=None,
     )
-    details_map = {}
     if csv_bytes and csv_bytes.strip():
-        details_df = parse_sparql_response(csv_bytes).collect()
-        for row in details_df.iter_rows(named=True):
-            taxon_url = row.get("taxon", "")
+        for row in parse_sparql_response(csv_bytes).collect().iter_rows(named=True):
+            taxon_url = row.get("taxon")
             if taxon_url:
                 qid = extract_from_url(taxon_url, WIKIDATA_ENTITY_PREFIX)
-                details_map[qid] = (
-                    row.get("taxonLabel", ""),
-                    row.get("taxonDescription", ""),
-                    row.get("taxon_parentLabel", ""),
-                )
-        del details_df
+                info[qid][1] = row.get("taxonDescription", "")
+                info[qid][2] = row.get("taxon_parentLabel", "")
     del csv_bytes
 
-    # Create matches with details including connectivity
+    # best qid (no sort yet)
+    selected_qid = max(qids, key=lambda q: info[q][0])
+
+    # sort once, only for display
+    matches_sorted = sorted(
+        matches,
+        key=lambda x: info[x[0]][0],
+        reverse=True,
+    )
+
     matches_with_details = [
-        (
-            qid,
-            name,
-            details_map.get(qid, ("", "", ""))[1],
-            details_map.get(qid, ("", "", ""))[2],
-            connectivity_map.get(qid, 0),
-        )
-        for qid, name in sorted_matches
+        (qid, name, info[qid][1], info[qid][2], info[qid][0])
+        for qid, name in matches_sorted
     ]
 
-    selected_qid = sorted_matches[0][0]
     return selected_qid, create_taxon_warning_html(
         matches_with_details,
         selected_qid,
@@ -499,17 +453,15 @@ def resolve_taxon_to_qid(
             return None, None
 
         # Extract matches
-        matches = []
-        for row in df.iter_rows(named=True):
-            taxon_url = row.get("taxon", "")
-            taxon_name = row.get("taxon_name", "")
-            if taxon_url and taxon_name:
-                matches.append(
-                    (
-                        extract_from_url(taxon_url, WIKIDATA_ENTITY_PREFIX),
-                        taxon_name,
-                    ),
-                )
+        matches = [
+            (
+                extract_from_url(row["taxon"], WIKIDATA_ENTITY_PREFIX),
+                row["taxon_name"],
+            )
+            for row in df.iter_rows(named=True)
+            if row.get("taxon") and row.get("taxon_name")
+        ]
+
         del df
 
         if not matches:
@@ -909,7 +861,7 @@ def query_wikidata(
 
 
 @app.function
-def build_display_dataframe(df: pl.LazyFrame) -> pl.DataFrame:
+def build_display_dataframe(df: pl.LazyFrame) -> pl.LazyFrame:
     """Build display DataFrame with HTML-formatted columns."""
 
     # Pre-compute colors (avoid repeated dictionary lookups)
@@ -999,7 +951,7 @@ def build_display_dataframe(df: pl.LazyFrame) -> pl.DataFrame:
         ],
     )
 
-    return display_lazy.collect()
+    return display_lazy
 
 
 @app.function
@@ -1554,12 +1506,14 @@ def add_compound_triples(
 
 @app.function
 def export_to_rdf_turtle(
-    df: pl.DataFrame,
+    df: pl.DataFrame | pl.LazyFrame,
     taxon_input: str,
     qid: str,
     filters: dict[str, Any] | None = None,
 ) -> str:
     """Export data to RDF Turtle format using Wikidata's full RDF structure."""
+    if isinstance(df, pl.LazyFrame):
+        df = df.collect()
     # Initialize graph
     g = Graph()
 

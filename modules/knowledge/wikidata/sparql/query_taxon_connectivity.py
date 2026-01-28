@@ -11,18 +11,11 @@ def query_taxon_connectivity(values_clause_str: str) -> str:
     {PREFIXES}
     SELECT
     ?taxon
-    (COUNT(DISTINCT ?c) AS ?compound_count)
+    (COUNT(?taxon) AS ?count)
     WHERE {{
       {values_clause_str}
-      {{
-        SELECT ?taxon ?c WHERE {{
-          {values_clause_str}
-          ?descendant (wdt:P171*) ?taxon .
-          ?c wdt:P235 ?inchikey ;
-                    p:P703/ps:P703 ?descendant .
-        }}
-      }}
+      ?s ?p ?taxon.
     }}
     GROUP BY ?taxon
-    ORDER BY DESC(?compound_count)
+    ORDER BY DESC(?count)
     """
