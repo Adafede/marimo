@@ -885,7 +885,12 @@ def build_display_dataframe(df: pl.LazyFrame) -> pl.DataFrame:
         return html_from_image(svg_from_smiles(smiles)) if smiles else ""
 
     df = df.with_columns(
-        pl.col("smiles").map_elements(_structure_img).alias("Compound Depiction"),
+        pl.col("smiles")
+        .map_elements(
+            _structure_img,
+            return_dtype=pl.String,
+        )
+        .alias("Compound Depiction"),
     )
 
     # Now select
@@ -2073,7 +2078,7 @@ def get_counts(lazy_df: pl.LazyFrame) -> dict:
             pl.col("compound").n_unique().alias("n_compounds"),
             pl.col("taxon").n_unique().alias("n_taxa"),
             pl.col("reference").n_unique().alias("n_refs"),
-            pl.count().alias("n_entries"),
+            pl.len().alias("n_entries"),
         ],
     )
 
