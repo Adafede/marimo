@@ -230,6 +230,8 @@ with app.setup:
                     "ref_title": pl.Categorical,
                     "ref_doi": pl.Categorical,
                     "mf": pl.Categorical,
+                    "statement": pl.Categorical,
+                    "ref": pl.Categorical,
                 },
             )
 
