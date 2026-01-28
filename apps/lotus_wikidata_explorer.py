@@ -7,8 +7,6 @@
 #     "polars==1.37.1",
 #     "rdflib==7.5.0",
 # ]
-# [tool.marimo.runtime]
-# output_max_bytes = 100_000_000
 # ///
 
 """
@@ -877,13 +875,15 @@ def build_display_dataframe(df: pl.LazyFrame) -> pl.DataFrame:
 
     # Physical limit
     if limit:
-        df = df.limit(limit)
+        df = df.limit(limit).collect()
+    else:
+        df = df.collect()
 
     # Generate molecule images (small Python loop)
     df = df.with_columns(
         pl.col("smiles")
         .map_elements(
-            lambda s: mo.image(svg_from_smiles(s)) if s else "", return_dtype=pl.String
+            lambda s: mo.image(svg_from_smiles(s)) if s else "", return_dtype=pl.Object
         )
         .alias("Compound Depiction")
     )
@@ -964,7 +964,7 @@ def build_display_dataframe(df: pl.LazyFrame) -> pl.DataFrame:
         ]
     )
 
-    return df.collect()
+    return df
 
 
 @app.function
