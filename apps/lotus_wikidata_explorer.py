@@ -875,22 +875,23 @@ def build_display_dataframe(df: pl.LazyFrame) -> pl.DataFrame:
 
     # Limit (lazy)
     if limit:
-        lazy_df = df.head(limit)
+        df = df.limit(limit)
 
-    # Wrapper functions that capture colors via closure
+    # --- 2. Collect early (only limited rows!) ---
+    df = df.collect()
+
+    # --- 3. Python-only functions AFTER collect ---
     def _structure_img(smiles):
-        # indigo alternative
-        # return html_from_image(svg_from_mol(mol_from_smiles(smiles))) if smiles else ""
         return html_from_image(svg_from_smiles(smiles)) if smiles else ""
 
-    # Build display (all lazy!)
-    display_lazy = lazy_df.select(
+    df = df.with_columns(
+        pl.col("smiles").map_elements(_structure_img).alias("Compound Depiction")
+    )
+
+    # --- 4. Pure Polars expressions for everything else ---
+    df = df.select(
         [
-            # Image URL
-            pl.col("smiles")
-            .map_elements(_structure_img, return_dtype=pl.String)
-            .alias("Compound Depiction"),
-            # Simple columns
+            pl.col("Compound Depiction"),
             pl.col("name").alias("Compound Name"),
             pl.col("smiles").alias("Compound SMILES"),
             pl.col("inchikey").alias("Compound InChIKey"),
@@ -899,61 +900,72 @@ def build_display_dataframe(df: pl.LazyFrame) -> pl.DataFrame:
             pl.col("taxon_name").alias("Taxon Name"),
             pl.col("ref_title").alias("Reference Title"),
             pl.col("pub_date").alias("Reference Date"),
-            # Vectorized HTML links
+            # DOI link
             pl.when(pl.col("ref_doi").is_not_null() & (pl.col("ref_doi") != ""))
             .then(
                 pl.lit('<a href="https://doi.org/')
                 + pl.col("ref_doi")
                 + pl.lit(f'" target="_blank" style="color:{color_link};">')
                 + pl.col("ref_doi")
-                + pl.lit("</a>"),
+                + pl.lit("</a>")
             )
-            .otherwise(pl.lit(""))
+            .otherwise("")
             .alias("Reference DOI"),
+            # Compound QID
             pl.when(pl.col("compound").is_not_null())
             .then(
-                pl.lit('<a href="https://scholia.toolforge.org/Q')
-                + pl.col("compound").cast(pl.Utf8)
-                + pl.lit(f'" target="_blank" style="color:{color_compound};">Q')
-                + pl.col("compound").cast(pl.Utf8)
-                + pl.lit("</a>"),
+                pl.format(
+                    '<a href="https://scholia.toolforge.org/Q{}" '
+                    'target="_blank" style="color:{};">Q{}</a>',
+                    pl.col("compound"),
+                    pl.lit(color_compound),
+                    pl.col("compound"),
+                )
             )
-            .otherwise(pl.lit(""))
+            .otherwise("")
             .alias("Compound QID"),
+            # Taxon QID
             pl.when(pl.col("taxon").is_not_null())
             .then(
-                pl.lit('<a href="https://scholia.toolforge.org/Q')
-                + pl.col("taxon").cast(pl.Utf8)
-                + pl.lit(f'" target="_blank" style="color:{color_taxon};">Q')
-                + pl.col("taxon").cast(pl.Utf8)
-                + pl.lit("</a>"),
+                pl.format(
+                    '<a href="https://scholia.toolforge.org/Q{}" '
+                    'target="_blank" style="color:{};">Q{}</a>',
+                    pl.col("taxon"),
+                    pl.lit(color_taxon),
+                    pl.col("taxon"),
+                )
             )
-            .otherwise(pl.lit(""))
+            .otherwise("")
             .alias("Taxon QID"),
+            # Reference QID
             pl.when(pl.col("reference").is_not_null())
             .then(
-                pl.lit('<a href="https://scholia.toolforge.org/Q')
-                + pl.col("reference").cast(pl.Utf8)
-                + pl.lit(f'" target="_blank" style="color:{color_ref};">Q')
-                + pl.col("reference").cast(pl.Utf8)
-                + pl.lit("</a>"),
+                pl.format(
+                    '<a href="https://scholia.toolforge.org/Q{}" '
+                    'target="_blank" style="color:{};">Q{}</a>',
+                    pl.col("reference"),
+                    pl.lit(color_ref),
+                    pl.col("reference"),
+                )
             )
-            .otherwise(pl.lit(""))
+            .otherwise("")
             .alias("Reference QID"),
+            # Statement link
             pl.when(pl.col("statement").is_not_null() & (pl.col("statement") != ""))
             .then(
-                pl.lit('<a href="')
-                + pl.col("statement")
-                + pl.lit(f'" target="_blank" style="color:{color_link};">')
-                + pl.col("statement").str.split("/").list.last()
-                + pl.lit("</a>"),
+                pl.format(
+                    '<a href="{}" target="_blank" style="color:{};">{}</a>',
+                    pl.col("statement"),
+                    pl.lit(color_link),
+                    pl.col("statement").str.split("/").list.last(),
+                )
             )
-            .otherwise(pl.lit(""))
+            .otherwise("")
             .alias("Statement"),
-        ],
+        ]
     )
 
-    return display_lazy.collect()
+    return df
 
 
 @app.function
