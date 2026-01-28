@@ -997,7 +997,7 @@ def prepare_export_dataframe(
     if include_rdf_ref and "ref" in lazy_df.columns:
         exprs.append(pl.col("ref"))
 
-    return lazy_df.select(exprs).collect()
+    return lazy_df.select(exprs)
 
 
 @app.function
