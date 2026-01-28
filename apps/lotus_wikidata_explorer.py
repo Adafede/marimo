@@ -885,55 +885,64 @@ def build_display_dataframe(df: pl.LazyFrame) -> pl.DataFrame:
     )
 
     # Add vectorized HTML columns in small groups
-    df = df.with_columns([
-        # First batch
-        pl.when(pl.col("compound").is_not_null())
-        .then(
-            pl.format(
-                '<a href="https://scholia.toolforge.org/Q{}" style="color:{};">Q{}</a>',
-                pl.col("compound"), pl.lit(CONFIG["color_wikidata_red"]), pl.col("compound")
+    df = df.with_columns(
+        [
+            # First batch
+            pl.when(pl.col("compound").is_not_null())
+            .then(
+                pl.format(
+                    '<a href="https://scholia.toolforge.org/Q{}" style="color:{};">Q{}</a>',
+                    pl.col("compound"),
+                    pl.lit(CONFIG["color_wikidata_red"]),
+                    pl.col("compound"),
+                )
             )
-        )
-        .otherwise(pl.lit(""))
-        .alias("Compound QID"),
-
-        pl.when(pl.col("taxon").is_not_null())
-        .then(
-            pl.format(
-                '<a href="https://scholia.toolforge.org/Q{}" style="color:{};">Q{}</a>',
-                pl.col("taxon"), pl.lit(CONFIG["color_wikidata_green"]), pl.col("taxon")
+            .otherwise(pl.lit(""))
+            .alias("Compound QID"),
+            pl.when(pl.col("taxon").is_not_null())
+            .then(
+                pl.format(
+                    '<a href="https://scholia.toolforge.org/Q{}" style="color:{};">Q{}</a>',
+                    pl.col("taxon"),
+                    pl.lit(CONFIG["color_wikidata_green"]),
+                    pl.col("taxon"),
+                )
             )
-        )
-        .otherwise(pl.lit(""))
-        .alias("Taxon QID"),
-    ])
+            .otherwise(pl.lit(""))
+            .alias("Taxon QID"),
+        ]
+    )
 
     # Add remaining columns in a second batch
-    df = df.with_columns([
-        pl.when(pl.col("reference").is_not_null())
-        .then(
-            pl.format(
-                '<a href="https://scholia.toolforge.org/Q{}" style="color:{};">Q{}</a>',
-                pl.col("reference"), pl.lit(CONFIG["color_wikidata_blue"]), pl.col("reference")
+    df = df.with_columns(
+        [
+            pl.when(pl.col("reference").is_not_null())
+            .then(
+                pl.format(
+                    '<a href="https://scholia.toolforge.org/Q{}" style="color:{};">Q{}</a>',
+                    pl.col("reference"),
+                    pl.lit(CONFIG["color_wikidata_blue"]),
+                    pl.col("reference"),
+                )
             )
-        )
-        .otherwise(pl.lit(""))
-        .alias("Reference QID"),
-
-        # DOI links
-        pl.when(pl.col("ref_doi").is_not_null() & (pl.col("ref_doi") != ""))
-        .then(
-            pl.format(
-                '<a href="https://doi.org/{}" style="color:{};">{}</a>',
-                pl.col("ref_doi"), pl.lit(CONFIG["color_hyperlink"]), pl.col("ref_doi")
+            .otherwise(pl.lit(""))
+            .alias("Reference QID"),
+            # DOI links
+            pl.when(pl.col("ref_doi").is_not_null() & (pl.col("ref_doi") != ""))
+            .then(
+                pl.format(
+                    '<a href="https://doi.org/{}" style="color:{};">{}</a>',
+                    pl.col("ref_doi"),
+                    pl.lit(CONFIG["color_hyperlink"]),
+                    pl.col("ref_doi"),
+                )
             )
-        )
-        .otherwise(pl.lit(""))
-        .alias("Reference DOI"),
-    ])
+            .otherwise(pl.lit(""))
+            .alias("Reference DOI"),
+        ]
+    )
 
     return df
-
 
 
 @app.function
