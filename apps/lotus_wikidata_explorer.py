@@ -3201,19 +3201,19 @@ def main():
                     df,
                     include_rdf_ref=False,
                 )
-                data = export_df.collect().write_csv().encode("utf-8")
+                data = export_df.write_csv().encode("utf-8")
             elif args.format == "json":
                 # JSON export: exclude ref column (statement included for transparency)
                 export_df = prepare_export_dataframe(
                     df,
                     include_rdf_ref=False,
                 )
-                data = export_df.collect().write_json().encode("utf-8")
+                data = export_df.write_json().encode("utf-8")
             elif args.format == "ttl":
                 # RDF export: include ref column for full provenance
                 export_df = prepare_export_dataframe(df, include_rdf_ref=True)
                 data = export_to_rdf_turtle(
-                    export_df.collect(),
+                    export_df,
                     args.taxon,
                     qid,
                     filters if filters else None,
