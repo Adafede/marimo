@@ -1107,14 +1107,11 @@ with app.setup:
         )
 
 
-# ============================================================================
-# UI CELLS
-# ============================================================================
-
-
 @app.cell
 def md_title():
-    mo.md("# LOTUS Wikidata Explorer")
+    mo.md("""
+    # LOTUS Wikidata Explorer
+    """)
     return
 
 
@@ -1193,71 +1190,70 @@ def ui_search_inputs():
     )
 
     run_button = mo.ui.run_button(label="Search Wikidata")
-
     return (
-        taxon_input,
+        br_state,
+        c_max,
+        c_min,
+        cl_state,
+        exact_formula,
+        f_state,
+        formula_filter,
+        h_max,
+        h_min,
+        i_state,
+        mass_filter,
+        mass_max,
+        mass_min,
+        n_max,
+        n_min,
+        o_max,
+        o_min,
+        p_max,
+        p_min,
+        run_button,
+        s_max,
+        s_min,
         smiles_input,
         smiles_search_type,
         smiles_threshold,
-        mass_filter,
-        mass_min,
-        mass_max,
+        taxon_input,
+        year_end,
         year_filter,
         year_start,
-        year_end,
-        formula_filter,
-        exact_formula,
-        c_min,
-        c_max,
-        h_min,
-        h_max,
-        n_min,
-        n_max,
-        o_min,
-        o_max,
-        p_min,
-        p_max,
-        s_min,
-        s_max,
-        f_state,
-        cl_state,
-        br_state,
-        i_state,
-        run_button,
     )
 
 
 @app.cell
 def ui_search_panel(
-    taxon_input,
+    br_state,
+    c_max,
+    c_min,
+    cl_state,
+    exact_formula,
+    f_state,
+    formula_filter,
+    h_max,
+    h_min,
+    i_state,
+    mass_filter,
+    mass_max,
+    mass_min,
+    n_max,
+    n_min,
+    o_max,
+    o_min,
+    p_max,
+    p_min,
+    run_button,
+    s_max,
+    s_min,
     smiles_input,
     smiles_search_type,
     smiles_threshold,
-    mass_filter,
-    mass_min,
-    mass_max,
+    taxon_input,
+    year_end,
     year_filter,
     year_start,
-    year_end,
-    formula_filter,
-    exact_formula,
-    c_min,
-    c_max,
-    h_min,
-    h_max,
-    n_min,
-    n_max,
-    o_min,
-    o_max,
-    p_min,
-    p_max,
-    s_min,
-    s_max,
-    f_state,
-    cl_state,
-    br_state,
-    i_state,
-    run_button,
 ):
     structure_fields = [smiles_input, smiles_search_type]
     if smiles_search_type.value == "similarity":
@@ -1296,35 +1292,35 @@ def ui_search_panel(
 
 @app.cell
 def execute_search(
-    taxon_input,
+    br_state,
+    c_max,
+    c_min,
+    cl_state,
+    exact_formula,
+    f_state,
+    formula_filter,
+    h_max,
+    h_min,
+    i_state,
+    mass_filter,
+    mass_max,
+    mass_min,
+    n_max,
+    n_min,
+    o_max,
+    o_min,
+    p_max,
+    p_min,
+    run_button,
+    s_max,
+    s_min,
     smiles_input,
     smiles_search_type,
     smiles_threshold,
-    mass_filter,
-    mass_min,
-    mass_max,
+    taxon_input,
+    year_end,
     year_filter,
     year_start,
-    year_end,
-    formula_filter,
-    exact_formula,
-    c_min,
-    c_max,
-    h_min,
-    h_max,
-    n_min,
-    n_max,
-    o_min,
-    o_max,
-    p_min,
-    p_max,
-    s_min,
-    s_max,
-    f_state,
-    cl_state,
-    br_state,
-    i_state,
-    run_button,
 ):
     if not run_button.value:
         lotus, results, stats, qid, criteria, query_hash, result_hash, taxon_warning = (
@@ -1399,19 +1395,27 @@ def execute_search(
 
         elapsed = round(time.time() - start_time, 2)
         mo.md(f"Query executed in **{elapsed}s**")
-
-    return lotus, results, stats, qid, criteria, query_hash, result_hash, taxon_warning
+    return (
+        criteria,
+        lotus,
+        qid,
+        query_hash,
+        result_hash,
+        results,
+        stats,
+        taxon_warning,
+    )
 
 
 @app.cell
 def display_results(
-    lotus,
-    results,
-    stats,
-    qid,
     criteria,
+    lotus,
+    qid,
     query_hash,
     result_hash,
+    results,
+    stats,
     taxon_input,
     taxon_warning,
 ):
