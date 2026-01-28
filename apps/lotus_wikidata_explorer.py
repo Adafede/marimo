@@ -8,7 +8,7 @@
 #     "rdflib==7.5.0",
 # ]
 # [tool.marimo.runtime]
-# output_max_bytes = 200_000_000
+# output_max_bytes = 300_000_000
 # ///
 
 """
@@ -46,6 +46,7 @@ with app.setup:
     import sys
     import urllib.request
     import urllib.parse
+    import gc
     from dataclasses import dataclass, field
     from datetime import datetime
     from rdflib import Graph, Literal, URIRef, BNode
@@ -945,6 +946,19 @@ def build_display_dataframe(df: pl.LazyFrame) -> pl.DataFrame:
             )
             .otherwise(pl.lit(""))
             .alias("Reference DOI"),
+            # statement links
+            pl.when(pl.col("statement").is_not_null() & (pl.col("statement") != ""))
+            .then(
+                pl.format(
+                    '<a href="https://www.wikidata.org/entity/statement/{}" '
+                    'style="color:{};" target="_blank">{}</a>',
+                    pl.col("statement").str.split("/").list.last(),
+                    pl.lit(CONFIG["color_hyperlink"]),
+                    pl.col("statement").str.split("/").list.last(),
+                ),
+            )
+            .otherwise(pl.lit(""))
+            .alias("Statement"),
         ],
     )
     df = df.select(
@@ -962,7 +976,7 @@ def build_display_dataframe(df: pl.LazyFrame) -> pl.DataFrame:
             "Compound QID",
             "Taxon QID",
             "Reference QID",
-            pl.col("statement").alias("Statement"),
+            "Statement",
         ],
     )
 
@@ -1193,32 +1207,54 @@ def compute_provenance_hashes(
 
     # Result hash - streaming approach for memory efficiency
     result_hasher = hashlib.sha256()
-    compound_col = (
-        "compound_qid" if "compound_qid" in df.collect_schema().names() else "compound"
-    )
 
-    if compound_col in df.collect_schema().names():
+    # Determine available columns depending on LazyFrame vs DataFrame
+    try:
+        if isinstance(df, pl.LazyFrame):
+            cols = df.collect_schema().names()
+        else:
+            cols = df.columns
+    except Exception:
+        cols = []
+
+    compound_col = "compound_qid" if "compound_qid" in cols else "compound"
+
+    if compound_col in cols:
         try:
-            # Get unique compound IDs as a sorted series (no intermediate list)
-            unique_ids = (
-                df.select(
-                    pl.col(compound_col)
-                    .cast(pl.Utf8)
-                    .str.replace(WIKIDATA_ENTITY_PREFIX, "", literal=True),
+            # Normalize to a collected DataFrame of unique sorted IDs in a memory-conscious way
+            if isinstance(df, pl.LazyFrame):
+                tmp = (
+                    df.select(
+                        pl.col(compound_col)
+                        .cast(pl.Utf8)
+                        .str.replace(WIKIDATA_ENTITY_PREFIX, "", literal=True),
+                    )
+                    .drop_nulls()
+                    .unique()
+                    .sort(by=compound_col)
+                    .collect()
                 )
-                .to_series()
-                .drop_nulls()
-                .unique()
-                .sort()
-                .collect()
-            )
-            # Stream through values without creating full string
-            for i, val in enumerate(unique_ids):
+            else:
+                tmp = (
+                    df.select(
+                        pl.col(compound_col)
+                        .cast(pl.Utf8)
+                        .str.replace(WIKIDATA_ENTITY_PREFIX, "", literal=True),
+                    )
+                    .drop_nulls()
+                    .unique()
+                    .sort(by=compound_col)
+                )
+
+            # Iterate rows to update hash without building large concatenated strings
+            col_name = tmp.columns[0] if tmp.columns else compound_col
+            for i, val in enumerate(tmp.get_column(col_name).to_list()):
                 if i > 0:
                     result_hasher.update(b"|")
                 if val:
-                    result_hasher.update(val.encode("utf-8"))
+                    result_hasher.update(str(val).encode("utf-8"))
         except Exception:
+            # If anything goes wrong, leave the result_hasher as-is
             pass
 
     return query_hash, result_hasher.hexdigest()
@@ -2138,7 +2174,6 @@ def display_summary(
     qid,
     query_hash,
     result_hash,
-    lazy_results,
     counts,
     run_button,
     s_max,
@@ -2153,22 +2188,21 @@ def display_summary(
     year_filter,
     year_start,
 ):
-    # Display summary if either button was clicked or auto-run from URL
-    if (not run_button.value and not search_params.auto_run) or lazy_results is None:
+    """Display summary - NO lazy_results reference."""
+
+    # Check if we have results
+    if (not run_button.value and not search_params.auto_run) or counts is None:
         summary_and_downloads = mo.Html("")
     elif counts["n_compounds"] == 0:
-        # Show no compounds message, and taxon warning if present
+        # Show no compounds message
         parts = []
         if taxon_warning:
             parts.append(
                 mo.callout(taxon_warning, kind="warn").style(
-                    style={
-                        "overflow-wrap": "anywhere",
-                    },
+                    style={"overflow-wrap": "anywhere"},
                 ),
             )
 
-        # Handle wildcard case
         if qid == "*":
             parts.append(
                 mo.callout(
@@ -2176,24 +2210,16 @@ def display_summary(
                         "No compounds found for **all taxa** with the current filters.",
                     ),
                     kind="warn",
-                ).style(
-                    style={
-                        "overflow-wrap": "anywhere",
-                    },
-                ),
+                ).style(style={"overflow-wrap": "anywhere"}),
             )
         else:
             parts.append(
                 mo.callout(
                     mo.md(
-                        f"No compounds found for **{taxon_input.value}** ([{qid}]({scholia_url(qid)})) with the current filters.",
+                        f"No compounds found for **{taxon_input.value}** ([{qid}]({scholia_url(qid)})).",
                     ),
                     kind="warn",
-                ).style(
-                    style={
-                        "overflow-wrap": "anywhere",
-                    },
-                ),
+                ).style(style={"overflow-wrap": "anywhere"}),
             )
         summary_and_downloads = mo.vstack(parts) if len(parts) > 1 else parts[0]
     else:
@@ -2202,7 +2228,7 @@ def display_summary(
         n_refs = counts["n_refs"]
         n_entries = counts["n_entries"]
 
-        # Results header (on its own line)
+        # Results header
         results_header = mo.md("## Results")
 
         # Taxon info
@@ -2211,7 +2237,7 @@ def display_summary(
         else:
             taxon_info = f"{taxon_input.value} [{qid}]({scholia_url(qid)})"
 
-        # Add SMILES search info if present
+        # Add SMILES info
         if smiles_input.value and smiles_input.value.strip():
             _smiles_str = smiles_input.value.strip()
             search_type = smiles_search_type.value
@@ -2226,19 +2252,15 @@ def display_summary(
         else:
             combined_info = taxon_info
 
-        # Search info
+        # Search info with hashes
         search_info_display = mo.md(
             f"**{combined_info}**\n"
             f"**Hashes:**\n"
             f"\t*Query*: `{query_hash}`"
             f"\t*Results*: `{result_hash}`",
-        ).style(
-            style={
-                "overflow-wrap": "anywhere",
-            },
-        )
+        ).style(style={"overflow-wrap": "anywhere"})
 
-        # Stats cards - use list comprehension for DRY
+        # Stats cards
         stats_data = [
             (n_compounds, "Compound"),
             (n_taxa, "Taxon"),
@@ -2257,21 +2279,11 @@ def display_summary(
             gap=0,
             justify="start",
             wrap=True,
-        ).style(
-            style={
-                "overflow-wrap": "anywhere",
-            },
-        )
+        ).style(style={"overflow-wrap": "anywhere"})
 
-        search_and_stats = mo.vstack(
-            [
-                search_info_display,
-                stats_cards,
-            ],
-            gap=2,
-        )
+        search_and_stats = mo.vstack([search_info_display, stats_cards], gap=2)
 
-        # Build API URL for sharing
+        # Build API URL
         api_url = build_api_url(
             taxon=taxon_input.value,
             smiles=smiles_input.value,
@@ -2303,18 +2315,16 @@ def display_summary(
             i_state=i_state.value,
         )
 
-        # Display shareable URL if parameters exist
+        # Shareable URL
         if api_url:
-            url_display = mo.md(
-                f"""
+            url_display = mo.md(f"""
                 **Shareable URL**
 
-                Copy and append this to your notebook URL to share this exact search:
+                Copy and append this to your notebook URL:
                 ```
                 {api_url}
                 ```
-                """,
-            )
+                """)
             api_url_section = mo.accordion(
                 {"Share this search": url_display},
                 multiple=False,
@@ -2322,22 +2332,18 @@ def display_summary(
         else:
             api_url_section = mo.Html("")
 
-        # Build summary section with all parts
+        # Build summary
         summary_parts = [results_header, search_and_stats]
-
         if api_url:
             summary_parts.append(api_url_section)
-
         if taxon_warning:
             summary_parts.append(
                 mo.callout(taxon_warning, kind="warn").style(
-                    style={
-                        "overflow-wrap": "anywhere",
-                    },
+                    style={"overflow-wrap": "anywhere"},
                 ),
             )
 
-        # Stack summary and downloads vertically
+        # Combine summary and downloads
         summary_and_downloads = mo.vstack(
             [mo.vstack(summary_parts), download_ui],
             gap=3,
@@ -2374,14 +2380,51 @@ def df_to_json_bytes_streaming(df: pl.LazyFrame, batch_size: int = 10000) -> byt
 
 
 @app.function
-def df_to_json_bytes(df, max_rows_for_standard=5000):
-    """Choose method based on size."""
-    total_rows = df.select(pl.count()).collect()["count"][0]
-
-    if total_rows <= max_rows_for_standard:
-        return df.collect().write_json().encode("utf-8")  # Fast
+def df_to_json_bytes(df: pl.LazyFrame | pl.DataFrame) -> bytes:
+    """
+    Convert DataFrame to JSON bytes.
+    """
+    if isinstance(df, pl.LazyFrame):
+        total_rows = df.select(pl.count()).collect()["count"][0]
+        lazy_df = df
     else:
-        return df_to_json_bytes_streaming(df)  # Memory-safe
+        total_rows = len(df)
+        lazy_df = df.lazy()
+
+    buffer = io.BytesIO()
+    buffer.write(b"[\n")
+
+    # Small batches for WASM
+    batch_size = 1000 if IS_PYODIDE else 5000
+    first_record = True
+
+    for offset in range(0, total_rows, batch_size):
+        batch = lazy_df.slice(offset, batch_size).collect()
+
+        for record in batch.to_dicts():
+            if not first_record:
+                buffer.write(b",\n")
+            first_record = False
+
+            # Serialize and encode to bytes
+            record_json = json.dumps(record, default=str, ensure_ascii=False)
+            buffer.write(record_json.encode("utf-8"))  # ← Explicit encoding
+
+            del record_json
+
+        del batch
+
+        if IS_PYODIDE and offset % (batch_size * 5) == 0:
+            gc.collect()
+
+    buffer.write(b"\n]")
+    result = buffer.getvalue()
+
+    del buffer
+    if IS_PYODIDE:
+        gc.collect()
+
+    return result
 
 
 @app.function
@@ -2496,7 +2539,8 @@ def export_to_rdf_turtle_batched(
 
 @app.function
 def df_to_json_bytes_batched(
-    df: pl.LazyFrame | pl.DataFrame, batch_size: int = 5000
+    df: pl.LazyFrame | pl.DataFrame,
+    batch_size: int = 5000,
 ) -> bytes:
     """
     Stream JSON export in batches - simple and effective.
@@ -2585,7 +2629,11 @@ def export_to_rdf_turtle_smart(
     else:
         # Use batched RDF for large datasets (memory-safe, full structure)
         return export_to_rdf_turtle_batched(
-            df, taxon_input, qid, filters, batch_size=1000
+            df,
+            taxon_input,
+            qid,
+            filters,
+            batch_size=1000,
         )
 
 
@@ -2625,7 +2673,8 @@ def generate_results(
     year_filter,
     year_start,
 ):
-    # Replace previous generation logic: build UI but DO NOT display inline
+    """Generate results - NO reference to display_summary."""
+
     if (not run_button.value and not search_params.auto_run) or lazy_results is None:
         download_ui = mo.Html("")
         tables_ui = mo.Html("")
@@ -2644,14 +2693,10 @@ def generate_results(
         download_ui = mo.callout(
             mo.md("No compounds match your search criteria."),
             kind="neutral",
-        ).style(
-            style={
-                "overflow-wrap": "anywhere",
-            },
-        )
+        ).style(style={"overflow-wrap": "anywhere"})
+        taxon_name = taxon_input.value
         tables_ui = mo.Html("")
         ui_is_large_dataset = False
-        taxon_name = taxon_input.value
         active_filters = {}
         csv_generate_button = None
         json_generate_button = None
@@ -2662,7 +2707,7 @@ def generate_results(
         query_hash = None
         result_hash = None
     else:
-        # Build filters for metadata (needed for hash computation)
+        # Build filters
         _formula_filt = None
         if formula_filter.value:
             _formula_filt = create_filters(
@@ -2697,7 +2742,7 @@ def generate_results(
             smiles_threshold=smiles_threshold.value,
         )
 
-        # Compute hashes for provenance using centralized helper
+        # Compute hashes
         query_hash, result_hash = compute_provenance_hashes(
             qid,
             taxon_input.value,
@@ -2705,37 +2750,13 @@ def generate_results(
             lazy_results,
         )
 
-        # Check if this is a large dataset BEFORE preparing export dataframes
-        # This avoids creating copies of data in memory for large datasets
         taxon_name = taxon_input.value
         ui_is_large_dataset = counts["n_entries"] > CONFIG["table_row_limit"]
-
-        # For large datasets, defer export dataframe preparation to download time
-        if ui_is_large_dataset:
-            # Store reference to original df - export prep happens on-demand
-            export_df = None
-            export_df_rdf = None
-        else:
-            # For small datasets, prepare export dataframes immediately
-            export_df = prepare_export_dataframe(lazy_results, include_rdf_ref=False)
-            export_df_rdf = prepare_export_dataframe(lazy_results, include_rdf_ref=True)
-
-        # Create metadata using already-built active_filters
-        metadata = create_export_metadata(
-            lazy_results if ui_is_large_dataset else export_df,
-            counts,
-            taxon_input.value,
-            qid,
-            active_filters,
-            query_hash,
-            result_hash,
-        )
-        metadata_json = json.dumps(metadata, indent=2)
-        citation_text = create_citation_text(taxon_input.value)
         # Display table data (apply row limit & depiction logic)
+        # Build display DataFrame
         total_rows = counts["n_entries"]
         if total_rows > CONFIG["table_row_limit"]:
-            limited_df = lazy_results.head(CONFIG["table_row_limit"])
+            limited_df_for_display = lazy_results.limit(CONFIG["table_row_limit"])
             display_note = mo.callout(
                 mo.md(
                     f"**Large Dataset Optimization**\n\n"
@@ -2745,102 +2766,92 @@ def generate_results(
                     f"- Export view disabled for large datasets",
                 ),
                 kind="info",
-            ).style(
-                style={
-                    "overflow-wrap": "anywhere",
-                },
-            )
+            ).style(style={"overflow-wrap": "anywhere"})
         else:
             display_note = mo.Html("")
-            limited_df = lazy_results
+            limited_df_for_display = lazy_results
 
-        # Build display DataFrame with HTML-formatted columns
-        display_df = build_display_dataframe(limited_df)
+        display_df = build_display_dataframe(limited_df_for_display)
+        del limited_df_for_display
+        if IS_PYODIDE:
+            gc.collect()
 
-        # Try the nice mo.ui.table first, fall back to df.style if it fails
-        try:
-            display_table = mo.ui.table(
-                data=display_df,
-                format_mapping={
-                    "Compound Depiction": wrap_image,
-                    "Reference DOI": wrap_html,
-                    "Compound QID": wrap_html,
-                    "Taxon QID": wrap_html,
-                    "Reference QID": wrap_html,
-                    "Statement": wrap_html,
-                },
-                selection=None,
-                page_size=CONFIG["page_size_default"],
-            )
-        except Exception:
-            display_table = display_df.style
+        base_export = prepare_export_dataframe(lazy_results, include_rdf_ref=False)
+        rdf_export = prepare_export_dataframe(lazy_results, include_rdf_ref=True)
+        # Create metadata using already-built active_filters
+        metadata = create_export_metadata(
+            lazy_results if ui_is_large_dataset else base_export,
+            counts,
+            taxon_input.value,
+            qid,
+            active_filters,
+            query_hash,
+            result_hash,
+        )
+        metadata_json = json.dumps(metadata, indent=2)
+        citation_text = create_citation_text(taxon_input.value)
+        # Delete lazy_results NOW (saves 2 GB)
+        del lazy_results
+        if IS_PYODIDE:
+            gc.collect()
 
-        # Export table: only show for smaller datasets
-        if not ui_is_large_dataset and export_df is not None:
-            try:
-                export_table_ui = mo.ui.table(
-                    data=export_df,
-                    selection=None,
-                    page_size=CONFIG["page_size_export"],
-                )
-            except Exception:
-                export_table_ui = export_df.style
-        else:
-            export_table_ui = mo.callout(
-                mo.md(
-                    f"**Large Dataset ({total_rows:,} rows)**\n\n"
-                    f"Export table view is disabled for datasets over {CONFIG['table_row_limit']} rows "
-                    f"to ensure smooth performance.\n\n"
-                    f"Use the download buttons above to get your data in CSV, JSON, or RDF format.",
-                ),
-                kind="info",
-            ).style(
-                style={
-                    "overflow-wrap": "anywhere",
-                },
-            )
-
-        # Download buttons generation
+        # Prepare generation data
         if ui_is_large_dataset:
-            # Lazy generation buttons
-            csv_generate_button = mo.ui.run_button(label="Generate CSV")
-            json_generate_button = mo.ui.run_button(label="Generate JSON")
-            rdf_generate_button = mo.ui.run_button(label="Generate RDF/Turtle")
-            buttons = [
-                csv_generate_button,
-                json_generate_button,
-                rdf_generate_button,
-            ]
-            # Store results_df ONCE - all exports share the same data reference
-            shared_generation_data = {
-                "results_df": lazy_results,
-                "taxon_input": taxon_input.value,
-                "qid": qid,
-                "active_filters": active_filters,
-                "lazy": True,
-            }
-            csv_generation_data = shared_generation_data
-            json_generation_data = shared_generation_data
-            rdf_generation_data = shared_generation_data
-            # Metadata download
-            metadata_button = mo.download(
-                data=metadata_json,
-                filename=generate_filename(
-                    taxon_input.value,
-                    "json",
-                    prefix="lotus_metadata",
-                    filters=active_filters,
-                ),
-                label="Metadata",
-                mimetype="application/json",
-            )
-            download_ui = mo.vstack(
-                [
-                    mo.md("### Download Data"),
-                    mo.hstack(buttons, gap=2, wrap=True),
-                    metadata_button,
-                ],
-            )
+            # Pre-materialize exports ONCE
+            with mo.status.spinner("Preparing exports..."):
+                # Create buttons
+                csv_generate_button = mo.ui.run_button(label="Generate CSV")
+                json_generate_button = mo.ui.run_button(label="Generate JSON")
+                rdf_generate_button = mo.ui.run_button(label="Generate RDF/Turtle")
+                buttons = [
+                    csv_generate_button,
+                    json_generate_button,
+                    rdf_generate_button,
+                ]
+                # Store materialized exports (NOT lazy_results)
+                csv_generation_data = {
+                    "export_df": base_export,
+                    "taxon_input": taxon_input.value,
+                    "qid": qid,
+                    "active_filters": active_filters,
+                    "lazy": False,  # Already materialized
+                    "is_large": True,
+                }
+                json_generation_data = {
+                    "export_df": base_export,  # Same reference, no copy
+                    "taxon_input": taxon_input.value,
+                    "qid": qid,
+                    "active_filters": active_filters,
+                    "lazy": False,
+                    "is_large": True,
+                }
+                rdf_generation_data = {
+                    "export_df": rdf_export,  # Different (has ref column)
+                    "taxon_input": taxon_input.value,
+                    "qid": qid,
+                    "active_filters": active_filters,
+                    "lazy": False,
+                    "is_large": True,
+                }
+                # Metadata download
+                metadata_button = mo.download(
+                    data=metadata_json,
+                    filename=generate_filename(
+                        taxon_input.value,
+                        "json",
+                        prefix="lotus_metadata",
+                        filters=active_filters,
+                    ),
+                    label="Metadata",
+                    mimetype="application/json",
+                )
+                download_ui = mo.vstack(
+                    [
+                        mo.md("### Download Data"),
+                        mo.hstack(buttons, gap=2, wrap=True),
+                        metadata_button,
+                    ],
+                )
         else:
             csv_generate_button = None
             json_generate_button = None
@@ -2850,13 +2861,13 @@ def generate_results(
             rdf_generation_data = None
             buttons = [
                 create_download_button(
-                    df_to_csv_bytes(export_df.collect()),
+                    df_to_csv_bytes(base_export.collect()),
                     generate_filename(taxon_input.value, "csv", filters=active_filters),
                     "CSV",
                     "text/csv",
                 ),
                 create_download_button(
-                    export_df.collect().write_json(),
+                    base_export.collect().write_json(),
                     generate_filename(
                         taxon_input.value,
                         "json",
@@ -2866,8 +2877,8 @@ def generate_results(
                     "application/json",
                 ),
                 create_download_button(
-                    export_to_rdf_turtle_smart(
-                        export_df_rdf,
+                    export_to_rdf_turtle(
+                        rdf_export,
                         taxon_input.value,
                         qid,
                         active_filters,
@@ -2889,26 +2900,53 @@ def generate_results(
                 ),
             ]
             download_ui = mo.vstack(
-                [mo.md("### Download Data"), mo.hstack(buttons, gap=2, wrap=True)],
+                [
+                    mo.md("### Download Data"),
+                    mo.hstack(buttons, gap=2, wrap=True),
+                ],
             )
+
+        # Tables UI
         tables_ui = mo.vstack(
             [
                 mo.md("### Browse Data"),
                 display_note,
                 mo.ui.tabs(
                     {
-                        "Display": display_table,
-                        "Export View": export_table_ui,
+                        "Display": mo.ui.table(
+                            data=display_df,
+                            format_mapping={
+                                "Compound Depiction": wrap_image,
+                                "Reference DOI": wrap_html,
+                                "Compound QID": wrap_html,
+                                "Taxon QID": wrap_html,
+                                "Reference QID": wrap_html,
+                                "Statement": wrap_html,
+                            },
+                            selection=None,
+                            page_size=CONFIG["page_size_default"],
+                        ),
+                        "Export View": base_export.collect(),
                         "Citation": mo.md(citation_text),
                         "Metadata": mo.md(f"```json\n{metadata_json}\n```"),
                     },
-                ).style(
-                    style={
-                        "overflow-wrap": "anywhere",
-                    },
-                ),
+                ).style(style={"overflow-wrap": "anywhere"}),
             ],
         )
+    return (
+        tables_ui,
+        download_ui,
+        taxon_name,
+        active_filters,
+        csv_generate_button,
+        json_generate_button,
+        rdf_generate_button,
+        csv_generation_data,
+        json_generation_data,
+        rdf_generation_data,
+        query_hash,
+        result_hash,
+    )
 
 
 @app.cell
@@ -2920,135 +2958,196 @@ def generate_downloads(
     rdf_generate_button,
     rdf_generation_data,
     taxon_name,
-    ui_is_large_dataset,
 ):
-    """Handle lazy generation of downloads for large datasets."""
+    """Handle downloads with proper cleanup"""
 
-    def get_export_df(generation_data, include_rdf_ref=False):
-        """Get or prepare export dataframe on-demand."""
-        if generation_data.get("lazy"):
-            # Prepare export dataframe now (deferred from results cell)
-            return prepare_export_dataframe(
-                generation_data["results_df"],
+    def get_export_and_cleanup(generation_data, include_rdf_ref=False):
+        """
+        Get export dataframe and delete source data.
+
+        Uses unique variable names to avoid conflicts.
+        """
+        if generation_data and generation_data.get("lazy"):
+            source_lazy_df = generation_data["results_df"]
+
+            # Prepare export
+            prepared_export = prepare_export_dataframe(
+                source_lazy_df,
                 include_rdf_ref=include_rdf_ref,
             )
+
+            # === DELETE source data ===
+            del source_lazy_df
+            generation_data["results_df"] = None  # Clear reference
+
+            if IS_PYODIDE:
+                gc.collect()
+
+            return prepared_export
+        elif generation_data:
+            return generation_data.get("export_df")
         else:
-            return generation_data["export_df"]
+            return None
 
-    def create_lazy_download_ui(
-        generate_button,
-        generation_data,
-        format_name: str,
-        format_ext: str,
-        data_generator_fn,
-        base_mimetype: str,
-        is_large: bool,
-        include_rdf_ref: bool = False,
+    # CSV generation
+    if (
+        csv_generation_data
+        and csv_generation_data.get("is_large")
+        and csv_generate_button
+        and csv_generate_button.value
     ):
-        """Generic lazy download UI generator."""
-        if not is_large or generate_button is None or not generate_button.value:
-            return mo.Html("")
+        with mo.status.spinner("Generating CSV..."):
+            csv_export_df = get_export_and_cleanup(csv_generation_data, False)
 
-        with mo.status.spinner(title=f"Generating {format_name} format..."):
-            # Prepare export dataframe on-demand
-            export_df = get_export_df(generation_data, include_rdf_ref)
-            raw_data = data_generator_fn(export_df, generation_data)
+            csv_raw_bytes = df_to_csv_bytes(csv_export_df)
 
-            # Convert to bytes if needed
-            raw_bytes = (
-                raw_data if isinstance(raw_data, bytes) else raw_data.encode("utf-8")
-            )
+            del csv_export_df
+            if IS_PYODIDE:
+                gc.collect()
 
-            # Compress if needed - returns (data, was_compressed)
-            compressed_data, was_compressed = compress_if_large(
-                raw_bytes,
+            csv_compressed, csv_was_compressed = compress_if_large(
+                csv_raw_bytes,
                 CONFIG["download_embed_threshold_bytes"],
             )
 
-            final_filename = generate_filename(
+            del csv_raw_bytes
+
+            csv_filename = generate_filename(
                 taxon_name,
-                format_ext,
-                filters=generation_data["active_filters"],
+                "csv" + (".gz" if csv_was_compressed else ""),
+                filters=csv_generation_data["active_filters"],
             )
-            if was_compressed:
-                final_filename += ".gz"
-            final_mimetype = "application/gzip" if was_compressed else None
 
-        mimetype = final_mimetype if final_mimetype else base_mimetype
-        display_label = f"Download {format_name}"
-
-        # Use standard mo.download
-        download_button = mo.download(
-            data=compressed_data,
-            filename=final_filename,
-            label=display_label,
-            mimetype=mimetype,
-        )
-
-        return mo.vstack(
-            [
-                mo.callout(
-                    mo.md(
-                        f"**{format_name} Ready** - {len(export_df.collect()):,} entries"
-                        + (
-                            " (compressed)"
-                            if final_mimetype == "application/gzip"
-                            else ""
-                        ),
+            csv_ui = mo.vstack(
+                [
+                    mo.callout(mo.md("**CSV Ready**"), kind="success"),
+                    mo.download(
+                        data=csv_compressed,
+                        filename=csv_filename,
+                        label="Download CSV",
+                        mimetype="application/gzip"
+                        if csv_was_compressed
+                        else "text/csv",
                     ),
-                    kind="success",
-                ).style(
-                    style={
-                        "overflow-wrap": "anywhere",
-                    },
-                ),
-                download_button,
-            ],
-        )
-
-    # CSV generation
-    csv_download_ui = create_lazy_download_ui(
-        csv_generate_button,
-        csv_generation_data,
-        "CSV",
-        "csv",
-        lambda df, d: df_to_csv_bytes(df.collect()),
-        "text/csv",
-        ui_is_large_dataset,
-    )
+                ],
+            )
+    else:
+        csv_ui = mo.Html("")
 
     # JSON generation
-    json_download_ui = create_lazy_download_ui(
-        json_generate_button,
-        json_generation_data,
-        "JSON",
-        "json",
-        lambda df, d: df_to_json_bytes_smart(df.collect()),
-        "application/json",
-        ui_is_large_dataset,
-    )
+    if (
+        json_generation_data
+        and json_generation_data.get("is_large")
+        and json_generate_button
+        and json_generate_button.value
+    ):
+        with mo.status.spinner("Generating JSON..."):
+            try:
+                json_export_df = json_generation_data.get("export_df")
 
-    # RDF generation (needs include_rdf_ref=True)
-    def _rdf_generator(df, d):
-        return export_to_rdf_turtle_smart(
-            df, d["taxon_input"], d["qid"], d["active_filters"]
-        )
+                if json_export_df is None:
+                    raise ValueError("Export data not available")
 
-    rdf_download_ui = create_lazy_download_ui(
-        rdf_generate_button,
-        rdf_generation_data,
-        "RDF/Turtle",
-        "ttl",
-        _rdf_generator,
-        "text/turtle",
-        ui_is_large_dataset,
-        include_rdf_ref=True,
-    )
+                # Generate JSON bytes (already returns bytes)
+                json_raw_bytes = df_to_json_bytes(json_export_df)
 
-    # Show all generated downloads
-    _out = mo.vstack([csv_download_ui, json_download_ui, rdf_download_ui], gap=2)
-    _out
-    return
+                # No need to delete export_df if it's shared
+                if IS_PYODIDE:
+                    gc.collect()
+
+                # Compress
+                json_compressed, json_was_compressed = compress_if_large(
+                    json_raw_bytes,
+                    CONFIG["download_embed_threshold_bytes"],
+                )
+
+                del json_raw_bytes
+
+                json_filename = generate_filename(
+                    taxon_name,
+                    "json" + (".gz" if json_was_compressed else ""),
+                    filters=json_generation_data["active_filters"],
+                )
+
+                json_ui = mo.vstack(
+                    [
+                        mo.callout(mo.md("**JSON Ready**"), kind="success"),
+                        mo.download(
+                            data=json_compressed,
+                            filename=json_filename,
+                            label="Download JSON",
+                            mimetype="application/gzip"
+                            if json_was_compressed
+                            else "application/json",
+                        ),
+                    ],
+                )
+            except Exception as e:
+                json_ui = mo.callout(
+                    mo.md(f"**JSON Generation Failed**: {str(e)}"),
+                    kind="danger",
+                )
+    else:
+        json_ui = mo.Html("")
+
+    # RDF generation
+    if (
+        rdf_generation_data
+        and rdf_generation_data.get("is_large")
+        and rdf_generate_button
+        and rdf_generate_button.value
+    ):
+        with mo.status.spinner("Generating RDF/Turtle..."):
+            rdf_export_df = get_export_and_cleanup(rdf_generation_data, True)
+
+            rdf_string = export_to_rdf_turtle(
+                rdf_export_df,
+                rdf_generation_data["taxon_input"],
+                rdf_generation_data["qid"],
+                rdf_generation_data["active_filters"],
+            )
+
+            del rdf_export_df
+            if IS_PYODIDE:
+                gc.collect()
+
+            rdf_raw_bytes = rdf_string.encode("utf-8")
+            del rdf_string
+
+            rdf_compressed, rdf_was_compressed = compress_if_large(
+                rdf_raw_bytes,
+                CONFIG["download_embed_threshold_bytes"],
+            )
+
+            del rdf_raw_bytes
+
+            rdf_filename = generate_filename(
+                taxon_name,
+                "ttl" + (".gz" if rdf_was_compressed else ""),
+                filters=rdf_generation_data["active_filters"],
+            )
+
+            rdf_ui = mo.vstack(
+                [
+                    mo.callout(mo.md("**RDF Ready**"), kind="success"),
+                    mo.download(
+                        data=rdf_compressed,
+                        filename=rdf_filename,
+                        label="Download RDF/Turtle",
+                        mimetype="application/gzip"
+                        if rdf_was_compressed
+                        else "text/turtle",
+                    ),
+                ],
+            )
+    else:
+        rdf_ui = mo.Html("")
+
+    # Final cleanup
+    if IS_PYODIDE:
+        gc.collect()
+
+    mo.vstack([csv_ui, json_ui, rdf_ui], gap=2)
 
 
 @app.cell
