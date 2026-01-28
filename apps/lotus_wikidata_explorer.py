@@ -883,7 +883,7 @@ def build_display_dataframe(df: pl.LazyFrame) -> pl.DataFrame:
     df = df.with_columns(
         pl.col("smiles")
         .map_elements(
-            lambda s: mo.image(svg_from_smiles(s)) if s else "", return_dtype=pl.Object
+            lambda s: mo.image(svg_from_smiles(s)) if s else "", return_dtype=pl.String
         )
         .alias("Compound Depiction")
     )
