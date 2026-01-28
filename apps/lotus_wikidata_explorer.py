@@ -881,7 +881,7 @@ def build_display_dataframe(df: pl.LazyFrame) -> pl.DataFrame:
     df = df.with_columns(
         pl.col("smiles")
         .map_elements(
-            lambda s: mo.image(svg_from_smiles(s)) if s else "", return_dtype=pl.String
+            lambda s: mo.image(svg_from_smiles(s)) if s else "", return_dtype=pl.Object
         )
         .alias("Compound Depiction")
     )
@@ -943,8 +943,26 @@ def build_display_dataframe(df: pl.LazyFrame) -> pl.DataFrame:
             .alias("Reference DOI"),
         ]
     )
+    df = df.select(
+        [
+            "Compound Depiction",
+            pl.col("name").alias("Compound Name"),
+            pl.col("smiles").alias("Compound SMILES"),
+            pl.col("inchikey").alias("Compound InChIKey"),
+            pl.col("mf").alias("Compound Molecular Formula"),
+            pl.col("mass").alias("Compound Mass"),
+            pl.col("taxon_name").alias("Taxon Name"),
+            pl.col("ref_title").alias("Reference Title"),
+            pl.col("pub_date").alias("Reference Date"),
+            "Reference DOI",
+            "Compound QID",
+            "Taxon QID",
+            "Reference QID",
+            pl.col("statement").alias("Statement"),
+        ]
+    )
 
-    return df
+    return df.collect()
 
 
 @app.function
