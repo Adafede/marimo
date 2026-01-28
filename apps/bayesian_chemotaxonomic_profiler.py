@@ -1443,28 +1443,40 @@ def create_markers_detail_table(
     if markers_df.is_empty():
         return pl.DataFrame()
 
-    return (
-        markers_df.sort(
-            ["taxon_name", "posterior_enrich_prob"],
-            descending=[False, True],
-        )
-        .select(
-            [
-                pl.col("taxon_name").alias("Taxon"),
-                pl.col("compound_ancestor").alias("Scaffold"),
-                pl.col("posterior_enrich_prob").round(3).alias("P(enrich)"),
-                pl.col("log2_enrichment").round(2).alias("log₂FC"),
-                pl.col("effective_sample_size").round(1).alias("ESS"),
-                pl.col("a_raw").alias("Obs"),
-            ],
-        )
-        .with_columns(
+    # Limit expensive depiction generation for very large tables
+    SAFE_PREVIEW_LIMIT = 1000
+
+    df_sorted = markers_df.sort(
+        ["taxon_name", "posterior_enrich_prob"],
+        descending=[False, True],
+    ).select(
+        [
+            pl.col("taxon_name").alias("Taxon"),
+            pl.col("compound_ancestor").alias("Scaffold"),
+            pl.col("posterior_enrich_prob").round(3).alias("P(enrich)"),
+            pl.col("log2_enrichment").round(2).alias("log₂FC"),
+            pl.col("effective_sample_size").round(1).alias("ESS"),
+            pl.col("a_raw").alias("Obs"),
+        ],
+    )
+
+    if df_sorted.height > SAFE_PREVIEW_LIMIT:
+        # For large datasets, only generate structure depictions for the first N rows
+        preview = df_sorted.limit(SAFE_PREVIEW_LIMIT).with_columns(
             [
                 pl.col("Scaffold")
                 .map_elements(lambda s: mo.image(svg_from_smiles(s)))
                 .alias("Structure"),
             ],
         )
+        return preview
+
+    return df_sorted.with_columns(
+        [
+            pl.col("Scaffold")
+            .map_elements(lambda s: mo.image(svg_from_smiles(s)))
+            .alias("Structure"),
+        ],
     )
 
 
@@ -1487,7 +1499,7 @@ def apply_config():
 @app.cell
 def load_data_wd(effective_config):
     with mo.status.spinner("Fetching data from Wikidata..."):
-        compound_taxon = parse_sparql_response(
+        compound_taxon_lf = parse_sparql_response(
             execute_with_retry(
                 query="""
                 PREFIX wdt: <http://www.wikidata.org/prop/direct/>
@@ -1501,7 +1513,7 @@ def load_data_wd(effective_config):
                 """,
                 endpoint=effective_config["qlever_endpoint"],
             ),
-        ).collect()
+        )
 
         compound_smiles = (
             parse_sparql_response(
@@ -1526,12 +1538,8 @@ def load_data_wd(effective_config):
             .drop_nulls()
             .lazy()
         )
-        _compound_ids = compound_taxon.select("compound").unique()
-        compound_smiles = compound_smiles.collect().join(
-            _compound_ids,
-            on="compound",
-            how="inner",
-        )
+        _compound_ids_lf = compound_taxon_lf.select(pl.col("compound")).unique()
+        compound_smiles = compound_smiles.join(_compound_ids_lf, on="compound", how="inner").collect()
 
         taxon_parent = parse_sparql_response(
             execute_with_retry(
@@ -1550,11 +1558,14 @@ def load_data_wd(effective_config):
         ).collect()
 
     with mo.status.spinner("Shrinking data and lineages..."):
+        focus_taxa = (
+            compound_taxon_lf.select(pl.col("taxon")).unique().collect().to_series().drop_nulls().unique()
+        )
         lineage = build_hierarchy_lineage(
             edges=taxon_parent,
             child="taxon",
             parent="taxon_parent",
-            focus=compound_taxon.get_column("taxon").unique(),
+            focus=focus_taxa,
         ).rename(
             {"ancestor": "taxon_ancestor", "distance": "taxon_distance"},
         )
@@ -1822,17 +1833,30 @@ def scaffold_compound_stats(compound_scaffold):
         scs_max = scs_counts.get_column("n_compounds").max()
 
         # Build table with thumbnails in one pipeline
-        scs_df = (
-            scs_counts.with_columns(
+        SAFE_PREVIEW_LIMIT = 800
+
+        scs_df_base = scs_counts.select(["scaffold", "n_compounds"]).rename({"n_compounds": "Compounds"})
+
+        if scs_df_base.height > SAFE_PREVIEW_LIMIT:
+            scs_preview = scs_df_base.limit(SAFE_PREVIEW_LIMIT).with_columns(
                 [
                     pl.col("scaffold")
                     .map_elements(lambda s: mo.image(svg_from_smiles(s)))
                     .alias("Structure"),
                 ],
+            ).select(["Structure", "Compounds"])
+            scs_df = scs_preview
+        else:
+            scs_df = (
+                scs_df_base.with_columns(
+                    [
+                        pl.col("scaffold")
+                        .map_elements(lambda s: mo.image(svg_from_smiles(s)))
+                        .alias("Structure"),
+                    ],
+                )
+                .select(["Structure", "Compounds"])
             )
-            .select(["Structure", "n_compounds"])
-            .rename({"n_compounds": "Compounds"})
-        )
 
     _out = mo.vstack(
         [

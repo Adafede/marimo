@@ -3144,7 +3144,6 @@ def main():
 
             if args.verbose:
                 print("Query Results:", file=sys.stderr)
-                print(f"   Total entries: {len(df):,}", file=sys.stderr)
 
                 # Show unique counts if columns exist
                 if "compound" in df.collect_schema().names():
