@@ -800,7 +800,9 @@ def query_wikidata(
 
     # Drop old columns
     columns_to_drop = ["compound_smiles_iso", "compound_smiles_conn"]
-    lazy_df = lazy_df.drop([col for col in columns_to_drop if col in lazy_df.columns])
+    lazy_df = lazy_df.drop(
+        [col for col in columns_to_drop if col in lazy_df.collect_schema().names()]
+    )
 
     # Year filter
     if year_start:
@@ -846,7 +848,7 @@ def query_wikidata(
         "statement",
         "ref",
     ]
-    missing = [col for col in required if col not in lazy_df.columns]
+    missing = [col for col in required if col not in lazy_df.collect_schema().names()]
     if missing:
         lazy_df = lazy_df.with_columns([pl.lit(None).alias(col) for col in missing])
 
@@ -986,7 +988,7 @@ def prepare_export_dataframe(
     ]
 
     # Statement
-    if "statement" in lazy_df.columns:
+    if "statement" in lazy_df.collect_schema().names():
         exprs.append(
             pl.col("statement")
             .str.replace(WIKIDATA_STATEMENT_PREFIX, "", literal=True)
@@ -994,7 +996,7 @@ def prepare_export_dataframe(
         )
 
     # RDF ref
-    if include_rdf_ref and "ref" in lazy_df.columns:
+    if include_rdf_ref and "ref" in lazy_df.collect_schema().names():
         exprs.append(pl.col("ref"))
 
     return lazy_df.select(exprs)
@@ -1178,9 +1180,11 @@ def compute_provenance_hashes(
 
     # Result hash - streaming approach for memory efficiency
     result_hasher = hashlib.sha256()
-    compound_col = "compound_qid" if "compound_qid" in df.columns else "compound"
+    compound_col = (
+        "compound_qid" if "compound_qid" in df.collect_schema().names() else "compound"
+    )
 
-    if compound_col in df.columns:
+    if compound_col in df.collect_schema().names():
         try:
             # Get unique compound IDs as a sorted series (no intermediate list)
             unique_ids = (
@@ -3113,16 +3117,16 @@ def main():
                 print(f"   Total entries: {len(df):,}", file=sys.stderr)
 
                 # Show unique counts if columns exist
-                if "compound" in df.columns:
+                if "compound" in df.collect_schema().names():
                     unique_compounds = df.select(pl.col("compound")).n_unique()
                     print(
                         f"   Unique compounds: {unique_compounds:,}",
                         file=sys.stderr,
                     )
-                if "taxon" in df.columns:
+                if "taxon" in df.collect_schema().names():
                     unique_taxa = df.select(pl.col("taxon")).n_unique()
                     print(f"   Unique taxa: {unique_taxa:,}", file=sys.stderr)
-                if "reference" in df.columns:
+                if "reference" in df.collect_schema().names():
                     unique_refs = df.select(pl.col("reference")).n_unique()
                     print(
                         f"   Unique references: {unique_refs:,}",
