@@ -881,89 +881,9 @@ def build_display_dataframe(df: pl.LazyFrame) -> pl.DataFrame:
     else:
         df = df.collect()
 
-    # Generate molecule images (small Python loop)
-    df = df.with_columns(
-        pl.col("smiles")
-        .map_elements(
-            lambda s: mo.image(svg_from_smiles(s)) if s else "",
-            return_dtype=pl.Object,
-        )
-        .alias("Compound Depiction"),
-    )
-
-    # Add vectorized HTML columns in small groups
-    df = df.with_columns(
-        [
-            # First batch
-            pl.when(pl.col("compound").is_not_null())
-            .then(
-                pl.format(
-                    '<a href="https://scholia.toolforge.org/Q{}" style="color:{};">Q{}</a>',
-                    pl.col("compound"),
-                    pl.lit(CONFIG["color_wikidata_red"]),
-                    pl.col("compound"),
-                ),
-            )
-            .otherwise(pl.lit(""))
-            .alias("Compound QID"),
-            pl.when(pl.col("taxon").is_not_null())
-            .then(
-                pl.format(
-                    '<a href="https://scholia.toolforge.org/Q{}" style="color:{};">Q{}</a>',
-                    pl.col("taxon"),
-                    pl.lit(CONFIG["color_wikidata_green"]),
-                    pl.col("taxon"),
-                ),
-            )
-            .otherwise(pl.lit(""))
-            .alias("Taxon QID"),
-        ],
-    )
-
-    # Add remaining columns in a second batch
-    df = df.with_columns(
-        [
-            pl.when(pl.col("reference").is_not_null())
-            .then(
-                pl.format(
-                    '<a href="https://scholia.toolforge.org/Q{}" style="color:{};">Q{}</a>',
-                    pl.col("reference"),
-                    pl.lit(CONFIG["color_wikidata_blue"]),
-                    pl.col("reference"),
-                ),
-            )
-            .otherwise(pl.lit(""))
-            .alias("Reference QID"),
-            # DOI links
-            pl.when(pl.col("ref_doi").is_not_null() & (pl.col("ref_doi") != ""))
-            .then(
-                pl.format(
-                    '<a href="https://doi.org/{}" style="color:{};">{}</a>',
-                    pl.col("ref_doi"),
-                    pl.lit(CONFIG["color_hyperlink"]),
-                    pl.col("ref_doi"),
-                ),
-            )
-            .otherwise(pl.lit(""))
-            .alias("Reference DOI"),
-            # statement links
-            pl.when(pl.col("statement").is_not_null() & (pl.col("statement") != ""))
-            .then(
-                pl.format(
-                    '<a href="https://www.wikidata.org/entity/statement/{}" '
-                    'style="color:{};" target="_blank">{}</a>',
-                    pl.col("statement").str.split("/").list.last(),
-                    pl.lit(CONFIG["color_hyperlink"]),
-                    pl.col("statement").str.split("/").list.last(),
-                ),
-            )
-            .otherwise(pl.lit(""))
-            .alias("Statement"),
-        ],
-    )
     df = df.select(
         [
-            "Compound Depiction",
+            pl.col("smiles").alias("Compound Depiction"),  # keep raw SMILES
             pl.col("name").alias("Compound Name"),
             pl.col("smiles").alias("Compound SMILES"),
             pl.col("inchikey").alias("Compound InChIKey"),
@@ -972,12 +892,12 @@ def build_display_dataframe(df: pl.LazyFrame) -> pl.DataFrame:
             pl.col("taxon_name").alias("Taxon Name"),
             pl.col("ref_title").alias("Reference Title"),
             pl.col("pub_date").alias("Reference Date"),
-            "Reference DOI",
-            "Compound QID",
-            "Taxon QID",
-            "Reference QID",
-            "Statement",
-        ],
+            pl.col("ref_doi").alias("Reference DOI"),
+            pl.col("compound").alias("Compound QID"),
+            pl.col("taxon").alias("Taxon QID"),
+            pl.col("reference").alias("Reference QID"),
+            pl.col("statement").alias("Statement"),
+        ]
     )
 
     return df
@@ -2906,6 +2826,40 @@ def generate_results(
                 ],
             )
 
+        def wrap_image2(smiles: str):
+            if not smiles:
+                return ""
+            svg = svg_from_smiles(smiles)
+            return mo.image(svg)
+
+        def wrap_qid(qid: str, color: str):
+            if not qid:
+                return ""
+            url = f"https://scholia.toolforge.org/Q{qid}"
+            return mo.Html(
+                f'<a href="{url}" style="color:{color};" target="_blank">Q{qid}</a>'
+            )
+
+        def wrap_doi(doi: str, color: str):
+            if not doi:
+                return ""
+            url = f"https://doi.org/{doi}"
+            return mo.Html(
+                f'<a href="{url}" style="color:{color};" target="_blank">{doi}</a>'
+            )
+
+        def wrap_statement(statement: str):
+            if not statement:
+                return ""
+            # Extract bare ID from URL or keep as-is
+            statement_id = statement.split("/")[-1]
+            url = (
+                f"https://www.wikidata.org/entity/statement/{statement_id}"
+            )
+            return mo.Html(
+                f'<a href="{url}" style="color:{CONFIG["color_hyperlink"]};" target="_blank">{statement_id}</a>'
+            )
+
         # Tables UI
         tables_ui = mo.vstack(
             [
@@ -2916,12 +2870,20 @@ def generate_results(
                         "Display": mo.ui.table(
                             data=display_df,
                             format_mapping={
-                                "Compound Depiction": wrap_image,
-                                "Reference DOI": wrap_html,
-                                "Compound QID": wrap_html,
-                                "Taxon QID": wrap_html,
-                                "Reference QID": wrap_html,
-                                "Statement": wrap_html,
+                                "Compound Depiction": wrap_image2,
+                                "Compound QID": lambda x: wrap_qid(
+                                    x, CONFIG["color_wikidata_red"]
+                                ),
+                                "Taxon QID": lambda x: wrap_qid(
+                                    x, CONFIG["color_wikidata_green"]
+                                ),
+                                "Reference QID": lambda x: wrap_qid(
+                                    x, CONFIG["color_wikidata_blue"]
+                                ),
+                                "Reference DOI": lambda x: wrap_doi(
+                                    x, CONFIG["color_hyperlink"]
+                                ),
+                                "Statement": wrap_statement,
                             },
                             selection=None,
                             page_size=CONFIG["page_size_default"],
