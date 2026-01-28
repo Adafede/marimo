@@ -44,7 +44,6 @@ with app.setup:
     import sys
     import urllib.request
     import urllib.parse
-    from contextlib import contextmanager
     from dataclasses import dataclass, field
     from datetime import datetime
     from rdflib import Graph, Literal, URIRef, BNode
@@ -757,88 +756,19 @@ def query_wikidata(
     smiles: str | None = None,
     smiles_search_type: str = "substructure",
     smiles_threshold: float = 0.8,
-) -> pl.DataFrame:
+    endpoint: str = CONFIG["qlever_endpoint"],
+) -> pl.LazyFrame:
     """
-    Query Wikidata for compounds associated to taxa using multiple search strategies.
-
-    Supports three search modes:
-    1. Taxon-only: Find all compounds in a taxonomic group
-    2. SMILES-only: Find compounds by chemical structure (SACHEM)
-    3. Combined: Find structures within a specific taxonomic group
+    Query Wikidata and return LazyFrame (NOT materialized).
     """
-
-    @contextmanager
-    def managed_sparql_query(query: str, endpoint: str, timeout: int = 120):
-        """
-        Execute SPARQL query with guaranteed cleanup.
-
-        Ensures CSV bytes are freed immediately after parsing.
-        """
-        csv_bytes = None
-        try:
-            client = Client(endpoint=endpoint, timeout=timeout)
-            csv_bytes = client.query_csv(query=query)
-            yield csv_bytes
-        finally:
-            if csv_bytes:
-                del csv_bytes
-
-    def optimize_dataframe_types(df: pl.DataFrame) -> pl.DataFrame:
-        """
-        Optimize DataFrame memory footprint.
-
-        Optimizations:
-        - Wikidata QIDs: Int64 → Int32 (50% saving)
-        - Repeated strings: → Categorical (70% saving)
-        - Mass: Float64 → Float32 (sufficient precision)
-        """
-        if df.is_empty():
-            return df
-        optimizations = []
-        # Wikidata QID columns: Int64 → Int32
-        for col in ["compound", "taxon", "reference"]:
-            if col in df.columns:
-                if df[col].dtype == pl.Int64:
-                    max_val = df[col].max()
-                    if max_val and max_val < 2**31:
-                        optimizations.append(pl.col(col).cast(pl.Int32).alias(col))
-                elif df[col].dtype == pl.String:
-                    # Handle string QIDs (extract number and cast to Int32)
-                    optimizations.append(
-                        pl.col(col)
-                        .str.replace("Q", "")
-                        .cast(pl.Int32, strict=False)
-                        .alias(col),
-                    )
-        # Categorical encoding for repeated strings
-        for col in ["taxon_name", "ref_title", "name"]:
-            if col in df.columns and df[col].dtype == pl.Utf8:
-                n_unique = df[col].n_unique()
-                n_total = len(df)
-                # If < 50% unique values, use categorical
-                if n_unique < n_total * 0.5 and n_unique < 10000:
-                    optimizations.append(pl.col(col).cast(pl.Categorical).alias(col))
-        # Mass as Float32 (sufficient precision for molecular mass)
-        if "mass" in df.columns:
-            if df["mass"].dtype == pl.Float64:
-                optimizations.append(pl.col("mass").cast(pl.Float32).alias("mass"))
-        if optimizations:
-            return df.with_columns(optimizations)
-        return df
-
-    # Input validation
+    # Validation
     if smiles_search_type not in ("substructure", "similarity"):
-        raise ValueError(
-            f"Invalid smiles_search_type: '{smiles_search_type}'. "
-            f"Must be 'substructure' or 'similarity'",
-        )
+        raise ValueError(f"Invalid smiles_search_type: '{smiles_search_type}'")
 
     if not (0.0 <= smiles_threshold <= 1.0):
-        raise ValueError(
-            f"Invalid smiles_threshold: {smiles_threshold}. Must be 0.0-1.0",
-        )
+        raise ValueError(f"Invalid smiles_threshold: {smiles_threshold}")
 
-    # Build query based on search mode
+    # Build query
     if smiles:
         query = query_sachem(
             escaped_smiles=validate_and_escape(smiles),
@@ -851,117 +781,104 @@ def query_wikidata(
     else:
         query = query_compounds_by_taxon(qid)
 
-    # Execute with managed context (guaranteed cleanup)
-    with managed_sparql_query(query, CONFIG["qlever_endpoint"]) as csv_bytes:
-        # Early return for empty results
-        if not csv_bytes or csv_bytes.strip() == b"":
-            return pl.DataFrame()
+    # Execute query
+    csv_bytes = execute_with_retry(query, endpoint)
 
-        # Parse to lazy frame (no materialization yet)
-        lazy_df = pl.scan_csv(
-            io.BytesIO(csv_bytes),
-            low_memory=True,
-            rechunk=False,
-        )
+    if not csv_bytes or csv_bytes.strip() == b"":
+        return pl.LazyFrame()
 
-        # Check if empty
-        if lazy_df.collect().is_empty():
-            return pl.DataFrame()
-
-        # Re-scan for pipeline (collect above was just for check)
-        lazy_df = pl.scan_csv(
-            io.BytesIO(csv_bytes),
-            low_memory=True,
-            rechunk=False,
-        )
-
-    # Build complete transformation pipeline (all lazy)
-    lazy_df = (
-        lazy_df
-        # Rename columns
-        .rename(
-            {
-                "compoundLabel": "name",
-                "compound_inchikey": "inchikey",
-                "ref_qid": "reference",
-                "ref_date": "pub_date",
-                "compound_mass": "mass",
-                "compound_formula": "mf",
-            },
-        )
-        # Combine SMILES columns (prefer isomeric over connectivity)
-        .with_columns(
-            [
-                pl.coalesce(["compound_smiles_iso", "compound_smiles_conn"]).alias(
-                    "smiles",
-                ),
-            ],
-        )
-        # DOI extraction (from URL to raw DOI)
-        .with_columns(
-            [
-                pl.when(pl.col("ref_doi").str.starts_with("http"))
-                .then(pl.col("ref_doi").str.split("doi.org/").list.last())
-                .otherwise(pl.col("ref_doi"))
-                .alias("ref_doi"),
-            ],
-        )
-        # Date parsing
-        .with_columns(
-            [
-                pl.when(pl.col("pub_date").is_not_null() & (pl.col("pub_date") != ""))
-                .then(
-                    pl.col("pub_date")
-                    .str.strptime(
-                        pl.Datetime,
-                        format="%Y-%m-%dT%H:%M:%SZ",
-                        strict=False,
-                    )
-                    .dt.date(),
-                )
-                .otherwise(None)
-                .alias("pub_date"),
-            ],
-        )
-        # Mass to float32 (sufficient precision)
-        .with_columns([pl.col("mass").cast(pl.Float32, strict=False)])
-        # Drop old SMILES columns
-        .drop(["compound_smiles_iso", "compound_smiles_conn"])
+    # Parse to LazyFrame (NO materialization)
+    lazy_df = pl.scan_csv(
+        io.BytesIO(csv_bytes),
+        low_memory=True,
+        rechunk=False,
     )
 
-    # Apply filters lazily (before materialization)
-    if year_start or year_end:
-        year_conditions = []
-        if year_start:
-            year_conditions.append(pl.col("pub_date").dt.year() >= year_start)
-        if year_end:
-            year_conditions.append(pl.col("pub_date").dt.year() <= year_end)
-        if year_conditions:
-            lazy_df = lazy_df.filter(reduce(and_, year_conditions))
+    # Rename
+    lazy_df = lazy_df.rename(
+        {
+            "compoundLabel": "name",
+            "compound_inchikey": "inchikey",
+            "ref_qid": "reference",
+            "ref_date": "pub_date",
+            "compound_mass": "mass",
+            "compound_formula": "mf",
+        },
+    )
 
-    if mass_min or mass_max:
-        mass_conditions = []
-        if mass_min:
-            mass_conditions.append(pl.col("mass") >= mass_min)
-        if mass_max:
-            mass_conditions.append(pl.col("mass") <= mass_max)
-        if mass_conditions:
-            lazy_df = lazy_df.filter(reduce(and_, mass_conditions))
+    # Combine SMILES
+    lazy_df = lazy_df.with_columns(
+        [
+            pl.coalesce(["compound_smiles_iso", "compound_smiles_conn"]).alias(
+                "smiles",
+            ),
+        ],
+    )
 
+    # DOI extraction
+    lazy_df = lazy_df.with_columns(
+        [
+            pl.when(pl.col("ref_doi").str.starts_with("http"))
+            .then(pl.col("ref_doi").str.split("doi.org/").list.last())
+            .otherwise(pl.col("ref_doi"))
+            .alias("ref_doi"),
+        ],
+    )
+
+    # Date parsing
+    lazy_df = lazy_df.with_columns(
+        [
+            pl.when(pl.col("pub_date").is_not_null() & (pl.col("pub_date") != ""))
+            .then(
+                pl.col("pub_date")
+                .str.strptime(pl.Datetime, format="%Y-%m-%dT%H:%M:%SZ", strict=False)
+                .dt.date(),
+            )
+            .otherwise(None)
+            .alias("pub_date"),
+        ],
+    )
+
+    # Mass to Float32
+    lazy_df = lazy_df.with_columns(
+        [
+            pl.col("mass").cast(pl.Float32, strict=False),
+        ],
+    )
+
+    # Drop old columns
+    columns_to_drop = ["compound_smiles_iso", "compound_smiles_conn"]
+    lazy_df = lazy_df.drop([col for col in columns_to_drop if col in lazy_df.columns])
+
+    # Year filter
+    if year_start:
+        lazy_df = lazy_df.filter(pl.col("pub_date").dt.year() >= year_start)
+    if year_end:
+        lazy_df = lazy_df.filter(pl.col("pub_date").dt.year() <= year_end)
+
+    # Mass filter
+    if mass_min:
+        lazy_df = lazy_df.filter(pl.col("mass") >= mass_min)
+    if mass_max:
+        lazy_df = lazy_df.filter(pl.col("mass") <= mass_max)
+
+    # Formula filter
     if (
         formula_filters
         and hasattr(formula_filters, "is_active")
         and formula_filters.is_active()
     ):
         lazy_df = lazy_df.filter(
-            pl.col("mf").map_elements(
-                lambda f: match_filters(f or "", formula_filters),
-                return_dtype=pl.Boolean,
+            pl.col("mf").map_batches(
+                lambda s: s.map_elements(
+                    lambda f: match_filters(f or "", formula_filters),
+                    return_dtype=pl.Boolean,
+                ),
             ),
         )
 
-    # Add missing columns if needed (before materialization)
-    required_columns = [
+    # Add missing columns (lazy)
+    required = [
         "compound",
         "name",
         "inchikey",
@@ -977,26 +894,22 @@ def query_wikidata(
         "statement",
         "ref",
     ]
-    existing = lazy_df.columns
-    missing = [col for col in required_columns if col not in existing]
+    missing = [col for col in required if col not in lazy_df.columns]
     if missing:
         lazy_df = lazy_df.with_columns([pl.lit(None).alias(col) for col in missing])
 
-    # SINGLE MATERIALIZATION: deduplicate and sort
-    df = (
-        lazy_df.unique(subset=["compound", "taxon", "reference"], keep="first")
-        .sort("name")
-        .collect()
-    )
+    # Deduplicate and sort
+    lazy_df = lazy_df.unique(
+        subset=["compound", "taxon", "reference"],
+        keep="first",
+    ).sort("name")
 
-    # Optimize types after collection
-    df = optimize_dataframe_types(df)
-
-    return df
+    # Return LazyFrame - NO .collect()!
+    return lazy_df
 
 
 @app.function
-def build_display_dataframe(df: pl.DataFrame) -> pl.DataFrame:
+def build_display_dataframe(df: pl.LazyFrame) -> pl.DataFrame:
     """Build display DataFrame with HTML-formatted columns."""
 
     # Pre-compute colors (avoid repeated dictionary lookups)
@@ -1004,6 +917,11 @@ def build_display_dataframe(df: pl.DataFrame) -> pl.DataFrame:
     color_taxon = CONFIG["color_wikidata_green"]
     color_ref = CONFIG["color_wikidata_blue"]
     color_link = CONFIG["color_hyperlink"]
+    limit = CONFIG["table_row_limit"]
+
+    # Limit (lazy)
+    if limit:
+        lazy_df = df.head(limit)
 
     # Wrapper functions that capture colors via closure
     def _structure_img(smiles):
@@ -1011,12 +929,14 @@ def build_display_dataframe(df: pl.DataFrame) -> pl.DataFrame:
         # return html_from_image(svg_from_mol(mol_from_smiles(smiles))) if smiles else ""
         return html_from_image(svg_from_smiles(smiles)) if smiles else ""
 
-    return df.select(
+    # Build display (all lazy!)
+    display_lazy = lazy_df.select(
         [
-            # Structure image (unavoidable map_elements - external function)
+            # Image URL
             pl.col("smiles")
             .map_elements(_structure_img, return_dtype=pl.String)
             .alias("Compound Depiction"),
+            # Simple columns
             pl.col("name").alias("Compound Name"),
             pl.col("smiles").alias("Compound SMILES"),
             pl.col("inchikey").alias("Compound InChIKey"),
@@ -1025,7 +945,8 @@ def build_display_dataframe(df: pl.DataFrame) -> pl.DataFrame:
             pl.col("taxon_name").alias("Taxon Name"),
             pl.col("ref_title").alias("Reference Title"),
             pl.col("pub_date").alias("Reference Date"),
-            pl.when(pl.col("ref_doi").is_not_null())
+            # Vectorized HTML links
+            pl.when(pl.col("ref_doi").is_not_null() & (pl.col("ref_doi") != ""))
             .then(
                 pl.lit('<a href="https://doi.org/')
                 + pl.col("ref_doi")
@@ -1035,28 +956,37 @@ def build_display_dataframe(df: pl.DataFrame) -> pl.DataFrame:
             )
             .otherwise(pl.lit(""))
             .alias("Reference DOI"),
-            (
+            pl.when(pl.col("compound").is_not_null())
+            .then(
                 pl.lit('<a href="https://scholia.toolforge.org/Q')
                 + pl.col("compound").cast(pl.Utf8)
                 + pl.lit(f'" target="_blank" style="color:{color_compound};">Q')
                 + pl.col("compound").cast(pl.Utf8)
-                + pl.lit("</a>")
-            ).alias("Compound QID"),
-            (
+                + pl.lit("</a>"),
+            )
+            .otherwise(pl.lit(""))
+            .alias("Compound QID"),
+            pl.when(pl.col("taxon").is_not_null())
+            .then(
                 pl.lit('<a href="https://scholia.toolforge.org/Q')
                 + pl.col("taxon").cast(pl.Utf8)
                 + pl.lit(f'" target="_blank" style="color:{color_taxon};">Q')
                 + pl.col("taxon").cast(pl.Utf8)
-                + pl.lit("</a>")
-            ).alias("Taxon QID"),
-            (
+                + pl.lit("</a>"),
+            )
+            .otherwise(pl.lit(""))
+            .alias("Taxon QID"),
+            pl.when(pl.col("reference").is_not_null())
+            .then(
                 pl.lit('<a href="https://scholia.toolforge.org/Q')
                 + pl.col("reference").cast(pl.Utf8)
                 + pl.lit(f'" target="_blank" style="color:{color_ref};">Q')
                 + pl.col("reference").cast(pl.Utf8)
-                + pl.lit("</a>")
-            ).alias("Reference QID"),
-            pl.when(pl.col("statement").is_not_null())
+                + pl.lit("</a>"),
+            )
+            .otherwise(pl.lit(""))
+            .alias("Reference QID"),
+            pl.when(pl.col("statement").is_not_null() & (pl.col("statement") != ""))
             .then(
                 pl.lit('<a href="')
                 + pl.col("statement")
@@ -1069,22 +999,21 @@ def build_display_dataframe(df: pl.DataFrame) -> pl.DataFrame:
         ],
     )
 
+    return display_lazy.collect()
+
 
 @app.function
 def prepare_export_dataframe(
-    df: pl.DataFrame,
+    lazy_df: pl.LazyFrame,
     include_rdf_ref: bool = False,
 ) -> pl.DataFrame:
     """
-    Prepare dataframe for export with cleaned QIDs and selected columns.
+    Prepare export transformations lazily.
 
-    Args:
-        df: Input dataframe (not mutated).
-        include_rdf_ref: If True, include ref URI for RDF export.
-                         Statement is always included if present.
+    Returns LazyFrame ready for .write_csv()/.write_json().
+    Those methods call .collect() internally.
     """
-    # Build all expressions in a single select (no intermediate DataFrame)
-    select_exprs = [
+    exprs = [
         pl.col("name").alias("compound_name"),
         pl.col("smiles").alias("compound_smiles"),
         pl.col("inchikey").alias("compound_inchikey"),
@@ -1094,36 +1023,35 @@ def prepare_export_dataframe(
         pl.col("ref_title").alias("reference_title"),
         pl.col("ref_doi").alias("reference_doi"),
         pl.col("pub_date").alias("reference_date"),
-        # QID extractions inline
-        (pl.concat_str([pl.lit("Q"), pl.col("compound").cast(pl.Utf8)])).alias(
+        # QIDs (lazy concat)
+        pl.concat_str([pl.lit("Q"), pl.col("compound").cast(pl.Utf8)]).alias(
             "compound_qid",
         ),
-        (pl.concat_str([pl.lit("Q"), pl.col("taxon").cast(pl.Utf8)])).alias(
-            "taxon_qid",
-        ),
-        (pl.concat_str([pl.lit("Q"), pl.col("reference").cast(pl.Utf8)])).alias(
+        pl.concat_str([pl.lit("Q"), pl.col("taxon").cast(pl.Utf8)]).alias("taxon_qid"),
+        pl.concat_str([pl.lit("Q"), pl.col("reference").cast(pl.Utf8)]).alias(
             "reference_qid",
         ),
     ]
 
-    # Add statement ID if present
-    if "statement" in df.columns:
-        select_exprs.append(
+    # Statement
+    if "statement" in lazy_df.columns:
+        exprs.append(
             pl.col("statement")
             .str.replace(WIKIDATA_STATEMENT_PREFIX, "", literal=True)
             .alias("statement_id"),
         )
 
-    # Add ref URI for RDF export if requested
-    if include_rdf_ref and "ref" in df.columns:
-        select_exprs.append(pl.col("ref"))
+    # RDF ref
+    if include_rdf_ref and "ref" in lazy_df.columns:
+        exprs.append(pl.col("ref"))
 
-    return df.select(select_exprs)
+    return lazy_df.select(exprs).collect()
 
 
 @app.function
 def create_export_metadata(
     df: pl.DataFrame,
+    counts: dict,
     taxon_input: str,
     qid: str,
     filters: dict[str, Any],
@@ -1204,7 +1132,7 @@ def create_export_metadata(
             }
             for f in ["text/csv", "application/json", "text/turtle"]
         ],
-        "numberOfRecords": len(df),
+        "numberOfRecords": counts["n_entries"],
         "variablesMeasured": [
             "compound_name",
             "compound_smiles",
@@ -1278,7 +1206,7 @@ def compute_provenance_hashes(
     qid: str | None,
     taxon_input: str | None,
     filters: dict[str, Any] | None,
-    df: pl.DataFrame,
+    df: pl.LazyFrame,
 ) -> tuple[str, str]:
     """
     Compute query and result hashes for provenance tracking.
@@ -1300,7 +1228,7 @@ def compute_provenance_hashes(
     result_hasher = hashlib.sha256()
     compound_col = "compound_qid" if "compound_qid" in df.columns else "compound"
 
-    if compound_col in df.columns and not df.is_empty():
+    if compound_col in df.columns:
         try:
             # Get unique compound IDs as a sorted series (no intermediate list)
             unique_ids = (
@@ -1313,6 +1241,7 @@ def compute_provenance_hashes(
                 .drop_nulls()
                 .unique()
                 .sort()
+                .collect()
             )
             # Stream through values without creating full string
             for i, val in enumerate(unique_ids):
@@ -2053,9 +1982,10 @@ def launch_query(
     year_filter,
     year_start,
 ):
-    # Auto-run if URL parameters were detected, or if run button was clicked
+    """Execute query and return LazyFrame (NOT materialized)."""
+    # Auto-run if URL parameters or button clicked
     if not run_button.value and not search_params.auto_run:
-        results_df = None
+        lazy_results = None
         qid = None
         taxon_warning = None
     else:
@@ -2076,7 +2006,7 @@ def launch_query(
         # Initialize all return values for all paths
         qid = None
         taxon_warning = None
-        results_df = None
+        lazy_results = None
 
         if use_smiles and use_taxon:
             # Both present - search by structure within taxon
@@ -2119,12 +2049,6 @@ def launch_query(
                     )
 
             try:
-                y_start = year_start.value if year_filter.value else None
-                y_end = year_end.value if year_filter.value else None
-                m_min = mass_min.value if mass_filter.value else None
-                m_max = mass_max.value if mass_filter.value else None
-
-                # Build formula filters using factory function (DRY)
                 formula_filt = None
                 if formula_filter.value:
                     formula_filt = create_filters(
@@ -2146,14 +2070,12 @@ def launch_query(
                         br_state=br_state.value,
                         i_state=i_state.value,
                     )
-
-                # Execute query based on what inputs are provided
-                results_df = query_wikidata(
+                lazy_results = query_wikidata(
                     qid=qid if qid else "",
-                    year_start=y_start,
-                    year_end=y_end,
-                    mass_min=m_min,
-                    mass_max=m_max,
+                    year_start=year_start.value if year_filter.value else None,
+                    year_end=year_end.value if year_filter.value else None,
+                    mass_min=mass_min.value if mass_filter.value else None,
+                    mass_max=mass_max.value if mass_filter.value else None,
                     formula_filters=formula_filt,
                     smiles=smiles_str,
                     smiles_search_type=smiles_search_type.value,
@@ -2172,8 +2094,52 @@ def launch_query(
                     ),
                 )
         elapsed = round(time.time() - start_time, 2)
-        _ = mo.md(f"Query completed in **{elapsed}s**.")
-    return qid, results_df, taxon_warning
+        _ = mo.md(f"Query executed in **{elapsed}s**")
+
+    return qid, lazy_results, taxon_warning
+
+
+@app.function
+def get_counts(lazy_df: pl.LazyFrame) -> dict:
+    """
+    Get counts without materializing full DataFrame.
+
+    Only materializes 1 row with aggregations.
+    """
+
+    counts_lazy = lazy_df.select(
+        [
+            pl.col("compound").n_unique().alias("n_compounds"),
+            pl.col("taxon").n_unique().alias("n_taxa"),
+            pl.col("reference").n_unique().alias("n_refs"),
+            pl.count().alias("n_entries"),
+        ],
+    )
+
+    # Materialize ONLY the counts (1 row)
+    counts_df = counts_lazy.collect()
+
+    if counts_df.is_empty():
+        return {"n_compounds": 0, "n_taxa": 0, "n_refs": 0, "n_entries": 0}
+
+    return {
+        "n_compounds": int(counts_df["n_compounds"][0]),
+        "n_taxa": int(counts_df["n_taxa"][0]),
+        "n_refs": int(counts_df["n_refs"][0]),
+        "n_entries": int(counts_df["n_entries"][0]),
+    }
+
+
+@app.cell
+def get_counts_lazy(lazy_results):
+    """Get counts without materializing full dataset."""
+
+    if lazy_results is None:
+        counts = None
+    else:
+        # *** ONLY MATERIALIZES 1 ROW (4 integers) ***
+        counts = get_counts(lazy_results)
+    return counts
 
 
 @app.cell
@@ -2201,7 +2167,8 @@ def display_summary(
     qid,
     query_hash,
     result_hash,
-    results_df,
+    lazy_results,
+    counts,
     run_button,
     s_max,
     s_min,
@@ -2216,9 +2183,9 @@ def display_summary(
     year_start,
 ):
     # Display summary if either button was clicked or auto-run from URL
-    if (not run_button.value and not search_params.auto_run) or results_df is None:
+    if (not run_button.value and not search_params.auto_run) or lazy_results is None:
         summary_and_downloads = mo.Html("")
-    elif len(results_df) == 0:
+    elif counts["n_compounds"] == 0:
         # Show no compounds message, and taxon warning if present
         parts = []
         if taxon_warning:
@@ -2259,10 +2226,10 @@ def display_summary(
             )
         summary_and_downloads = mo.vstack(parts) if len(parts) > 1 else parts[0]
     else:
-        n_compounds = results_df.n_unique(subset=["compound"])
-        n_taxa = results_df.n_unique(subset=["taxon"])
-        n_refs = results_df.n_unique(subset=["reference"])
-        n_entries = len(results_df)
+        n_compounds = counts["n_compounds"]
+        n_taxa = counts["n_taxa"]
+        n_refs = counts["n_refs"]
+        n_entries = counts["n_entries"]
 
         # Results header (on its own line)
         results_header = mo.md("## Results")
@@ -2431,7 +2398,8 @@ def generate_results(
     p_max,
     p_min,
     qid,
-    results_df,
+    lazy_results,
+    counts,
     run_button,
     s_max,
     s_min,
@@ -2445,7 +2413,7 @@ def generate_results(
     year_start,
 ):
     # Replace previous generation logic: build UI but DO NOT display inline
-    if (not run_button.value and not search_params.auto_run) or results_df is None:
+    if (not run_button.value and not search_params.auto_run) or lazy_results is None:
         download_ui = mo.Html("")
         tables_ui = mo.Html("")
         ui_is_large_dataset = False
@@ -2459,7 +2427,7 @@ def generate_results(
         rdf_generation_data = None
         query_hash = None
         result_hash = None
-    elif len(results_df) == 0:
+    elif counts["n_entries"] == 0:
         download_ui = mo.callout(
             mo.md("No compounds match your search criteria."),
             kind="neutral",
@@ -2521,13 +2489,13 @@ def generate_results(
             qid,
             taxon_input.value,
             active_filters,
-            results_df,
+            lazy_results,
         )
 
         # Check if this is a large dataset BEFORE preparing export dataframes
         # This avoids creating copies of data in memory for large datasets
         taxon_name = taxon_input.value
-        ui_is_large_dataset = len(results_df) > CONFIG["table_row_limit"]
+        ui_is_large_dataset = counts["n_entries"] > CONFIG["table_row_limit"]
 
         # For large datasets, defer export dataframe preparation to download time
         if ui_is_large_dataset:
@@ -2536,12 +2504,13 @@ def generate_results(
             export_df_rdf = None
         else:
             # For small datasets, prepare export dataframes immediately
-            export_df = prepare_export_dataframe(results_df, include_rdf_ref=False)
-            export_df_rdf = prepare_export_dataframe(results_df, include_rdf_ref=True)
+            export_df = prepare_export_dataframe(lazy_results, include_rdf_ref=False)
+            export_df_rdf = prepare_export_dataframe(lazy_results, include_rdf_ref=True)
 
         # Create metadata using already-built active_filters
         metadata = create_export_metadata(
-            results_df if ui_is_large_dataset else export_df,
+            lazy_results if ui_is_large_dataset else export_df,
+            counts,
             taxon_input.value,
             qid,
             active_filters,
@@ -2551,9 +2520,9 @@ def generate_results(
         metadata_json = json.dumps(metadata, indent=2)
         citation_text = create_citation_text(taxon_input.value)
         # Display table data (apply row limit & depiction logic)
-        total_rows = len(results_df)
+        total_rows = counts["n_entries"]
         if total_rows > CONFIG["table_row_limit"]:
-            limited_df = results_df.head(CONFIG["table_row_limit"])
+            limited_df = lazy_results.head(CONFIG["table_row_limit"])
             display_note = mo.callout(
                 mo.md(
                     f"**Large Dataset Optimization**\n\n"
@@ -2570,7 +2539,7 @@ def generate_results(
             )
         else:
             display_note = mo.Html("")
-            limited_df = results_df
+            limited_df = lazy_results
 
         # Build display DataFrame with HTML-formatted columns
         display_df = build_display_dataframe(limited_df)
@@ -2606,7 +2575,7 @@ def generate_results(
         else:
             export_table_ui = mo.callout(
                 mo.md(
-                    f"**Large Dataset ({len(results_df):,} rows)**\n\n"
+                    f"**Large Dataset ({total_rows:,} rows)**\n\n"
                     f"Export table view is disabled for datasets over {CONFIG['table_row_limit']} rows "
                     f"to ensure smooth performance.\n\n"
                     f"Use the download buttons above to get your data in CSV, JSON, or RDF format.",
@@ -2631,7 +2600,7 @@ def generate_results(
             ]
             # Store results_df ONCE - all exports share the same data reference
             shared_generation_data = {
-                "results_df": results_df,
+                "results_df": lazy_results,
                 "taxon_input": taxon_input.value,
                 "qid": qid,
                 "active_filters": active_filters,
@@ -2727,20 +2696,6 @@ def generate_results(
                 ),
             ],
         )
-    return (
-        csv_generate_button,
-        csv_generation_data,
-        download_ui,
-        json_generate_button,
-        json_generation_data,
-        query_hash,
-        rdf_generate_button,
-        rdf_generation_data,
-        result_hash,
-        tables_ui,
-        taxon_name,
-        ui_is_large_dataset,
-    )
 
 
 @app.cell
@@ -3193,7 +3148,7 @@ def main():
                 smiles=args.smiles,
                 smiles_search_type=args.smiles_search_type or "substructure",
                 smiles_threshold=args.smiles_threshold,
-            )
+            ).collect()
 
             if df.is_empty():
                 print("[x] No data found", file=sys.stderr)
@@ -3269,6 +3224,7 @@ def main():
                 # Use the REAL metadata function from app.setup with provenance hashes
                 metadata = create_export_metadata(
                     df,
+                    {"n_entries": len(df)},
                     args.taxon,
                     qid,
                     filters if filters else None,
@@ -3327,6 +3283,7 @@ def main():
                 if args.export_metadata:
                     metadata = create_export_metadata(
                         df,
+                        {"n_entries": len(df)},
                         args.taxon,
                         qid,
                         filters if filters else None,
