@@ -328,6 +328,8 @@ with app.setup:
                     pl.col("reference").cast(pl.UInt32),
                     pl.col("mass").cast(pl.Float32),
                     pl.col("mf").cast(pl.Categorical),
+                    pl.col("statement").cast(pl.Categorical),
+                    pl.col("ref").cast(pl.Categorical),
                 ]
             )
 
