@@ -163,12 +163,12 @@ with app.setup:
         def from_lazyframe(cls, df: pl.LazyFrame) -> "DatasetStats":
             stats = df.select(
                 [
-                    pl.col("compound").n_unique().alias("n_compounds"),
-                    pl.col("taxon").n_unique().alias("n_taxa"),
-                    pl.col("reference").n_unique().alias("n_refs"),
-                    pl.len().alias("n_entries"),
+                    pl.col("compound").n_unique().cast(pl.UInt32).alias("n_compounds"),
+                    pl.col("taxon").n_unique().cast(pl.UInt32).alias("n_taxa"),
+                    pl.col("reference").n_unique().cast(pl.UInt32).alias("n_refs"),
+                    pl.len().cast(pl.UInt32).alias("n_entries"),
                 ],
-            ).collect()
+            ).collect(streaming=True)
 
             if stats.is_empty():
                 return cls(0, 0, 0, 0)
@@ -214,7 +214,17 @@ with app.setup:
             if not csv_bytes or csv_bytes.strip() == b"":
                 return pl.LazyFrame()
 
-            return pl.scan_csv(io.BytesIO(csv_bytes), low_memory=True, rechunk=False)
+            return pl.scan_csv(
+                io.BytesIO(csv_bytes),
+                low_memory=True,
+                rechunk=False,
+                dtypes={
+                    "compound": pl.UInt32,
+                    "taxon": pl.UInt32,
+                    "reference": pl.UInt32,
+                    "compound_mass": pl.Float32,
+                },
+            )
 
         def _build_query(
             self,
@@ -305,7 +315,21 @@ with app.setup:
 
         @staticmethod
         def cast_types(df: pl.LazyFrame) -> pl.LazyFrame:
-            return df.with_columns([pl.col("mass").cast(pl.Float16, strict=False)])
+            return df.with_columns(
+                [
+                    pl.col("compound").cast(pl.UInt32),
+                    pl.col("name").cast(pl.Categorical),
+                    pl.col("inchikey").cast(pl.Categorical),
+                    pl.col("smiles").cast(pl.Categorical),
+                    pl.col("taxon_name").cast(pl.Categorical),
+                    pl.col("taxon").cast(pl.UInt32),
+                    pl.col("ref_title").cast(pl.Categorical),
+                    pl.col("ref_doi").cast(pl.Categorical),
+                    pl.col("reference").cast(pl.UInt32),
+                    pl.col("mass").cast(pl.Float32),
+                    pl.col("mf").cast(pl.Categorical),
+                ]
+            )
 
         @staticmethod
         def drop_old_columns(df: pl.LazyFrame) -> pl.LazyFrame:
@@ -420,7 +444,7 @@ with app.setup:
                 if not csv_bytes or not csv_bytes.strip():
                     return None, None
 
-                df = parse_sparql_response(csv_bytes).collect()
+                df = parse_sparql_response(csv_bytes).collect(streaming=True)
                 matches = [
                     (
                         extract_from_url(row["taxon"], WIKIDATA_ENTITY_PREFIX),
@@ -463,7 +487,7 @@ with app.setup:
 
     class CSVExportStrategy(ExportStrategy):
         def _to_bytes(self, df: pl.LazyFrame) -> bytes:
-            df_collected = df.collect()
+            df_collected = df.collect(streaming=True)
             buffer = io.BytesIO()
             df_collected.write_csv(buffer)
             result = buffer.getvalue()
@@ -474,7 +498,7 @@ with app.setup:
 
     class JSONExportStrategy(ExportStrategy):
         def _to_bytes(self, df: pl.LazyFrame) -> bytes:
-            df_collected = df.collect()
+            df_collected = df.collect(streaming=True)
             json_str = df_collected.write_json()
             result = json_str.encode("utf-8")
             del df_collected
@@ -496,7 +520,7 @@ with app.setup:
             self.filters = filters
 
         def _to_bytes(self, df: pl.LazyFrame) -> bytes:
-            df_collected = df.collect()
+            df_collected = df.collect(streaming=True)
 
             g = Graph()
             for prefix, ns in WIKIDATA_NAMESPACES.items():
@@ -553,7 +577,7 @@ with app.setup:
             # Result hash
             result_hasher = hashlib.sha256()
             for val in (
-                df.select(pl.col("compound_qid").cast(pl.Categorical))
+                df.select(pl.col("compound_qid"))
                 .to_series()
                 .drop_nulls()
                 .unique()
@@ -743,13 +767,13 @@ with app.setup:
                 pl.col("ref_title").alias("reference_title"),
                 pl.col("ref_doi").alias("reference_doi"),
                 pl.col("pub_date").alias("reference_date"),
-                pl.concat_str([pl.lit("Q"), pl.col("compound").cast(pl.Categorical)]).alias(
+                pl.concat_str([pl.lit("Q"), pl.col("compound")]).alias(
                     "compound_qid",
                 ),
-                pl.concat_str([pl.lit("Q"), pl.col("taxon").cast(pl.Categorical)]).alias(
+                pl.concat_str([pl.lit("Q"), pl.col("taxon")]).alias(
                     "taxon_qid",
                 ),
-                pl.concat_str([pl.lit("Q"), pl.col("reference").cast(pl.Categorical)]).alias(
+                pl.concat_str([pl.lit("Q"), pl.col("reference")]).alias(
                     "reference_qid",
                 ),
             ]
@@ -767,7 +791,11 @@ with app.setup:
             return df.select(exprs)
 
         def build_display_dataframe(self, df: pl.LazyFrame, limit: int) -> pl.DataFrame:
-            df = df.limit(limit).collect() if limit else df.collect()
+            df = (
+                df.limit(limit).collect(streaming=True)
+                if limit
+                else df.collect(streaming=True)
+            )
             return df.select(
                 [
                     pl.col("smiles").alias("Compound Depiction"),
@@ -806,11 +834,11 @@ with app.setup:
             result_hasher = hashlib.sha256()
             try:
                 df_temp = (
-                    df.select(pl.col("compound").cast(pl.Categorical))
+                    df.select(pl.col("compound"))
                     .drop_nulls()
                     .unique()
                     .sort("compound")
-                    .collect()
+                    .collect(streaming=True)
                 )
                 for val in df_temp.get_column("compound").to_list():
                     if val:
@@ -1047,13 +1075,13 @@ def ui_search_panel(
         structure_fields.append(smiles_threshold)
 
     main_search = mo.hstack(
-        [mo.vstack([run_button, taxon_input]), mo.vstack(structure_fields)],
+        [mo.vstack([taxon_input, run_button]), mo.vstack(structure_fields)],
         gap=2,
         widths="equal",
     )
 
     filter_row = mo.hstack([mass_filter, year_filter, formula_filter], gap=2)
-    filters_ui = [main_search, filter_row]
+    filters_ui = [filter_row, main_search]
 
     if mass_filter.value:
         filters_ui.append(mo.hstack([mass_min, mass_max], gap=2))
@@ -1252,7 +1280,7 @@ def display_results(
         export_df_preview = (
             lotus.prepare_export_dataframe(results, include_rdf_ref=False)
             .limit(100)
-            .collect()
+            .collect(streaming=True)
         )
         metadata = lotus.create_metadata(
             stats,
