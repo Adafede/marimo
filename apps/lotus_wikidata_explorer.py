@@ -2853,9 +2853,7 @@ def generate_results(
                 return ""
             # Extract bare ID from URL or keep as-is
             statement_id = statement.split("/")[-1]
-            url = (
-                f"https://www.wikidata.org/entity/statement/{statement_id}"
-            )
+            url = f"https://www.wikidata.org/entity/statement/{statement_id}"
             return mo.Html(
                 f'<a href="{url}" style="color:{CONFIG["color_hyperlink"]};" target="_blank">{statement_id}</a>'
             )
