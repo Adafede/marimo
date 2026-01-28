@@ -168,7 +168,7 @@ with app.setup:
                     pl.col("reference").n_unique().cast(pl.UInt32).alias("n_refs"),
                     pl.len().cast(pl.UInt32).alias("n_entries"),
                 ],
-            ).collect(streaming=True)
+            ).collect()
 
             if stats.is_empty():
                 return cls(0, 0, 0, 0)
@@ -444,7 +444,7 @@ with app.setup:
                 if not csv_bytes or not csv_bytes.strip():
                     return None, None
 
-                df = parse_sparql_response(csv_bytes).collect(streaming=True)
+                df = parse_sparql_response(csv_bytes).collect()
                 matches = [
                     (
                         extract_from_url(row["taxon"], WIKIDATA_ENTITY_PREFIX),
@@ -487,7 +487,7 @@ with app.setup:
 
     class CSVExportStrategy(ExportStrategy):
         def _to_bytes(self, df: pl.LazyFrame) -> bytes:
-            df_collected = df.collect(streaming=True)
+            df_collected = df.collect()
             buffer = io.BytesIO()
             df_collected.write_csv(buffer)
             result = buffer.getvalue()
@@ -498,7 +498,7 @@ with app.setup:
 
     class JSONExportStrategy(ExportStrategy):
         def _to_bytes(self, df: pl.LazyFrame) -> bytes:
-            df_collected = df.collect(streaming=True)
+            df_collected = df.collect()
             json_str = df_collected.write_json()
             result = json_str.encode("utf-8")
             del df_collected
@@ -520,7 +520,7 @@ with app.setup:
             self.filters = filters
 
         def _to_bytes(self, df: pl.LazyFrame) -> bytes:
-            df_collected = df.collect(streaming=True)
+            df_collected = df.collect()
 
             g = Graph()
             for prefix, ns in WIKIDATA_NAMESPACES.items():
@@ -792,9 +792,9 @@ with app.setup:
 
         def build_display_dataframe(self, df: pl.LazyFrame, limit: int) -> pl.DataFrame:
             df = (
-                df.limit(limit).collect(streaming=True)
+                df.limit(limit).collect()
                 if limit
-                else df.collect(streaming=True)
+                else df.collect()
             )
             return df.select(
                 [
@@ -838,7 +838,7 @@ with app.setup:
                     .drop_nulls()
                     .unique()
                     .sort("compound")
-                    .collect(streaming=True)
+                    .collect()
                 )
                 for val in df_temp.get_column("compound").to_list():
                     if val:
@@ -1280,7 +1280,7 @@ def display_results(
         export_df_preview = (
             lotus.prepare_export_dataframe(results, include_rdf_ref=False)
             .limit(100)
-            .collect(streaming=True)
+            .collect()
         )
         metadata = lotus.create_metadata(
             stats,
