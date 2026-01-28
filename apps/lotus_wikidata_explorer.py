@@ -877,91 +877,63 @@ def build_display_dataframe(df: pl.LazyFrame) -> pl.DataFrame:
     if limit:
         df = df.limit(limit)
 
-    # Collect once
-    df = df.collect()
-
-    # Create depiction FIRST
-    def _structure_img(smiles):
-        return html_from_image(svg_from_smiles(smiles)) if smiles else ""
-
+    # Generate molecule images (small Python loop)
     df = df.with_columns(
         pl.col("smiles")
-        .map_elements(
-            _structure_img,
-            return_dtype=pl.String,
-        )
-        .alias("Compound Depiction"),
+        .map_elements(lambda s: html_from_image(mo.image(s)) if s else "")
+        .alias("Compound Depiction")
     )
 
-    # Now select
-    return df.select(
-        [
-            pl.col("Compound Depiction"),
-            pl.col("name").alias("Compound Name"),
-            pl.col("smiles").alias("Compound SMILES"),
-            pl.col("inchikey").alias("Compound InChIKey"),
-            pl.col("mf").alias("Compound Molecular Formula"),
-            pl.col("mass").alias("Compound Mass"),
-            pl.col("taxon_name").alias("Taxon Name"),
-            pl.col("ref_title").alias("Reference Title"),
-            pl.col("pub_date").alias("Reference Date"),
-            pl.when(pl.col("ref_doi").is_not_null() & (pl.col("ref_doi") != ""))
-            .then(
-                pl.format(
-                    '<a href="https://doi.org/{}" target="_blank" style="color:{};">{}</a>',
-                    pl.col("ref_doi"),
-                    pl.lit(color_link),
-                    pl.col("ref_doi"),
-                ),
+    # Add vectorized HTML columns in small groups
+    df = df.with_columns([
+        # First batch
+        pl.when(pl.col("compound").is_not_null())
+        .then(
+            pl.format(
+                '<a href="https://scholia.toolforge.org/Q{}" style="color:{};">Q{}</a>',
+                pl.col("compound"), pl.lit(CONFIG["color_wikidata_red"]), pl.col("compound")
             )
-            .otherwise(pl.lit(""))
-            .alias("Reference DOI"),
-            pl.when(pl.col("compound").is_not_null())
-            .then(
-                pl.format(
-                    '<a href="https://scholia.toolforge.org/Q{}" target="_blank" style="color:{};">Q{}</a>',
-                    pl.col("compound"),
-                    pl.lit(color_compound),
-                    pl.col("compound"),
-                ),
+        )
+        .otherwise(pl.lit(""))
+        .alias("Compound QID"),
+
+        pl.when(pl.col("taxon").is_not_null())
+        .then(
+            pl.format(
+                '<a href="https://scholia.toolforge.org/Q{}" style="color:{};">Q{}</a>',
+                pl.col("taxon"), pl.lit(CONFIG["color_wikidata_green"]), pl.col("taxon")
             )
-            .otherwise(pl.lit(""))
-            .alias("Compound QID"),
-            pl.when(pl.col("taxon").is_not_null())
-            .then(
-                pl.format(
-                    '<a href="https://scholia.toolforge.org/Q{}" target="_blank" style="color:{};">Q{}</a>',
-                    pl.col("taxon"),
-                    pl.lit(color_taxon),
-                    pl.col("taxon"),
-                ),
+        )
+        .otherwise(pl.lit(""))
+        .alias("Taxon QID"),
+    ])
+
+    # Add remaining columns in a second batch
+    df = df.with_columns([
+        pl.when(pl.col("reference").is_not_null())
+        .then(
+            pl.format(
+                '<a href="https://scholia.toolforge.org/Q{}" style="color:{};">Q{}</a>',
+                pl.col("reference"), pl.lit(CONFIG["color_wikidata_blue"]), pl.col("reference")
             )
-            .otherwise(pl.lit(""))
-            .alias("Taxon QID"),
-            pl.when(pl.col("reference").is_not_null())
-            .then(
-                pl.format(
-                    '<a href="https://scholia.toolforge.org/Q{}" target="_blank" style="color:{};">Q{}</a>',
-                    pl.col("reference"),
-                    pl.lit(color_ref),
-                    pl.col("reference"),
-                ),
+        )
+        .otherwise(pl.lit(""))
+        .alias("Reference QID"),
+
+        # DOI links
+        pl.when(pl.col("ref_doi").is_not_null() & (pl.col("ref_doi") != ""))
+        .then(
+            pl.format(
+                '<a href="https://doi.org/{}" style="color:{};">{}</a>',
+                pl.col("ref_doi"), pl.lit(CONFIG["color_hyperlink"]), pl.col("ref_doi")
             )
-            .otherwise(pl.lit(""))
-            .alias("Reference QID"),
-            pl.when(pl.col("statement").is_not_null() & (pl.col("statement") != ""))
-            .then(
-                pl.format(
-                    '<a href="{}" target="_blank" style="color:{};">{}</a>',
-                    pl.col("statement"),
-                    pl.lit(color_link),
-                    pl.col("statement").str.split("/").list.last(),
-                ),
-            )
-            .otherwise(pl.lit(""))
-            .alias("Statement"),
-        ],
-    )
+        )
+        .otherwise(pl.lit(""))
+        .alias("Reference DOI"),
+    ])
+
+    return df
+
 
 
 @app.function
