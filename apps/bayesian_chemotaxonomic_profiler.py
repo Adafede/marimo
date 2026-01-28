@@ -127,41 +127,6 @@ with app.setup:
     from modules.net.sparql.execute_with_retry import execute_with_retry
     from modules.net.sparql.parse_response import parse_sparql_response
 
-    # Memory-friendly Parquet writer for WASM / low-memory environments
-    def write_parquet_stream(df: pl.DataFrame, path: str, compression: str = "snappy", row_group_size: int = 2000) -> None:
-        """Write a Polars DataFrame to Parquet in a memory-friendly way.
-
-        Strategy:
-        - Prefer PyArrow ParquetWriter and write RecordBatches in row groups to
-          avoid large single-shot allocations.
-        - Fall back to Polars' write_parquet if PyArrow is unavailable or fails.
-
-        This uses 'snappy' by default for broad portability in many environments.
-        """
-        try:
-            import pyarrow as pa
-            import pyarrow.parquet as pq
-
-            # Convert to Arrow table (Polars -> Arrow is typically zero-copy)
-            table = df.to_arrow()
-
-            # Use ParquetWriter to write row groups (less peak memory on write)
-            with pq.ParquetWriter(path, table.schema, compression=compression) as writer:
-                for rb in table.to_batches(max_chunksize=row_group_size):
-                    writer.write_batch(rb)
-            return
-        except Exception:
-            # Last-resort fallback (may be less memory-friendly depending on engine)
-            try:
-                # Use a portable compression algorithm
-                df.write_parquet(path, compression=compression)
-                return
-            except Exception:
-                # As a final fallback, write an uncompressed parquet to maximize
-                # chance of success (some engines reject unknown compression)
-                df.write_parquet(path, compression=None)
-                return
-
     # alt.data_transformers.enable("vegafusion")
 
     # Patch urllib for Pyodide/WASM (browser) compatibility
@@ -432,6 +397,62 @@ with app.setup:
 
 
 @app.function
+def write_parquet_stream(
+    df: pl.DataFrame,
+    path: str,
+    compression: str = "snappy",
+    row_group_size: int = 2000,
+) -> None:
+    """Write a Polars DataFrame to Parquet in a memory-friendly way.
+
+    Strategy:
+    - Write the DataFrame in small row-group slices and convert each slice
+      to Arrow separately to avoid building one large Arrow Table in memory.
+    - If pyarrow is not available or fails, fall back to Polars' writer.
+    - Handles empty DataFrames safely.
+    """
+    # Fast-path for empty frames
+    try:
+        if df is None or df.is_empty():
+            df.write_parquet(path, compression=compression)
+            return
+    except Exception:
+        # Continue to robust writer if emptiness cannot be determined
+        pass
+
+    try:
+        import pyarrow.parquet as pq
+
+        total = int(df.height)
+        # Write first chunk to establish schema
+        first_end = min(row_group_size, total)
+        first_chunk = df[0:first_end]
+        first_table = first_chunk.to_arrow()
+
+        with pq.ParquetWriter(
+            path, first_table.schema, compression=compression
+        ) as writer:
+            writer.write_table(first_table)
+
+            for start in range(first_end, total, row_group_size):
+                end = min(start + row_group_size, total)
+                chunk = df[start:end]
+                if chunk.is_empty():
+                    continue
+                writer.write_table(chunk.to_arrow())
+
+        return
+    except Exception:
+        # Best-effort fallbacks using Polars' writer
+        try:
+            df.write_parquet(path, compression=compression)
+            return
+        except Exception:
+            df.write_parquet(path, compression=None)
+            return
+
+
+@app.function
 def smiles_to_img_urls(smiles_list):
     q = quote  # local binding = faster
     base = "https://www.simolecule.com/cdkdepict/depict/cow/svg"
@@ -473,13 +494,37 @@ def read_table(
     expected: Iterable[str] | None = None,
     name: str = "table",
 ) -> pl.DataFrame:
-    """Read CSV/CSV.GZ from local or remote path and optionally validate columns."""
-    df = pl.read_csv(
-        str(path),
-        low_memory=True,
-        rechunk=False,
-        separator=separator,
-    )
+    """Read CSV/CSV.GZ from local or remote path and optionally validate columns.
+
+    Optimizations:
+    - For local files (and when not running under Pyodide), prefer `pl.scan_csv`
+      + collect(streaming=True) to reduce peak memory.
+    - For remote/HTTP resources or Pyodide, fall back to `pl.read_csv`.
+    """
+    p = str(path)
+
+    try:
+        if (not IS_PYODIDE) and os.path.exists(p):
+            lf = pl.scan_csv(p, sep=separator, rechunk=False)
+            if expected:
+                lf = lf.select(list(expected))
+            df = lf.collect(streaming=True)
+        else:
+            df = pl.read_csv(
+                p,
+                low_memory=True,
+                rechunk=False,
+                separator=separator,
+            )
+    except Exception:
+        # Final fallback to direct read
+        df = pl.read_csv(
+            p,
+            low_memory=True,
+            rechunk=False,
+            separator=separator,
+        )
+
     return validate_columns(df, expected, name) if expected else df
 
 
@@ -815,13 +860,12 @@ def run_hierarchical_analysis(
         if not rank_files:
             return pl.DataFrame()
 
-        # Combine results (unavoidable memory spike, but much smaller)
-        logging.info("Combining results...")
-        result_chunks = [pl.read_parquet(f) for f in rank_files]
-        result = pl.concat(result_chunks, how="vertical")
-
-        # Clean up chunks
-        del result_chunks
+        # Combine results using lazy scan and streaming collect to reduce peak memory
+        logging.info("Combining results (streaming)...")
+        lazy_chunks = [pl.scan_parquet(f) for f in rank_files]
+        # Concatenate lazily and collect with streaming to keep memory low
+        result = pl.concat(lazy_chunks, how="vertical").collect(streaming=True)
+        del lazy_chunks
 
         # Add quality flags
         MIN_ESS = cfg["stats"]["min_ess"]
@@ -1204,17 +1248,20 @@ def compute_ci_rope(batch: pl.DataFrame, CI_PROB: float, ROPE_HW: float):
         ),
     )
 
-    # Build result
+    # Build result (cast floats to float32 to reduce peak memory / Arrow size)
+    posterior_prob = (1 - betainc(alpha, beta, theta)).astype(np.float32)
+    ci_lower_log2 = np.log2(ci_lower_raw / (theta + 1e-10)).astype(np.float32)
+    ci_upper_log2 = np.log2(ci_upper_raw / (theta + 1e-10)).astype(np.float32)
+    log2_enrich = np.log2((alpha / (alpha + beta)) / (theta + 1e-10)).astype(np.float32)
+
+    # Build result and attach vectorized columns
     result = batch.with_columns(
         [
-            pl.Series("posterior_enrich_prob", 1 - betainc(alpha, beta, theta)),
-            pl.Series("ci_lower", np.log2(ci_lower_raw / (theta + 1e-10))),
-            pl.Series("ci_upper", np.log2(ci_upper_raw / (theta + 1e-10))),
+            pl.Series("posterior_enrich_prob", posterior_prob),
+            pl.Series("ci_lower", ci_lower_log2),
+            pl.Series("ci_upper", ci_upper_log2),
             pl.Series("rope_decision", decisions),
-            pl.Series(
-                "log2_enrichment",
-                np.log2((alpha / (alpha + beta)) / (theta + 1e-10)),
-            ),
+            pl.Series("log2_enrichment", log2_enrich),
         ],
     )
 
@@ -1575,7 +1622,9 @@ def load_data_wd(effective_config):
             .lazy()
         )
         _compound_ids = compound_taxon.select(pl.col("compound")).unique()
-        compound_smiles = compound_smiles.join(_compound_ids.lazy(), on="compound", how="inner").collect()
+        compound_smiles = compound_smiles.join(
+            _compound_ids.lazy(), on="compound", how="inner"
+        ).collect()
 
         taxon_parent = parse_sparql_response(
             execute_with_retry(
@@ -1595,7 +1644,11 @@ def load_data_wd(effective_config):
 
     with mo.status.spinner("Shrinking data and lineages..."):
         focus_taxa = (
-            compound_taxon.select(pl.col("taxon")).unique().to_series().drop_nulls().unique()
+            compound_taxon.select(pl.col("taxon"))
+            .unique()
+            .to_series()
+            .drop_nulls()
+            .unique()
         )
         lineage = build_hierarchy_lineage(
             edges=taxon_parent,
@@ -1615,7 +1668,7 @@ def load_data_wd(effective_config):
             )
             .to_series()
             .unique(),
-            )
+        )
         taxon_parent = taxon_parent.filter(pl.col("taxon").is_in(_to_keep))
 
         taxon_rank = (
@@ -1871,20 +1924,14 @@ def scaffold_compound_stats(compound_scaffold):
         # Build table with thumbnails in one pipeline
         SAFE_PREVIEW_LIMIT = 800
 
-        scs_df_base = scs_counts.select(["scaffold", "n_compounds"]).rename({"n_compounds": "Compounds"})
+        scs_df_base = scs_counts.select(["scaffold", "n_compounds"]).rename(
+            {"n_compounds": "Compounds"}
+        )
 
         if scs_df_base.height > SAFE_PREVIEW_LIMIT:
-            scs_preview = scs_df_base.limit(SAFE_PREVIEW_LIMIT).with_columns(
-                [
-                    pl.col("scaffold")
-                    .map_elements(lambda s: mo.image(svg_from_smiles(s)))
-                    .alias("Structure"),
-                ],
-            ).select(["Structure", "Compounds"])
-            scs_df = scs_preview
-        else:
-            scs_df = (
-                scs_df_base.with_columns(
+            scs_preview = (
+                scs_df_base.limit(SAFE_PREVIEW_LIMIT)
+                .with_columns(
                     [
                         pl.col("scaffold")
                         .map_elements(lambda s: mo.image(svg_from_smiles(s)))
@@ -1893,6 +1940,15 @@ def scaffold_compound_stats(compound_scaffold):
                 )
                 .select(["Structure", "Compounds"])
             )
+            scs_df = scs_preview
+        else:
+            scs_df = scs_df_base.with_columns(
+                [
+                    pl.col("scaffold")
+                    .map_elements(lambda s: mo.image(svg_from_smiles(s)))
+                    .alias("Structure"),
+                ],
+            ).select(["Structure", "Compounds"])
 
     _out = mo.vstack(
         [
@@ -2277,7 +2333,7 @@ def show_lineage_profile(markers, scaffold_select, taxon_lineage):
                             taxon_lineage.filter(pl.col("taxon") == lp_best_taxon)
                             .get_column("taxon_ancestor")
                             .to_list(),
-                        ) | {lp_best_taxon}
+                        )
 
                 # For each rank, get the main lineage taxon
                 lp_main_by_rank = {}
