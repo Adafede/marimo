@@ -1048,6 +1048,10 @@ with app.setup:
                         "url": "http://www.wikidata.org/",
                     },
                 ],
+                "sparql_endpoint": {
+                    "url": CONFIG["qlever_endpoint"],
+                    "name": "QLever Wikidata",
+                },
                 "citation": [
                     {
                         "@type": "ScholarlyArticle",
@@ -1099,7 +1103,7 @@ with app.setup:
                         "@type": "Organization",
                         "name": "IDSM",
                         "url": "https://idsm.elixir-czech.cz/",
-                    }
+                    },
                 )
                 metadata["chemical_search_service"] = {
                     "name": "SACHEM",
@@ -1198,27 +1202,6 @@ def md_title():
     """)
     return
 
-# @app.cell
-# def ui_disclaimer():
-#     mo.callout(
-#         mo.md(
-#             """
-#             To run this script locally:
-
-#             ```
-#             uvx marimo run https://adafede.github.io/marimo/apps/lotus_wikidata_explorer.py
-#             ```
-
-#             """,
-#         ),
-#         kind="info",
-#     ).style(
-#         style={
-#             "overflow-wrap": "anywhere",
-#         },
-#     )
-#     return
-
 @app.cell
 def ui_help():
     mo.accordion(
@@ -1246,7 +1229,7 @@ def ui_search_inputs():
         value="substructure",
     )
     smiles_threshold = mo.ui.slider(
-        start=0.0,
+        start=0.05,
         stop=1.0,
         step=0.05,
         value=0.8,
@@ -1442,14 +1425,12 @@ def execute_search(
         lotus = LOTUSExplorer(CONFIG, IS_PYODIDE)
 
         qid, taxon_warning = lotus.resolve_taxon(taxon_input.value)
-        if not qid:
-            mo.stop(
-                True,
-                mo.callout(
-                    mo.md(f"**Taxon not found:** {taxon_input.value}"),
-                    kind="warn",
-                ),
-            )
+        if not taxon_input.value.strip() and not smiles_input.value.strip():
+            mo.stop(True, "Need taxon or SMILES")
+        if not taxon_input.value.strip():
+            qid = "*"  # All taxa
+        else:
+            qid, taxon_warning = lotus.resolve_taxon(taxon_input.value)
 
         formula_filt = None
         if formula_filter.value:
@@ -1492,7 +1473,7 @@ def execute_search(
 
         query_hash, result_hash = lotus.compute_hashes(
             qid,
-            taxon_input.value,
+            criteria.taxon,
             criteria.to_filters_dict(),
             results,
         )
@@ -1520,14 +1501,13 @@ def display_results(
     result_hash,
     results,
     stats,
-    taxon_input,
     taxon_warning,
 ):
     if results is None or stats is None:
         result_ui = mo.Html("")
     elif stats.n_entries == 0:
         result_ui = mo.callout(
-            mo.md(f"No compounds found for **{taxon_input.value}**"),
+            mo.md(f"No compounds found for **{criteria.taxon}**"),
             kind="warn",
         )
     else:
@@ -1564,15 +1544,20 @@ def display_results(
                 f'<a href="{url}" style="color:{CONFIG["color_hyperlink"]};" target="_blank">{statement_id}</a>',
             )
 
-        display_taxon = "all taxa" if taxon_input.value == "*" else taxon_input.value
+        display_taxon = "all taxa" if criteria.taxon == "*" else criteria.taxon
+        display_compound = (
+            f"**SMILES:** `{criteria.smiles}` ({criteria.smiles_search_type})\n\n"
+            if criteria.smiles
+            else "\n\n"
+        )
         if qid == "*":
             search_info = mo.md(
-                f"**{display_taxon}**\n\n"
+                f"**{display_taxon}** ([Scholia](https://scholia.toolforge.org/taxon)) {display_compound}"
                 f"**Hashes:** *Query*: `{query_hash}` | *Results*: `{result_hash}`",
             )
         else:
             search_info = mo.md(
-                f"**{display_taxon}** ([{qid}](https://scholia.toolforge.org/{qid}))\n\n"
+                f"**{display_taxon}** ([{qid}](https://scholia.toolforge.org/{qid})) {display_compound}"
                 f"**Hashes:** *Query*: `{query_hash}` | *Results*: `{result_hash}`",
             )
 
@@ -1627,13 +1612,13 @@ def display_results(
         )
         metadata = lotus.create_metadata(
             stats,
-            taxon_input.value,
+            criteria.taxon,
             qid,
             criteria.to_filters_dict(),
             query_hash,
             result_hash,
         )
-        citation = lotus.create_citation(taxon_input.value)
+        citation = lotus.create_citation(criteria.taxon)
 
         tabs_ui = mo.ui.tabs(
             {
@@ -1709,7 +1694,6 @@ def generate_downloads(
     rdf_df,
     results,
     stats,
-    taxon_input,
 ):
     if stats is None or stats.n_entries == 0:
         download_ui = mo.Html("")
@@ -1720,7 +1704,7 @@ def generate_downloads(
                 csv_bytes = lotus.export(export_df, "csv")
                 csv_ui = create_download_button(
                     csv_bytes,
-                    generate_filename(taxon_input.value, "csv"),
+                    generate_filename(criteria.taxon, "csv"),
                     "CSV",
                     "text/csv",
                 )
@@ -1735,7 +1719,7 @@ def generate_downloads(
                 json_bytes = lotus.export(export_df, "json")
                 json_ui = create_download_button(
                     json_bytes,
-                    generate_filename(taxon_input.value, "json"),
+                    generate_filename(criteria.taxon, "json"),
                     "JSON",
                     "application/json",
                 )
@@ -1750,13 +1734,13 @@ def generate_downloads(
                 rdf_bytes = lotus.export(
                     rdf_df,
                     "rdf",
-                    taxon_input=taxon_input.value,
+                    taxon_input=criteria.taxon,
                     qid=qid,
                     filters=criteria.to_filters_dict(),
                 )
                 rdf_ui = create_download_button(
                     rdf_bytes,
-                    generate_filename(taxon_input.value, "ttl"),
+                    generate_filename(criteria.taxon, "ttl"),
                     "RDF",
                     "text/turtle",
                 )
@@ -1787,7 +1771,7 @@ def generate_downloads(
         rdf_bytes = lotus.export(
             rdf_df_small,
             "rdf",
-            taxon_input=taxon_input.value,
+            taxon_input=criteria.taxon,
             qid=qid,
             filters=criteria.to_filters_dict(),
         )
@@ -1800,19 +1784,19 @@ def generate_downloads(
                     [
                         create_download_button(
                             csv_bytes,
-                            generate_filename(taxon_input.value, "csv"),
+                            generate_filename(criteria.taxon, "csv"),
                             "CSV",
                             "text/csv",
                         ),
                         create_download_button(
                             json_bytes,
-                            generate_filename(taxon_input.value, "json"),
+                            generate_filename(criteria.taxon, "json"),
                             "JSON",
                             "application/json",
                         ),
                         create_download_button(
                             rdf_bytes,
-                            generate_filename(taxon_input.value, "ttl"),
+                            generate_filename(criteria.taxon, "ttl"),
                             "RDF",
                             "text/turtle",
                         ),
@@ -1828,6 +1812,31 @@ def generate_downloads(
         if IS_PYODIDE:
             gc.collect()
     download_ui
+    return
+
+
+@app.cell
+def ui_disclaimer():
+    if IS_PYODIDE:
+        _out = mo.callout(
+            mo.md(f"""
+            **Browser Version Limitations:**
+            - Showing only {CONFIG["table_row_limit"]} results due to memory constraints
+            - Large exports may fail
+            - For unlimited results, run locally:
+            ```bash
+            uvx marimo run https://adafede.github.io/marimo/apps/lotus_wikidata_explorer.py
+            ```
+            """),
+            kind="warn",
+        ).style(
+            style={
+                "overflow-wrap": "anywhere",
+            },
+        )
+    else:
+        _out = mo.Html("")
+    _out
     return
 
 
