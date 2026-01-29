@@ -177,9 +177,15 @@ with app.setup:
         def from_lazyframe(cls, df: pl.LazyFrame) -> "DatasetStats":
             stats = df.select(
                 [
-                    pl.col("compound").approx_n_unique().cast(pl.UInt32).alias("n_compounds"),
+                    pl.col("compound")
+                    .approx_n_unique()
+                    .cast(pl.UInt32)
+                    .alias("n_compounds"),
                     pl.col("taxon").approx_n_unique().cast(pl.UInt32).alias("n_taxa"),
-                    pl.col("reference").approx_n_unique().cast(pl.UInt32).alias("n_refs"),
+                    pl.col("reference")
+                    .approx_n_unique()
+                    .cast(pl.UInt32)
+                    .alias("n_refs"),
                     pl.len().cast(pl.UInt32).alias("n_entries"),
                 ],
             ).collect()
@@ -346,18 +352,18 @@ with app.setup:
             return df.with_columns(
                 [
                     pl.col("compound").cast(pl.UInt32),
-                    pl.col("name").cast(pl.Utf8),
-                    pl.col("inchikey").cast(pl.Utf8),
-                    pl.col("smiles").cast(pl.Utf8),
-                    pl.col("taxon_name").cast(pl.Utf8),
+                    # pl.col("name").cast(pl.Utf8),
+                    # pl.col("inchikey").cast(pl.Utf8),
+                    # pl.col("smiles").cast(pl.Utf8),
+                    # pl.col("taxon_name").cast(pl.Utf8),
                     pl.col("taxon").cast(pl.UInt32),
-                    pl.col("ref_title").cast(pl.Utf8),
-                    pl.col("ref_doi").cast(pl.Utf8),
+                    # pl.col("ref_title").cast(pl.Utf8),
+                    # pl.col("ref_doi").cast(pl.Utf8),
                     pl.col("reference").cast(pl.UInt32),
                     pl.col("mass").cast(pl.Float32),
-                    pl.col("mf").cast(pl.Utf8),
-                    pl.col("statement").cast(pl.Utf8),
-                    pl.col("ref").cast(pl.Utf8),
+                    # pl.col("mf").cast(pl.Utf8),
+                    # pl.col("statement").cast(pl.Utf8),
+                    # pl.col("ref").cast(pl.Utf8),
                 ],
             )
 
@@ -495,11 +501,9 @@ with app.setup:
                 if len(exact_matches) == 1:
                     return exact_matches[0][0], None
 
-                # Multiple matches or no exact match - need disambiguation
                 if len(exact_matches) > 1:
                     return self._resolve_ambiguous(exact_matches, is_exact=True)
 
-                # No exact match but multiple similar
                 if len(matches) > 1:
                     return self._resolve_ambiguous(matches, is_exact=False)
 
@@ -517,7 +521,6 @@ with app.setup:
             qids = tuple(qid for qid, _ in matches)
             info = {qid: [0, "", "", ""] for qid in qids}
 
-            # Get connectivity
             csv_bytes = execute_with_retry(
                 query_taxon_connectivity(values_clause("taxon", qids, prefix="wd:")),
                 endpoint=self.endpoint,
@@ -532,7 +535,6 @@ with app.setup:
                         qid = extract_from_url(taxon_url, WIKIDATA_ENTITY_PREFIX)
                         info[qid][0] = int(row.get("count") or 0)
 
-            # Get details
             csv_bytes = execute_with_retry(
                 query_taxon_details(values_clause("taxon", qids, prefix="wd:")),
                 endpoint=self.endpoint,
@@ -548,10 +550,8 @@ with app.setup:
                         info[qid][1] = row.get("taxonDescription", "")
                         info[qid][2] = row.get("taxon_parentLabel", "")
 
-            # Best QID
             selected_qid = max(qids, key=lambda q: info[q][0])
 
-            # Sort for display
             matches_sorted = sorted(matches, key=lambda x: info[x[0]][0], reverse=True)
             matches_with_details = [
                 (qid, name, info[qid][1], info[qid][2], info[qid][0])
@@ -706,9 +706,13 @@ with app.setup:
                         ns_cache,
                     )
                 del batch
+                if self.memory.is_wasm:
+                    gc.collect()
 
             result = g.serialize(format="turtle").encode("utf-8")
             del df_collected, g
+            if self.memory.is_wasm:
+                gc.collect()
             return result
 
         def _create_dataset_uri(self, df: pl.DataFrame) -> tuple[URIRef, str, str]:
@@ -910,16 +914,13 @@ with app.setup:
                 pl.col("ref_title").alias("reference_title"),
                 pl.col("ref_doi").alias("reference_doi"),
                 pl.col("pub_date").alias("reference_date"),
-                pl.concat_str([pl.lit("Q"), pl.col("compound").cast(pl.Utf8)])
-                .alias(
+                pl.concat_str([pl.lit("Q"), pl.col("compound").cast(pl.Utf8)]).alias(
                     "compound_qid",
                 ),
-                pl.concat_str([pl.lit("Q"), pl.col("taxon").cast(pl.Utf8)])
-                .alias(
+                pl.concat_str([pl.lit("Q"), pl.col("taxon").cast(pl.Utf8)]).alias(
                     "taxon_qid",
                 ),
-                pl.concat_str([pl.lit("Q"), pl.col("reference").cast(pl.Utf8)])
-                .alias(
+                pl.concat_str([pl.lit("Q"), pl.col("reference").cast(pl.Utf8)]).alias(
                     "reference_qid",
                 ),
             ]
@@ -985,6 +986,8 @@ with app.setup:
                     if val:
                         result_hasher.update(str(val).encode("utf-8"))
                 del df_temp
+                if self.memory.is_wasm:
+                    gc.collect()
             except Exception:
                 pass
 
@@ -1257,7 +1260,7 @@ def ui_search_panel(
 
     main_search = mo.hstack(
         [
-            mo.vstack([run_button, taxon_input]),
+            mo.vstack([taxon_input, run_button]),
             mo.vstack(structure_fields),
         ],
         gap=2,
@@ -1266,7 +1269,7 @@ def ui_search_panel(
     )
 
     filter_row = mo.hstack([mass_filter, year_filter, formula_filter], gap=2, wrap=True)
-    filters_ui = [main_search, filter_row]
+    filters_ui = [filter_row, main_search]
 
     if mass_filter.value:
         filters_ui.append(mo.hstack([mass_min, mass_max], gap=2, wrap=True))
@@ -1322,7 +1325,7 @@ def execute_search(
         lotus, results, stats, qid, criteria, query_hash, result_hash, taxon_warning = (
             None,
             None,
-            DatasetStats(),
+            None,
             None,
             None,
             None,
@@ -1375,7 +1378,7 @@ def execute_search(
             else (0.0, 2000.0),
             year_range=(year_start.value, year_end.value)
             if year_filter.value
-            else (1900, 2024),
+            else (1900, YEAR),
             formula_filters=formula_filt,
         )
 
@@ -1415,14 +1418,13 @@ def display_results(
     taxon_input,
     taxon_warning,
 ):
-    if results is None or stats is None or stats.n_entries == 0:
-        if stats is not None and stats.n_entries == 0:
-            result_ui = mo.callout(
-                mo.md(f"No compounds found for **{taxon_input.value}**"),
-                kind="warn",
-            )
-        else:
-            result_ui = mo.Html("")
+    if results is None or stats is None:
+        result_ui = mo.Html("")
+    elif stats.n_entries == 0:
+        result_ui = mo.callout(
+            mo.md(f"No compounds found for **{taxon_input.value}**"),
+            kind="warn",
+        )
     else:
         display_df = lotus.build_display_dataframe(results, CONFIG["table_row_limit"])
 
@@ -1451,9 +1453,7 @@ def display_results(
         def wrap_statement(statement: str):
             if not statement:
                 return ""
-            statement_id = statement.cast(pl.Utf8).replace(
-                WIKIDATA_STATEMENT_PREFIX, ""
-            )
+            statement_id = statement.replace(WIKIDATA_STATEMENT_PREFIX, "")
             url = f"https://www.wikidata.org/entity/statement/{statement_id}"
             return mo.Html(
                 f'<a href="{url}" style="color:{CONFIG["color_hyperlink"]};" target="_blank">{statement_id}</a>',
@@ -1471,7 +1471,6 @@ def display_results(
                 f"**Hashes:** *Query*: `{query_hash}` | *Results*: `{result_hash}`",
             )
 
-        # FIX: Correctly pluralize headers
         stats_ui = mo.hstack(
             [
                 mo.stat(
@@ -1545,7 +1544,6 @@ def display_results(
 
         shareable_url = lotus.build_shareable_url(criteria)
 
-        # Build result UI with optional warning
         result_parts = [mo.md("## Results"), search_info, stats_ui]
         if shareable_url:
             result_parts.append(
@@ -1565,28 +1563,28 @@ def display_results(
 
 @app.cell
 def is_large(results, stats):
-    """Generate download buttons."""
-    if results is None or stats is None or stats.n_entries == 0:
-        mo.Html("")
-
-    is_large = stats.n_entries > CONFIG["table_row_limit"]
+    """Check if dataset is large."""
+    if results is None or stats is None:
+        is_large = False
+    else:
+        is_large = stats.n_entries > CONFIG["table_row_limit"]
     return (is_large,)
 
 
 @app.cell
 def generate_buttons(is_large, lotus, results):
-    if is_large:
-        # Large dataset - on-demand generation
+    if results is None or not is_large:
+        csv_btn, json_btn, rdf_btn, rdf_df = pl.LazyFrame(), None, None, None
+    else:
         csv_btn = mo.ui.run_button(label="Generate CSV")
         json_btn = mo.ui.run_button(label="Generate JSON")
         rdf_btn = mo.ui.run_button(label="Generate RDF")
+        rdf_df = lotus.prepare_export_dataframe(results, include_rdf_ref=True)
 
-    rdf_df = lotus.prepare_export_dataframe(results, include_rdf_ref=True)
+        del results
+        if IS_PYODIDE:
+            gc.collect()
 
-    # Delete results to free memory
-    del results
-    if IS_PYODIDE:
-        gc.collect()
     return csv_btn, json_btn, rdf_btn, rdf_df
 
 
@@ -1600,11 +1598,15 @@ def generate_downloads(
     qid,
     rdf_btn,
     rdf_df,
+    results,
+    stats,
     taxon_input,
 ):
-    if is_large:
+    if stats is None or stats.n_entries == 0:
+        download_ui = mo.Html("")
+    elif is_large:
         # CSV
-        if csv_btn.value:
+        if csv_btn and csv_btn.value:
             with mo.status.spinner("Generating CSV..."):
                 csv_bytes = lotus.export(rdf_df.drop("ref"), "csv")
                 csv_ui = create_download_button(
@@ -1613,10 +1615,13 @@ def generate_downloads(
                     "CSV",
                     "text/csv",
                 )
+                del csv_bytes
+                if IS_PYODIDE:
+                    gc.collect()
         else:
             csv_ui = mo.Html("")
 
-        if json_btn.value:
+        if json_btn and json_btn.value:
             with mo.status.spinner("Generating JSON..."):
                 json_bytes = lotus.export(rdf_df.drop("ref"), "json")
                 json_ui = create_download_button(
@@ -1625,10 +1630,13 @@ def generate_downloads(
                     "JSON",
                     "application/json",
                 )
+                del json_bytes
+                if IS_PYODIDE:
+                    gc.collect()
         else:
             json_ui = mo.Html("")
 
-        if rdf_btn.value:
+        if rdf_btn and rdf_btn.value:
             with mo.status.spinner("Generating RDF..."):
                 rdf_bytes = lotus.export(
                     rdf_df,
@@ -1643,6 +1651,9 @@ def generate_downloads(
                     "RDF",
                     "text/turtle",
                 )
+                del rdf_bytes
+                if IS_PYODIDE:
+                    gc.collect()
         else:
             rdf_ui = mo.Html("")
 
@@ -1696,6 +1707,11 @@ def generate_downloads(
             ],
         )
 
+        # Clean up
+        del csv_bytes, json_bytes, rdf_bytes, export_df, rdf_export_df
+        if IS_PYODIDE:
+            gc.collect()
+
     download_ui
     return
 
@@ -1724,7 +1740,6 @@ def footer():
 def main():
     """Entry point for CLI and GUI modes."""
     if len(sys.argv) > 1 and sys.argv[1] == "export":
-        # CLI mode - import necessary functions from setup block
         import argparse
         from pathlib import Path
 
@@ -1778,7 +1793,6 @@ def main():
             if args.verbose:
                 print(f"Querying: {args.taxon} (QID: {qid})", file=sys.stderr)
 
-            # Build formula filters
             formula_filt = None
             if any(
                 [
@@ -1821,9 +1835,9 @@ def main():
                 mass_range=(args.mass_min or 0.0, args.mass_max or 2000.0)
                 if args.mass_min or args.mass_max
                 else (0.0, 2000.0),
-                year_range=(args.year_start or 1900, args.year_end or 2024)
+                year_range=(args.year_start or 1900, args.year_end or YEAR)
                 if args.year_start or args.year_end
-                else (1900, 2024),
+                else (1900, YEAR),
                 formula_filters=formula_filt,
             )
 
@@ -1855,7 +1869,6 @@ def main():
                 print(json.dumps(metadata, indent=2))
                 sys.exit(0)
 
-            # Export
             if args.format in ["csv", "json"]:
                 export_df = lotus.prepare_export_dataframe(
                     results,
@@ -1916,7 +1929,6 @@ def main():
                 traceback.print_exc()
             sys.exit(1)
     else:
-        # GUI mode
         app.run()
 
 
