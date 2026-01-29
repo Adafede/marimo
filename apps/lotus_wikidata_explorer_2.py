@@ -177,9 +177,9 @@ with app.setup:
         def from_lazyframe(cls, df: pl.LazyFrame) -> "DatasetStats":
             stats = df.select(
                 [
-                    pl.col("compound").n_unique().cast(pl.UInt32).alias("n_compounds"),
-                    pl.col("taxon").n_unique().cast(pl.UInt32).alias("n_taxa"),
-                    pl.col("reference").n_unique().cast(pl.UInt32).alias("n_refs"),
+                    pl.col("compound").approx_n_unique().cast(pl.UInt32).alias("n_compounds"),
+                    pl.col("taxon").approx_n_unique().cast(pl.UInt32).alias("n_taxa"),
+                    pl.col("reference").approx_n_unique().cast(pl.UInt32).alias("n_refs"),
                     pl.len().cast(pl.UInt32).alias("n_entries"),
                 ],
             ).collect()
@@ -237,15 +237,15 @@ with app.setup:
                     "taxon": pl.UInt32,
                     "reference": pl.UInt32,
                     "compound_mass": pl.Float32,
-                    "name": pl.Categorical,
-                    "inchikey": pl.Categorical,
-                    "smiles": pl.Categorical,
-                    "taxon_name": pl.Categorical,
-                    "ref_title": pl.Categorical,
-                    "ref_doi": pl.Categorical,
-                    "mf": pl.Categorical,
-                    "statement": pl.Categorical,
-                    "ref": pl.Categorical,
+                    "name": pl.Utf8,
+                    "inchikey": pl.Utf8,
+                    "smiles": pl.Utf8,
+                    "taxon_name": pl.Utf8,
+                    "ref_title": pl.Utf8,
+                    "ref_doi": pl.Utf8,
+                    "mf": pl.Utf8,
+                    "statement": pl.Utf8,
+                    "ref": pl.Utf8,
                 },
             )
 
@@ -346,18 +346,18 @@ with app.setup:
             return df.with_columns(
                 [
                     pl.col("compound").cast(pl.UInt32),
-                    pl.col("name").cast(pl.Categorical),
-                    pl.col("inchikey").cast(pl.Categorical),
-                    pl.col("smiles").cast(pl.Categorical),
-                    pl.col("taxon_name").cast(pl.Categorical),
+                    pl.col("name").cast(pl.Utf8),
+                    pl.col("inchikey").cast(pl.Utf8),
+                    pl.col("smiles").cast(pl.Utf8),
+                    pl.col("taxon_name").cast(pl.Utf8),
                     pl.col("taxon").cast(pl.UInt32),
-                    pl.col("ref_title").cast(pl.Categorical),
-                    pl.col("ref_doi").cast(pl.Categorical),
+                    pl.col("ref_title").cast(pl.Utf8),
+                    pl.col("ref_doi").cast(pl.Utf8),
                     pl.col("reference").cast(pl.UInt32),
                     pl.col("mass").cast(pl.Float32),
-                    pl.col("mf").cast(pl.Categorical),
-                    pl.col("statement").cast(pl.Categorical),
-                    pl.col("ref").cast(pl.Categorical),
+                    pl.col("mf").cast(pl.Utf8),
+                    pl.col("statement").cast(pl.Utf8),
+                    pl.col("ref").cast(pl.Utf8),
                 ],
             )
 
@@ -913,18 +913,15 @@ with app.setup:
                 pl.concat_str([pl.lit("Q"), pl.col("compound").cast(pl.Utf8)])
                 .alias(
                     "compound_qid",
-                )
-                .cast(pl.Categorical),
+                ),
                 pl.concat_str([pl.lit("Q"), pl.col("taxon").cast(pl.Utf8)])
                 .alias(
                     "taxon_qid",
-                )
-                .cast(pl.Categorical),
+                ),
                 pl.concat_str([pl.lit("Q"), pl.col("reference").cast(pl.Utf8)])
                 .alias(
                     "reference_qid",
-                )
-                .cast(pl.Categorical),
+                ),
             ]
 
             if "statement" in df.collect_schema().names():
@@ -932,8 +929,7 @@ with app.setup:
                     pl.col("statement")
                     .cast(pl.Utf8)
                     .str.replace(WIKIDATA_STATEMENT_PREFIX, "", literal=True)
-                    .alias("statement_id")
-                    .cast(pl.Categorical),
+                    .alias("statement_id"),
                 )
 
             if include_rdf_ref and "ref" in df.collect_schema().names():
