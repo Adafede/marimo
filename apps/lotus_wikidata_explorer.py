@@ -44,13 +44,13 @@ with app.setup:
     import sys
     import urllib.parse
     import gc
+    from abc import ABC, abstractmethod
     from dataclasses import dataclass
     from datetime import date, datetime
     from rdflib import Graph, Literal, URIRef, BNode
     from rdflib.namespace import RDF, RDFS, XSD, DCTERMS
-    from abc import ABC, abstractmethod
 
-    _USE_LOCAL = True
+    _USE_LOCAL = False
     if _USE_LOCAL:
         sys.path.insert(0, ".")
 
@@ -100,7 +100,7 @@ with app.setup:
         "app_url": "https://github.com/Adafede/marimo/blob/main/apps/lotus_wikidata_explorer.py",
         "qlever_endpoint": "https://qlever.dev/api/wikidata",
         "table_row_limit": 100 if IS_PYODIDE else 1_000,
-        "download_embed_threshold_bytes": 500_000 if IS_PYODIDE else 5_000_000,
+        "download_embed_threshold_bytes": 10 if IS_PYODIDE else 100,
         "color_hyperlink": "#3377c4",
         "color_wikidata_blue": "#006699",
         "color_wikidata_green": "#339966",
@@ -210,7 +210,7 @@ with app.setup:
             self.is_wasm = is_wasm
 
         def get_batch_size(self, format: str) -> int:
-            sizes = {"csv": (2000, 10000), "json": (5000, 10000), "rdf": (500, 2000)}
+            sizes = {"csv": (2000, 10000), "json": (5000, 10000), "ttl": (500, 2000)}
             wasm_size, desktop_size = sizes.get(format, (1000, 5000))
             return wasm_size if self.is_wasm else desktop_size
 
@@ -660,7 +660,7 @@ with app.setup:
                 gc.collect()
             return result
 
-    class RDFExportStrategy(ExportStrategy):
+    class TTLExportStrategy(ExportStrategy):
         def __init__(
             self,
             memory: MemoryManager,
@@ -694,7 +694,7 @@ with app.setup:
                 result_hash,
             )
 
-            batch_size = self.memory.get_batch_size("rdf")
+            batch_size = self.memory.get_batch_size("ttl")
             processed_taxa = set()
             processed_refs = set()
             ns_cache = {
@@ -916,8 +916,8 @@ with app.setup:
                 strategy = CSVExportStrategy(self.memory)
             elif format == "json":
                 strategy = JSONExportStrategy(self.memory)
-            elif format == "rdf":
-                strategy = RDFExportStrategy(
+            elif format == "ttl":
+                strategy = TTLExportStrategy(
                     self.memory,
                     kwargs["taxon_input"],
                     kwargs["qid"],
@@ -1284,21 +1284,6 @@ with app.setup:
 
         return f"{date_str}_lotus_{safe_name}.{file_type}"
 
-    def create_download_button(data: bytes, filename: str, label: str, mimetype: str):
-        compressed, was_compressed = compress_if_large(
-            data,
-            CONFIG["download_embed_threshold_bytes"],
-        )
-        final_filename = filename + ".gz" if was_compressed else filename
-        final_mimetype = "application/gzip" if was_compressed else mimetype
-        display_label = label + (" (gzipped)" if was_compressed else "")
-        return mo.download(
-            data=compressed,
-            filename=final_filename,
-            label=display_label,
-            mimetype=final_mimetype,
-        )
-
 
 @app.cell
 def md_title():
@@ -1608,9 +1593,9 @@ def display_results(
     taxon_warning,
 ):
     if results is None or stats is None:
-        result_ui = mo.Html("")
+        _out = mo.Html("")
     elif stats.n_entries == 0:
-        result_ui = mo.callout(
+        _out = mo.callout(
             mo.md(f"No compounds found for **{criteria.taxon}**"),
             kind="warn",
         )
@@ -1620,7 +1605,7 @@ def display_results(
         def wrap_image2(smiles: str) -> mo.Html:
             return mo.image(svg_from_smiles(smiles)) if smiles else mo.image("")
 
-        def wrap_qid(qid_val: str, color: str) -> mo.Html:
+        def wrap_qid(qid_val: str | int, color: str) -> mo.Html:
             if not qid_val:
                 return mo.Html("")
             if qid == "*":
@@ -1760,172 +1745,77 @@ def display_results(
             result_parts.append(mo.callout(taxon_warning, kind="warn"))
         result_parts.append(tabs_ui)
 
-        result_ui = mo.vstack(result_parts)
+        _out = mo.vstack(result_parts)
 
-    result_ui
+    _out
     return
-
-
-@app.cell
-def is_large(results, stats):
-    """Check if dataset is large."""
-    if results is None or stats is None:
-        is_large = False
-    else:
-        is_large = stats.n_entries > CONFIG["table_row_limit"]
-    return (is_large,)
-
-
-@app.cell
-def generate_buttons(is_large, lotus, results):
-    if results is None or not is_large:
-        csv_btn = None
-        json_btn = None
-        rdf_btn = None
-        export_df = pl.LazyFrame(schema={"compound_qid": pl.Utf8})
-        rdf_df = pl.LazyFrame(schema={"compound_qid": pl.Utf8})
-    else:
-        csv_btn = mo.ui.run_button(label="Generate CSV")
-        json_btn = mo.ui.run_button(label="Generate JSON")
-        rdf_btn = mo.ui.run_button(label="Generate RDF")
-        export_df = lotus.prepare_export_dataframe(results, include_rdf_ref=False)
-        rdf_df = lotus.prepare_export_dataframe(results, include_rdf_ref=True)
-
-        if IS_PYODIDE:
-            gc.collect()
-    return csv_btn, export_df, json_btn, rdf_btn, rdf_df
 
 
 @app.cell
 def generate_downloads(
     criteria,
-    csv_btn,
-    export_df,
-    is_large,
-    json_btn,
     lotus,
+    metadata,
     qid,
-    rdf_btn,
-    rdf_df,
+    result_hash,
     results,
-    stats,
+    run_button,
 ):
-    if stats is None or stats.n_entries == 0:
-        download_ui = mo.Html("")
-    elif is_large:
-        if csv_btn.value:
-            with mo.status.spinner("Generating CSV..."):
-                csv_bytes = lotus.export(export_df, "csv")
-                csv_ui = create_download_button(
-                    csv_bytes,
-                    generate_filename(criteria.taxon, "csv"),
-                    "CSV",
-                    "text/csv",
-                )
-                del csv_bytes
-                if IS_PYODIDE:
-                    gc.collect()
-        else:
-            csv_ui = mo.Html("")
-
-        if json_btn.value:
-            with mo.status.spinner("Generating JSON..."):
-                json_bytes = lotus.export(export_df, "json")
-                json_ui = create_download_button(
-                    json_bytes,
-                    generate_filename(criteria.taxon, "json"),
-                    "JSON",
-                    "application/json",
-                )
-                del json_bytes
-                if IS_PYODIDE:
-                    gc.collect()
-        else:
-            json_ui = mo.Html("")
-
-        if rdf_btn.value:
-            with mo.status.spinner("Generating RDF..."):
-                rdf_bytes = lotus.export(
-                    rdf_df,
-                    "rdf",
-                    taxon_input=criteria.taxon,
-                    qid=qid,
-                    filters=criteria.to_filters_dict(),
-                )
-                rdf_ui = create_download_button(
-                    rdf_bytes,
-                    generate_filename(criteria.taxon, "ttl"),
-                    "RDF",
-                    "text/turtle",
-                )
-                del rdf_bytes
-                if IS_PYODIDE:
-                    gc.collect()
-        else:
-            rdf_ui = mo.Html("")
-
-        download_ui = mo.vstack(
-            [
-                mo.md("### Download Data"),
-                mo.hstack([csv_btn, json_btn, rdf_btn], gap=2, wrap=True),
-                csv_ui,
-                json_ui,
-                rdf_ui,
-            ],
-        )
+    if not run_button.value:
+        _out = mo.Html("")
     else:
-        export_df_small = lotus.prepare_export_dataframe(results, include_rdf_ref=False)
-        rdf_df_small = lotus.prepare_export_dataframe(results, include_rdf_ref=True)
-        del results
+        export_df = lotus.prepare_export_dataframe(results, include_rdf_ref=False)
+        rdf_df = lotus.prepare_export_dataframe(results, include_rdf_ref=True)
 
-        csv_bytes = lotus.export(export_df_small, "csv")
-        json_bytes = lotus.export(export_df_small, "json")
-        del export_df_small
+        buttons = [
+            mo.download(
+                label="CSV",
+                filename=generate_filename(criteria.taxon, "csv.gz"),
+                mimetype="application/gzip",
+                data=lambda: compress_if_large(
+                    lotus.export(export_df, "csv"),
+                    CONFIG["download_embed_threshold_bytes"],
+                )[0],
+            ),
+            mo.download(
+                label="JSON",
+                filename=generate_filename(criteria.taxon, "json.gz"),
+                mimetype="application/gzip",
+                data=lambda: compress_if_large(
+                    lotus.export(export_df, "json"),
+                    CONFIG["download_embed_threshold_bytes"],
+                )[0],
+            ),
+            mo.download(
+                label="TTL",
+                filename=generate_filename(criteria.taxon, "ttl.gz"),
+                mimetype="application/gzip",
+                data=lambda: compress_if_large(
+                    lotus.export(
+                        rdf_df,
+                        "ttl",
+                        taxon_input=criteria.taxon,
+                        qid=qid,
+                        filters=criteria.to_filters_dict(),
+                    ),
+                    CONFIG["download_embed_threshold_bytes"],
+                )[0],
+            ),
+            mo.download(
+                label="Metadata",
+                filename=f"{result_hash}_metadata.json",
+                mimetype="application/json",
+                data=lambda: json.dumps(metadata, indent=2).encode("utf-8"),
+            ),
+        ]
 
-        rdf_bytes = lotus.export(
-            rdf_df_small,
-            "rdf",
-            taxon_input=criteria.taxon,
-            qid=qid,
-            filters=criteria.to_filters_dict(),
-        )
-        del rdf_df_small
-
-        download_ui = mo.vstack(
+        _out = mo.vstack(
             [
                 mo.md("### Download Data"),
-                mo.hstack(
-                    [
-                        create_download_button(
-                            csv_bytes,
-                            generate_filename(criteria.taxon, "csv"),
-                            "CSV",
-                            "text/csv",
-                        ),
-                        create_download_button(
-                            json_bytes,
-                            generate_filename(criteria.taxon, "json"),
-                            "JSON",
-                            "application/json",
-                        ),
-                        create_download_button(
-                            rdf_bytes,
-                            generate_filename(criteria.taxon, "ttl"),
-                            "RDF",
-                            "text/turtle",
-                        ),
-                    ],
-                    gap=2,
-                    wrap=True,
-                ),
+                mo.hstack(buttons, gap=2, wrap=True),
             ],
         )
-
-        # Clean up all bytes
-        del csv_bytes, json_bytes, rdf_bytes
-        if IS_PYODIDE:
-            gc.collect()
-    download_ui
+    _out
     return
 
 
