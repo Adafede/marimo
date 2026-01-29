@@ -6,6 +6,8 @@
 #     "polars==1.37.1",
 #     "rdflib==7.5.0",
 # ]
+# [tool.marimo.runtime]
+# output_max_bytes = 100_000_000
 # ///
 
 """
