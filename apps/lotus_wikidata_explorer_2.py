@@ -86,7 +86,6 @@ with app.setup:
     from modules.chem.cdk.depict.svg_from_smiles import svg_from_smiles
     from modules.knowledge.rdf.graph.add_literal import add_literal
     from modules.knowledge.rdf.namespace.wikidata import WIKIDATA_NAMESPACES
-    from modules.text.formula.element_config import ELEMENT_DEFAULTS
     from modules.io.compress.if_large import compress_if_large
 
     IS_PYODIDE = "pyodide" in sys.modules
@@ -107,7 +106,7 @@ with app.setup:
         "color_wikidata_green": "#339966",
         "color_wikidata_red": "#990000",
         "page_size_default": 10,
-        "page_size_export": 25,
+        "page_size_export": 10,
     }
 
     PLURAL_MAP = {
@@ -123,7 +122,7 @@ with app.setup:
     # DOMAIN MODELS
     # ========================================================================
 
-    @dataclass(frozen=True)
+    @dataclass(frozen=True, slots=True)
     class SearchCriteria:
         """Immutable search parameters."""
 
@@ -166,7 +165,7 @@ with app.setup:
                     filters["molecular_formula"] = formula_dict
             return filters
 
-    @dataclass(frozen=True)
+    @dataclass(frozen=True, slots=True)
     class DatasetStats:
         """Dataset statistics."""
 
@@ -406,7 +405,7 @@ with app.setup:
             return df.unique(
                 subset=["compound", "taxon", "reference"],
                 keep="first",
-            ).sort("name")
+            )
 
     class FilterService:
         @staticmethod
@@ -726,15 +725,24 @@ with app.setup:
             ).hexdigest()
 
             result_hasher = hashlib.sha256()
-            for val in (
-                df.select(pl.col("compound_qid"))
-                .to_series()
-                .drop_nulls()
-                .unique()
-                .sort()
-            ):
-                result_hasher.update(str(val).encode("utf-8"))
-            result_hash = result_hasher.hexdigest()
+            try:
+                unique_compounds = (
+                    df.select(pl.col("compound"))
+                    .drop_nulls()
+                    .unique()
+                    .sort("compound")
+                    .collect()
+                )
+                # Stream in batches instead of full list
+                for batch in unique_compounds.iter_slices(1000):
+                    for val in batch["compound"]:
+                        if val:
+                            result_hasher.update(str(val).encode("utf-8"))
+                del unique_compounds
+                if self.memory.is_wasm:
+                    gc.collect()
+            except Exception:
+                pass
 
             return URIRef(f"urn:hash:sha256:{result_hash}"), query_hash, result_hash
 
@@ -941,8 +949,7 @@ with app.setup:
             return df.select(exprs)
 
         def build_display_dataframe(self, df: pl.LazyFrame, limit: int) -> pl.DataFrame:
-            df = df.limit(limit).collect() if limit else df.collect()
-            return df.select(
+            df = df.select(
                 [
                     pl.col("smiles").alias("Compound Depiction"),
                     pl.col("name").alias("Compound Name"),
@@ -960,6 +967,7 @@ with app.setup:
                     pl.col("statement").alias("Statement"),
                 ],
             )
+            return df.limit(limit).collect() if limit else df.collect()
 
         def compute_hashes(
             self,
@@ -1519,7 +1527,7 @@ def display_results(
 
         export_df_preview = (
             lotus.prepare_export_dataframe(results, include_rdf_ref=False)
-            .limit(100)
+            .limit(10)
             .collect()
         )
         metadata = lotus.create_metadata(
@@ -1591,22 +1599,20 @@ def generate_buttons(is_large, lotus, results):
         del results
         if IS_PYODIDE:
             gc.collect()
-
-    return csv_btn, json_btn, rdf_btn, export_df, rdf_df
+    return csv_btn, export_df, json_btn, rdf_btn, rdf_df
 
 
 @app.cell
 def generate_downloads(
     criteria,
     csv_btn,
+    export_df,
     is_large,
     json_btn,
     lotus,
     qid,
     rdf_btn,
-    export_df,
     rdf_df,
-    results,
     stats,
     taxon_input,
 ):
@@ -1674,8 +1680,8 @@ def generate_downloads(
             ],
         )
     else:
-        csv_bytes = lotus.export(rdf_df, "csv")
-        json_bytes = lotus.export(rdf_df, "json")
+        csv_bytes = lotus.export(export_df, "csv")
+        json_bytes = lotus.export(export_df, "json")
         rdf_bytes = lotus.export(
             rdf_df,
             "rdf",
