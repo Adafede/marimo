@@ -99,8 +99,8 @@ with app.setup:
         "app_name": "LOTUS Wikidata Explorer",
         "app_url": "https://github.com/Adafede/marimo/blob/main/apps/lotus_wikidata_explorer.py",
         "qlever_endpoint": "https://qlever.dev/api/wikidata",
-        "table_row_limit": 500,
-        "download_embed_threshold_bytes": 500_000,
+        "table_row_limit": 100 if IS_PYODIDE else 1_000,
+        "download_embed_threshold_bytes": 500_000 if IS_PYODIDE else 5_000_000,
         "color_hyperlink": "#3377c4",
         "color_wikidata_blue": "#006699",
         "color_wikidata_green": "#339966",
@@ -755,9 +755,25 @@ with app.setup:
             SCHEMA = WIKIDATA_NAMESPACES["SCHEMA"]
             WD = WIKIDATA_NAMESPACES["WD"]
 
+            # Normalize taxon name for RDF
+            if not self.taxon_input or self.taxon_input.strip() == "":
+                dataset_name = "LOTUS Data - any taxon (SMILES-only search)"
+                taxon_description = "any taxon"
+            elif self.taxon_input == "*":
+                dataset_name = "LOTUS Data - all taxa"
+                taxon_description = "all taxa (Biota)"
+            else:
+                dataset_name = f"LOTUS Data - {self.taxon_input}"
+                taxon_description = self.taxon_input
+
             g.add((dataset_uri, RDF.type, SCHEMA.Dataset))
+            g.add((dataset_uri, SCHEMA.name, Literal(dataset_name)))
             g.add(
-                (dataset_uri, SCHEMA.name, Literal(f"LOTUS Data - {self.taxon_input}")),
+                (
+                    dataset_uri,
+                    SCHEMA.description,
+                    Literal(f"Chemical compounds from {taxon_description}"),
+                ),
             )
             g.add(
                 (
@@ -771,8 +787,12 @@ with app.setup:
             g.add((dataset_uri, DCTERMS.source, URIRef(WIKIDATA_HTTP_BASE)))
             g.add((dataset_uri, SCHEMA.isBasedOn, URIRef(WIKI_PREFIX + "Q104225190")))
 
-            if self.qid and self.qid != "*":
+            # Only add taxon reference if we have a specific taxon
+            if self.qid and self.qid != "*" and self.qid.strip():
                 g.add((dataset_uri, SCHEMA.about, WD[self.qid]))
+            elif self.taxon_input == "*":
+                # Add Biota reference for "all taxa"
+                g.add((dataset_uri, SCHEMA.about, WD["Q2382443"]))
 
             g.add(
                 (dataset_uri, DCTERMS.provenance, Literal(f"Query hash: {query_hash}")),
@@ -974,9 +994,16 @@ with app.setup:
             filters: dict,
             df: pl.LazyFrame,
         ) -> tuple[str, str]:
-            query_components = [qid or "", taxon_input or ""]
+            # Normalize components for hash (use consistent representation)
+            normalized_qid = qid if qid and qid.strip() else "*"
+            normalized_taxon = (
+                taxon_input if taxon_input and taxon_input.strip() else ""
+            )
+
+            query_components = [normalized_qid, normalized_taxon]
             if filters:
                 query_components.append(json.dumps(filters, sort_keys=True))
+
             query_hash = hashlib.sha256(
                 "|".join(query_components).encode("utf-8"),
             ).hexdigest()
@@ -1012,21 +1039,24 @@ with app.setup:
             query_hash: str,
             result_hash: str,
         ) -> dict:
+            """Create rich Schema.org compliant metadata."""
+
+            # Normalize taxon information
+            effective_taxon = self._normalize_taxon_display(taxon_input, qid)
+            taxon_description = self._get_taxon_description(taxon_input, qid, filters)
+
+            # Build dataset name
             smiles_info = filters.get("chemical_structure", {})
             if smiles_info:
                 search_type = smiles_info.get("search_type", "substructure")
                 dataset_name = (
-                    f"LOTUS Data - {search_type.title()} search in {taxon_input}"
+                    f"LOTUS Data - {search_type.title()} search in {effective_taxon}"
                 )
-                description = f"Chemical compounds from taxon {taxon_input}"
-                if qid and qid != "*":
-                    description += f" (Wikidata QID: {qid})"
+                description = f"Chemical compounds from {taxon_description}"
                 description += f". Retrieved via LOTUS Wikidata Explorer with {search_type} chemical search (SACHEM/IDSM)."
             else:
-                dataset_name = f"LOTUS Data - {taxon_input}"
-                description = f"Chemical compounds from taxon {taxon_input}"
-                if qid and qid != "*":
-                    description += f" (Wikidata QID: {qid})"
+                dataset_name = f"LOTUS Data - {effective_taxon}"
+                description = f"Chemical compounds from {taxon_description}"
                 description += ". Retrieved via LOTUS Wikidata Explorer."
 
             metadata = {
@@ -1055,10 +1085,6 @@ with app.setup:
                         "url": "http://www.wikidata.org/",
                     },
                 ],
-                "sparql_endpoint": {
-                    "url": CONFIG["qlever_endpoint"],
-                    "name": "QLever Wikidata",
-                },
                 "citation": [
                     {
                         "@type": "ScholarlyArticle",
@@ -1099,28 +1125,30 @@ with app.setup:
                     "reference_qid",
                 ],
                 "search_parameters": {
-                    "taxon": taxon_input,
-                    "taxon_qid": qid if qid else None,
+                    "taxon": effective_taxon,
+                    "taxon_qid": qid if qid and qid != "*" else None,
                 },
             }
-
             if smiles_info:
                 metadata["provider"].append(
                     {
                         "@type": "Organization",
                         "name": "IDSM",
                         "url": "https://idsm.elixir-czech.cz/",
-                    },
+                    }
                 )
                 metadata["chemical_search_service"] = {
                     "name": "SACHEM",
                     "provider": "IDSM",
                     "endpoint": "https://idsm.elixir-czech.cz/sparql/endpoint/",
                 }
-
             if filters:
                 metadata["search_parameters"]["filters"] = filters
-
+            metadata["sparql_endpoint"] = {
+                "url": self.config["qlever_endpoint"],
+                "name": "QLever Wikidata",
+                "description": "Fast SPARQL endpoint for Wikidata",
+            }
             metadata["provenance"] = {
                 "query_hash": {
                     "algorithm": "SHA-256",
@@ -1135,35 +1163,78 @@ with app.setup:
 
             return metadata
 
+        def _normalize_taxon_display(self, taxon_input: str, qid: str) -> str:
+            """Get display-friendly taxon name."""
+            if not taxon_input or taxon_input.strip() == "":
+                return "any taxon"
+            elif taxon_input == "*":
+                return "all taxa"
+            else:
+                return taxon_input
+
+        def _get_taxon_description(
+            self, taxon_input: str, qid: str, filters: dict
+        ) -> str:
+            """Get taxon description for metadata."""
+            smiles_info = filters.get("chemical_structure", {})
+
+            if not taxon_input or taxon_input.strip() == "":
+                if smiles_info:
+                    return "any taxon (SMILES-only search)"
+                else:
+                    return "any taxon"
+            elif taxon_input == "*":
+                return "all taxa (Biota, Wikidata QID: Q2382443)"
+            elif qid and qid != "*":
+                return f"taxon {taxon_input} (Wikidata QID: {qid})"
+            else:
+                return f"taxon {taxon_input}"
+
         def create_citation(self, taxon_input: str) -> str:
+            """Generate citation handling None/empty taxon."""
             current_date = datetime.now().strftime("%B %d, %Y")
+
+            # Normalize taxon for citation
+            if not taxon_input or taxon_input.strip() == "":
+                taxon_display = "any taxon (SMILES-only search)"
+            elif taxon_input == "*":
+                taxon_display = "all taxa"
+            else:
+                taxon_display = taxon_input
+
             return f"""
-                    ## How to Cite This Data
+            ## How to Cite This Data
 
-                    ### Dataset Citation
-                    LOTUS Initiative via Wikidata. ({datetime.now().year}). *Data for {taxon_input}*.
-                    Retrieved from LOTUS Wikidata Explorer on {current_date}.
-                    License: [CC0 1.0 Universal](https://creativecommons.org/publicdomain/zero/1.0/)
+            ### Dataset Citation
+            LOTUS Initiative via Wikidata. ({datetime.now().year}). *Data for {taxon_display}*.
+            Retrieved from LOTUS Wikidata Explorer on {current_date}.
+            License: [CC0 1.0 Universal](https://creativecommons.org/publicdomain/zero/1.0/)
 
-                    ### LOTUS Initiative Publication
-                    Rutz A, Sorokina M, Galgonek J, et al. (2022). The LOTUS initiative for open knowledge
-                    management in natural products research. *eLife* **11**:e70780.
-                    DOI: [10.7554/eLife.70780](https://doi.org/10.7554/eLife.70780)
-                    """
+            ### LOTUS Initiative Publication
+            Rutz A, Sorokina M, Galgonek J, et al. (2022). The LOTUS initiative for open knowledge
+            management in natural products research. *eLife* **11**:e70780.
+            DOI: [10.7554/eLife.70780](https://doi.org/10.7554/eLife.70780)
+            """
 
         def build_shareable_url(self, criteria: SearchCriteria) -> str:
+            """Build shareable URL handling None/empty taxon."""
             params = {}
-            if criteria.taxon:
+
+            # Only add taxon if it's not empty (empty means SMILES-only)
+            if criteria.taxon and criteria.taxon.strip() and criteria.taxon != "":
                 params["taxon"] = criteria.taxon
+
             if criteria.smiles:
                 params["smiles"] = criteria.smiles
                 params["smiles_search_type"] = criteria.smiles_search_type
                 if criteria.smiles_search_type == "similarity":
                     params["smiles_threshold"] = str(criteria.smiles_threshold)
+
             if criteria.has_mass_filter():
                 params["mass_filter"] = "true"
                 params["mass_min"] = str(criteria.mass_range[0])
                 params["mass_max"] = str(criteria.mass_range[1])
+
             if criteria.has_year_filter():
                 params["year_filter"] = "true"
                 params["year_start"] = str(criteria.year_range[0])
@@ -1178,12 +1249,35 @@ with app.setup:
     # ========================================================================
 
     def generate_filename(taxon_name: str, file_type: str, filters: dict = None) -> str:
-        safe_name = (
-            taxon_name.replace(" ", "_").replace("/", "_")
-            if taxon_name != "*"
-            else "all_taxa"
-        )
+        """Generate safe filename handling None/empty taxon."""
+        # Normalize taxon for filename
+        if not taxon_name or taxon_name.strip() == "":
+            safe_name = "any_taxon"
+        elif taxon_name == "*":
+            safe_name = "all_taxa"
+        else:
+            safe_name = (
+                taxon_name.replace(" ", "_")
+                .replace("/", "_")
+                .replace("\\", "_")
+                .replace(":", "_")
+                .replace("*", "star")
+                .replace("?", "")
+                .replace('"', "")
+                .replace("<", "")
+                .replace(">", "")
+                .replace("|", "")
+            )
+
         date_str = datetime.now().strftime("%Y%m%d")
+
+        # Add filter info to filename if present
+        if filters and filters.get("chemical_structure"):
+            search_type = filters["chemical_structure"].get(
+                "search_type", "substructure"
+            )
+            return f"{date_str}_lotus_{safe_name}_{search_type}.{file_type}"
+
         return f"{date_str}_lotus_{safe_name}.{file_type}"
 
     def create_download_button(data: bytes, filename: str, label: str, mimetype: str):
@@ -1922,10 +2016,18 @@ def main():
         try:
             lotus = LOTUSExplorer(CONFIG, False)
 
-            if args.taxon is None:
-                args.taxon = "*"
-
-            qid, _ = lotus.resolve_taxon(args.taxon)
+            if args.taxon is None or args.taxon.strip() == "":
+                if args.smiles:
+                    # SMILES-only search
+                    args.taxon = ""
+                    qid = "*"
+                else:
+                    print("[x] Need taxon or SMILES", file=sys.stderr)
+                    sys.exit(1)
+            elif args.taxon == "*":
+                qid = "*"
+            else:
+                qid, _ = lotus.resolve_taxon(args.taxon)
             if not qid:
                 print(f"[x] Taxon not found: {args.taxon}", file=sys.stderr)
                 sys.exit(1)
