@@ -1135,7 +1135,7 @@ with app.setup:
                         "@type": "Organization",
                         "name": "IDSM",
                         "url": "https://idsm.elixir-czech.cz/",
-                    }
+                    },
                 )
                 metadata["chemical_search_service"] = {
                     "name": "SACHEM",
@@ -1173,7 +1173,10 @@ with app.setup:
                 return taxon_input
 
         def _get_taxon_description(
-            self, taxon_input: str, qid: str, filters: dict
+            self,
+            taxon_input: str,
+            qid: str,
+            filters: dict,
         ) -> str:
             """Get taxon description for metadata."""
             smiles_info = filters.get("chemical_structure", {})
@@ -1274,7 +1277,8 @@ with app.setup:
         # Add filter info to filename if present
         if filters and filters.get("chemical_structure"):
             search_type = filters["chemical_structure"].get(
-                "search_type", "substructure"
+                "search_type",
+                "substructure",
             )
             return f"{date_str}_lotus_{safe_name}_{search_type}.{file_type}"
 
@@ -1613,12 +1617,12 @@ def display_results(
     else:
         display_df = lotus.build_display_dataframe(results, CONFIG["table_row_limit"])
 
-        def wrap_image2(smiles: str):
-            return mo.image(svg_from_smiles(smiles)) if smiles else ""
+        def wrap_image2(smiles: str) -> mo.Html:
+            return mo.image(svg_from_smiles(smiles)) if smiles else mo.image("")
 
-        def wrap_qid(qid_val: str, color: str):
+        def wrap_qid(qid_val: str, color: str) -> mo.Html:
             if not qid_val:
-                return ""
+                return mo.Html("")
             if qid == "*":
                 url = "https://qlever.scholia.wiki/taxon/all"
             else:
@@ -1627,17 +1631,17 @@ def display_results(
                 f'<a href="{url}" style="color:{color};" target="_blank">Q{qid_val}</a>',
             )
 
-        def wrap_doi(doi: str):
+        def wrap_doi(doi: str) -> mo.Html:
             if not doi:
-                return ""
+                return mo.Html("")
             url = f"https://doi.org/{doi}"
             return mo.Html(
                 f'<a href="{url}" style="color:{CONFIG["color_hyperlink"]};" target="_blank">{doi}</a>',
             )
 
-        def wrap_statement(statement: str):
+        def wrap_statement(statement: str) -> mo.Html:
             if not statement:
-                return ""
+                return mo.Html("")
             statement_id = statement.replace(WIKIDATA_STATEMENT_PREFIX, "")
             url = f"https://www.wikidata.org/entity/statement/{statement_id}"
             return mo.Html(
