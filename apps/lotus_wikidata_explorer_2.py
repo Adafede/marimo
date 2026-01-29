@@ -95,11 +95,11 @@ with app.setup:
         pyodide_http.patch_all()
 
     CONFIG = {
-        "app_version": "0.2.0",
+        "app_version": "0.1.0",
         "app_name": "LOTUS Wikidata Explorer",
         "app_url": "https://github.com/Adafede/marimo/blob/main/apps/lotus_wikidata_explorer.py",
         "qlever_endpoint": "https://qlever.dev/api/wikidata",
-        "table_row_limit": 1_000,
+        "table_row_limit": 500,
         "download_embed_threshold_bytes": 500_000,
         "color_hyperlink": "#3377c4",
         "color_wikidata_blue": "#006699",
@@ -725,24 +725,15 @@ with app.setup:
             ).hexdigest()
 
             result_hasher = hashlib.sha256()
-            try:
-                unique_compounds = (
-                    df.select(pl.col("compound"))
-                    .drop_nulls()
-                    .unique()
-                    .sort("compound")
-                    .collect()
-                )
-                # Stream in batches instead of full list
-                for batch in unique_compounds.iter_slices(1000):
-                    for val in batch["compound"]:
-                        if val:
-                            result_hasher.update(str(val).encode("utf-8"))
-                del unique_compounds
-                if self.memory.is_wasm:
-                    gc.collect()
-            except Exception:
-                pass
+            for val in (
+                df.select(pl.col("compound_qid"))
+                .to_series()
+                .drop_nulls()
+                .unique()
+                .sort()
+            ):
+                result_hasher.update(str(val).encode("utf-8"))
+            result_hash = result_hasher.hexdigest()
 
             return URIRef(f"urn:hash:sha256:{result_hash}"), query_hash, result_hash
 
@@ -985,17 +976,19 @@ with app.setup:
 
             result_hasher = hashlib.sha256()
             try:
-                df_temp = (
+                unique_compounds = (
                     df.select(pl.col("compound"))
                     .drop_nulls()
                     .unique()
                     .sort("compound")
                     .collect()
                 )
-                for val in df_temp.get_column("compound").to_list():
-                    if val:
-                        result_hasher.update(str(val).encode("utf-8"))
-                del df_temp
+                # Stream in batches instead of full list
+                for batch in unique_compounds.iter_slices(1000):
+                    for val in batch["compound"]:
+                        if val:
+                            result_hasher.update(str(val).encode("utf-8"))
+                del unique_compounds
                 if self.memory.is_wasm:
                     gc.collect()
             except Exception:
@@ -1018,13 +1011,22 @@ with app.setup:
                 dataset_name = (
                     f"LOTUS Data - {search_type.title()} search in {taxon_input}"
                 )
+                description = f"Chemical compounds from taxon {taxon_input}"
+                if qid and qid != "*":
+                    description += f" (Wikidata QID: {qid})"
+                description += f". Retrieved via LOTUS Wikidata Explorer with {search_type} chemical search (SACHEM/IDSM)."
             else:
                 dataset_name = f"LOTUS Data - {taxon_input}"
+                description = f"Chemical compounds from taxon {taxon_input}"
+                if qid and qid != "*":
+                    description += f" (Wikidata QID: {qid})"
+                description += ". Retrieved via LOTUS Wikidata Explorer."
 
             metadata = {
                 "@context": "https://schema.org/",
                 "@type": "Dataset",
                 "name": dataset_name,
+                "description": description,
                 "version": CONFIG["app_version"],
                 "dateCreated": datetime.now().isoformat(),
                 "license": "https://creativecommons.org/publicdomain/zero/1.0/",
@@ -1034,16 +1036,89 @@ with app.setup:
                     "version": CONFIG["app_version"],
                     "url": CONFIG["app_url"],
                 },
+                "provider": [
+                    {
+                        "@type": "Organization",
+                        "name": "LOTUS Initiative",
+                        "url": "https://www.wikidata.org/wiki/Q104225190",
+                    },
+                    {
+                        "@type": "Organization",
+                        "name": "Wikidata",
+                        "url": "http://www.wikidata.org/",
+                    },
+                ],
+                "citation": [
+                    {
+                        "@type": "ScholarlyArticle",
+                        "name": "LOTUS initiative",
+                        "identifier": "https://doi.org/10.7554/eLife.70780",
+                    },
+                ],
+                "distribution": [
+                    {
+                        "@type": "DataDownload",
+                        "encodingFormat": "text/csv",
+                        "contentUrl": "data:text/csv",
+                    },
+                    {
+                        "@type": "DataDownload",
+                        "encodingFormat": "application/json",
+                        "contentUrl": "data:application/json",
+                    },
+                    {
+                        "@type": "DataDownload",
+                        "encodingFormat": "text/turtle",
+                        "contentUrl": "data:text/turtle",
+                    },
+                ],
                 "numberOfRecords": stats.n_entries,
-                "search_parameters": {"taxon": taxon_input, "taxon_qid": qid},
+                "variablesMeasured": [
+                    "compound_name",
+                    "compound_smiles",
+                    "compound_inchikey",
+                    "compound_mass",
+                    "molecular_formula",
+                    "taxon_name",
+                    "reference_title",
+                    "reference_doi",
+                    "reference_date",
+                    "compound_qid",
+                    "taxon_qid",
+                    "reference_qid",
+                ],
+                "search_parameters": {
+                    "taxon": taxon_input,
+                    "taxon_qid": qid if qid else None,
+                },
             }
+
+            if smiles_info:
+                metadata["provider"].append(
+                    {
+                        "@type": "Organization",
+                        "name": "IDSM",
+                        "url": "https://idsm.elixir-czech.cz/",
+                    }
+                )
+                metadata["chemical_search_service"] = {
+                    "name": "SACHEM",
+                    "provider": "IDSM",
+                    "endpoint": "https://idsm.elixir-czech.cz/sparql/endpoint/",
+                }
 
             if filters:
                 metadata["search_parameters"]["filters"] = filters
 
             metadata["provenance"] = {
-                "query_hash": {"algorithm": "SHA-256", "value": query_hash},
-                "result_hash": {"algorithm": "SHA-256", "value": result_hash},
+                "query_hash": {
+                    "algorithm": "SHA-256",
+                    "value": query_hash,
+                },
+                "result_hash": {
+                    "algorithm": "SHA-256",
+                    "value": result_hash,
+                },
                 "dataset_uri": f"urn:hash:sha256:{result_hash}",
             }
 
