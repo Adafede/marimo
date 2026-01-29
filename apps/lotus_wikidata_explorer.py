@@ -1199,28 +1199,6 @@ def md_title():
     return
 
 
-# @app.cell
-# def ui_disclaimer():
-#     mo.callout(
-#         mo.md(
-#             """
-#             To run this script locally:
-
-#             ```
-#             uvx marimo run https://adafede.github.io/marimo/apps/lotus_wikidata_explorer.py
-#             ```
-
-#             """,
-#         ),
-#         kind="info",
-#     ).style(
-#         style={
-#             "overflow-wrap": "anywhere",
-#         },
-#     )
-#     return
-
-
 @app.cell
 def ui_help():
     mo.accordion(
@@ -1709,12 +1687,14 @@ def generate_downloads(
     qid,
     rdf_btn,
     rdf_df,
+    results,
     stats,
     taxon_input,
 ):
     if stats is None or stats.n_entries == 0:
         download_ui = mo.Html("")
     elif is_large:
+        del results
         if csv_btn and csv_btn.value:
             with mo.status.spinner("Generating CSV..."):
                 csv_bytes = lotus.export(export_df, "csv")
@@ -1778,6 +1758,7 @@ def generate_downloads(
     else:
         export_df_small = lotus.prepare_export_dataframe(results, include_rdf_ref=False)
         rdf_df_small = lotus.prepare_export_dataframe(results, include_rdf_ref=True)
+        del results
 
         csv_bytes = lotus.export(export_df_small, "csv")
         json_bytes = lotus.export(export_df_small, "json")
