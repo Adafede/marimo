@@ -1198,6 +1198,26 @@ def md_title():
     """)
     return
 
+# @app.cell
+# def ui_disclaimer():
+#     mo.callout(
+#         mo.md(
+#             """
+#             To run this script locally:
+
+#             ```
+#             uvx marimo run https://adafede.github.io/marimo/apps/lotus_wikidata_explorer.py
+#             ```
+
+#             """,
+#         ),
+#         kind="info",
+#     ).style(
+#         style={
+#             "overflow-wrap": "anywhere",
+#         },
+#     )
+#     return
 
 @app.cell
 def ui_help():
