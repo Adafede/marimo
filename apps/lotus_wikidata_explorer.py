@@ -189,7 +189,7 @@ with app.setup:
                     .alias("n_refs"),
                     pl.len().cast(pl.UInt32).alias("n_entries"),
                 ],
-                    ).collect()
+            ).collect()
 
             if stats.is_empty():
                 return cls(0, 0, 0, 0)
@@ -223,11 +223,11 @@ with app.setup:
             self.endpoint = endpoint
 
         def fetch_compounds(
-                self,
-                qid: str,
-                smiles: str | None = None,
-                smiles_search_type: str = "substructure",
-                smiles_threshold: float = 0.8,
+            self,
+            qid: str,
+            smiles: str | None = None,
+            smiles_search_type: str = "substructure",
+            smiles_threshold: float = 0.8,
         ) -> pl.LazyFrame:
             query = self._build_query(qid, smiles, smiles_search_type, smiles_threshold)
             csv_bytes = execute_with_retry(query, self.endpoint)
@@ -257,11 +257,11 @@ with app.setup:
             )
 
         def _build_query(
-                self,
-                qid: str,
-                smiles: str | None,
-                search_type: str,
-                threshold: float,
+            self,
+            qid: str,
+            smiles: str | None,
+            search_type: str,
+            threshold: float,
         ) -> str:
             if smiles:
                 return query_sachem(
@@ -321,11 +321,11 @@ with app.setup:
                         .cast(pl.Utf8)
                         .str.split("doi.org/")
                         .list.last(),
-                        )
+                    )
                     .otherwise(pl.col("ref_doi"))
                     .alias("ref_doi"),
                 ],
-                    )
+            )
 
         @staticmethod
         def parse_dates(df: pl.LazyFrame) -> pl.LazyFrame:
@@ -333,7 +333,7 @@ with app.setup:
                 [
                     pl.when(
                         pl.col("pub_date").is_not_null() & (pl.col("pub_date") != ""),
-                        )
+                    )
                     .then(
                         pl.col("pub_date")
                         .str.strptime(
@@ -342,11 +342,11 @@ with app.setup:
                             strict=False,
                         )
                         .dt.date(),
-                        )
+                    )
                     .otherwise(None)
                     .alias("pub_date"),
                 ],
-                    )
+            )
 
         @staticmethod
         def cast_types(df: pl.LazyFrame) -> pl.LazyFrame:
@@ -420,8 +420,8 @@ with app.setup:
 
         @staticmethod
         def filter_by_year(
-                df: pl.LazyFrame,
-                year_range: tuple[int, int],
+            df: pl.LazyFrame,
+            year_range: tuple[int, int],
         ) -> pl.LazyFrame:
             year_start, year_end = year_range
             if year_start:
@@ -432,8 +432,8 @@ with app.setup:
 
         @staticmethod
         def filter_by_mass(
-                df: pl.LazyFrame,
-                mass_range: tuple[float, float],
+            df: pl.LazyFrame,
+            mass_range: tuple[float, float],
         ) -> pl.LazyFrame:
             mass_min, mass_max = mass_range
             if mass_min:
@@ -444,8 +444,8 @@ with app.setup:
 
         @staticmethod
         def filter_by_formula(
-                df: pl.LazyFrame,
-                formula_filters: FormulaFilters,
+            df: pl.LazyFrame,
+            formula_filters: FormulaFilters,
         ) -> pl.LazyFrame:
             return df.filter(
                 pl.col("mf").map_batches(
@@ -514,9 +514,9 @@ with app.setup:
                 return None, None
 
         def _resolve_ambiguous(
-                self,
-                matches: list[tuple[str, str]],
-                is_exact: bool,
+            self,
+            matches: list[tuple[str, str]],
+            is_exact: bool,
         ) -> tuple[str, mo.Html]:
             """Resolve ambiguous taxon matches."""
             qids = tuple(qid for qid, _ in matches)
@@ -529,7 +529,7 @@ with app.setup:
             )
             if csv_bytes and csv_bytes.strip():
                 for row in (
-                        parse_sparql_response(csv_bytes).collect().iter_rows(named=True)
+                    parse_sparql_response(csv_bytes).collect().iter_rows(named=True)
                 ):
                     taxon_url = row.get("taxon")
                     if taxon_url:
@@ -543,7 +543,7 @@ with app.setup:
             )
             if csv_bytes and csv_bytes.strip():
                 for row in (
-                        parse_sparql_response(csv_bytes).collect().iter_rows(named=True)
+                    parse_sparql_response(csv_bytes).collect().iter_rows(named=True)
                 ):
                     taxon_url = row.get("taxon")
                     if taxon_url:
@@ -566,10 +566,10 @@ with app.setup:
             )
 
         def _create_taxon_warning_html(
-                self,
-                matches: list,
-                selected_qid: str,
-                is_exact: bool,
+            self,
+            matches: list,
+            selected_qid: str,
+            is_exact: bool,
         ) -> mo.Html:
             """Create HTML warning for ambiguous taxon."""
             match_type = "exact matches" if is_exact else "similar taxa"
@@ -655,11 +655,11 @@ with app.setup:
 
     class RDFExportStrategy(ExportStrategy):
         def __init__(
-                self,
-                memory: MemoryManager,
-                taxon_input: str,
-                qid: str,
-                filters: dict,
+            self,
+            memory: MemoryManager,
+            taxon_input: str,
+            qid: str,
+            filters: dict,
         ):
             super().__init__(memory)
             self.taxon_input = taxon_input
@@ -726,11 +726,11 @@ with app.setup:
 
             result_hasher = hashlib.sha256()
             for val in (
-                    df.select(pl.col("compound_qid"))
-                            .to_series()
-                            .drop_nulls()
-                            .unique()
-                            .sort()
+                df.select(pl.col("compound_qid"))
+                .to_series()
+                .drop_nulls()
+                .unique()
+                .sort()
             ):
                 result_hasher.update(str(val).encode("utf-8"))
             result_hash = result_hasher.hexdigest()
@@ -738,12 +738,12 @@ with app.setup:
             return URIRef(f"urn:hash:sha256:{result_hash}"), query_hash, result_hash
 
         def _add_metadata(
-                self,
-                g: Graph,
-                dataset_uri: URIRef,
-                record_count: int,
-                query_hash: str,
-                result_hash: str,
+            self,
+            g: Graph,
+            dataset_uri: URIRef,
+            record_count: int,
+            query_hash: str,
+            result_hash: str,
         ):
             SCHEMA = WIKIDATA_NAMESPACES["SCHEMA"]
             WD = WIKIDATA_NAMESPACES["WD"]
@@ -773,13 +773,13 @@ with app.setup:
             g.add((dataset_uri, DCTERMS.identifier, Literal(f"sha256:{result_hash}")))
 
         def _add_compound_triples(
-                self,
-                g: Graph,
-                row: dict,
-                dataset_uri: URIRef,
-                processed_taxa: set,
-                processed_refs: set,
-                ns_cache: dict,
+            self,
+            g: Graph,
+            row: dict,
+            dataset_uri: URIRef,
+            processed_taxa: set,
+            processed_refs: set,
+            ns_cache: dict,
         ):
             WD, WDT, P, PS, PR, PROV, SCHEMA = (
                 ns_cache[k] for k in ["WD", "WDT", "P", "PS", "PR", "PROV", "SCHEMA"]
@@ -858,15 +858,15 @@ with app.setup:
             self.taxon_service = TaxonResolutionService(config["qlever_endpoint"])
 
         def resolve_taxon(
-                self,
-                taxon_input: str,
+            self,
+            taxon_input: str,
         ) -> tuple[str | None, mo.Html | None]:
             return self.taxon_service.resolve(taxon_input)
 
         def search(
-                self,
-                criteria: SearchCriteria,
-                qid: str,
+            self,
+            criteria: SearchCriteria,
+            qid: str,
         ) -> tuple[pl.LazyFrame, DatasetStats]:
             raw_data = self.query_service.fetch_compounds(
                 qid,
@@ -901,9 +901,9 @@ with app.setup:
             return strategy.export(df)
 
         def prepare_export_dataframe(
-                self,
-                df: pl.LazyFrame,
-                include_rdf_ref: bool = False,
+            self,
+            df: pl.LazyFrame,
+            include_rdf_ref: bool = False,
         ) -> pl.LazyFrame:
             exprs = [
                 pl.col("name").alias("compound_name"),
@@ -932,7 +932,7 @@ with app.setup:
                     .cast(pl.Utf8)
                     .str.replace(WIKIDATA_STATEMENT_PREFIX, "", literal=True)
                     .alias("statement_id"),
-                    )
+                )
 
             if include_rdf_ref and "ref" in df.collect_schema().names():
                 exprs.append(pl.col("ref"))
@@ -961,11 +961,11 @@ with app.setup:
             return df.limit(limit).collect() if limit else df.collect()
 
         def compute_hashes(
-                self,
-                qid: str,
-                taxon_input: str,
-                filters: dict,
-                df: pl.LazyFrame,
+            self,
+            qid: str,
+            taxon_input: str,
+            filters: dict,
+            df: pl.LazyFrame,
         ) -> tuple[str, str]:
             query_components = [qid or "", taxon_input or ""]
             if filters:
@@ -997,13 +997,13 @@ with app.setup:
             return query_hash, result_hasher.hexdigest()
 
         def create_metadata(
-                self,
-                stats: DatasetStats,
-                taxon_input: str,
-                qid: str,
-                filters: dict,
-                query_hash: str,
-                result_hash: str,
+            self,
+            stats: DatasetStats,
+            taxon_input: str,
+            qid: str,
+            filters: dict,
+            query_hash: str,
+            result_hash: str,
         ) -> dict:
             smiles_info = filters.get("chemical_structure", {})
             if smiles_info:
@@ -1220,6 +1220,7 @@ def md_title():
 #     )
 #     return
 
+
 @app.cell
 def ui_help():
     mo.accordion(
@@ -1330,35 +1331,35 @@ def ui_search_inputs():
 
 @app.cell
 def ui_search_panel(
-        br_state,
-        c_max,
-        c_min,
-        cl_state,
-        exact_formula,
-        f_state,
-        formula_filter,
-        h_max,
-        h_min,
-        i_state,
-        mass_filter,
-        mass_max,
-        mass_min,
-        n_max,
-        n_min,
-        o_max,
-        o_min,
-        p_max,
-        p_min,
-        run_button,
-        s_max,
-        s_min,
-        smiles_input,
-        smiles_search_type,
-        smiles_threshold,
-        taxon_input,
-        year_end,
-        year_filter,
-        year_start,
+    br_state,
+    c_max,
+    c_min,
+    cl_state,
+    exact_formula,
+    f_state,
+    formula_filter,
+    h_max,
+    h_min,
+    i_state,
+    mass_filter,
+    mass_max,
+    mass_min,
+    n_max,
+    n_min,
+    o_max,
+    o_min,
+    p_max,
+    p_min,
+    run_button,
+    s_max,
+    s_min,
+    smiles_input,
+    smiles_search_type,
+    smiles_threshold,
+    taxon_input,
+    year_end,
+    year_filter,
+    year_start,
 ):
     structure_fields = [smiles_input, smiles_search_type]
     if smiles_search_type.value == "similarity":
@@ -1397,35 +1398,35 @@ def ui_search_panel(
 
 @app.cell
 def execute_search(
-        br_state,
-        c_max,
-        c_min,
-        cl_state,
-        exact_formula,
-        f_state,
-        formula_filter,
-        h_max,
-        h_min,
-        i_state,
-        mass_filter,
-        mass_max,
-        mass_min,
-        n_max,
-        n_min,
-        o_max,
-        o_min,
-        p_max,
-        p_min,
-        run_button,
-        s_max,
-        s_min,
-        smiles_input,
-        smiles_search_type,
-        smiles_threshold,
-        taxon_input,
-        year_end,
-        year_filter,
-        year_start,
+    br_state,
+    c_max,
+    c_min,
+    cl_state,
+    exact_formula,
+    f_state,
+    formula_filter,
+    h_max,
+    h_min,
+    i_state,
+    mass_filter,
+    mass_max,
+    mass_min,
+    n_max,
+    n_min,
+    o_max,
+    o_min,
+    p_max,
+    p_min,
+    run_button,
+    s_max,
+    s_min,
+    smiles_input,
+    smiles_search_type,
+    smiles_threshold,
+    taxon_input,
+    year_end,
+    year_filter,
+    year_start,
 ):
     if not run_button.value:
         lotus, results, stats, qid, criteria, query_hash, result_hash, taxon_warning = (
@@ -1514,15 +1515,15 @@ def execute_search(
 
 @app.cell
 def display_results(
-        criteria,
-        lotus,
-        qid,
-        query_hash,
-        result_hash,
-        results,
-        stats,
-        taxon_input,
-        taxon_warning,
+    criteria,
+    lotus,
+    qid,
+    query_hash,
+    result_hash,
+    results,
+    stats,
+    taxon_input,
+    taxon_warning,
 ):
     if results is None or stats is None:
         result_ui = mo.Html("")
@@ -1692,7 +1693,6 @@ def generate_buttons(is_large, lotus, results):
         export_df = lotus.prepare_export_dataframe(results, include_rdf_ref=False)
         rdf_df = lotus.prepare_export_dataframe(results, include_rdf_ref=True)
 
-        del results
         if IS_PYODIDE:
             gc.collect()
     return csv_btn, export_df, json_btn, rdf_btn, rdf_df
@@ -1700,17 +1700,17 @@ def generate_buttons(is_large, lotus, results):
 
 @app.cell
 def generate_downloads(
-        criteria,
-        csv_btn,
-        export_df,
-        is_large,
-        json_btn,
-        lotus,
-        qid,
-        rdf_btn,
-        rdf_df,
-        stats,
-        taxon_input,
+    criteria,
+    csv_btn,
+    export_df,
+    is_large,
+    json_btn,
+    lotus,
+    qid,
+    rdf_btn,
+    rdf_df,
+    stats,
+    taxon_input,
 ):
     if stats is None or stats.n_entries == 0:
         download_ui = mo.Html("")
@@ -1776,15 +1776,21 @@ def generate_downloads(
             ],
         )
     else:
-        csv_bytes = lotus.export(export_df, "csv")
-        json_bytes = lotus.export(export_df, "json")
+        export_df_small = lotus.prepare_export_dataframe(results, include_rdf_ref=False)
+        rdf_df_small = lotus.prepare_export_dataframe(results, include_rdf_ref=True)
+
+        csv_bytes = lotus.export(export_df_small, "csv")
+        json_bytes = lotus.export(export_df_small, "json")
+        del export_df_small
+
         rdf_bytes = lotus.export(
-            rdf_df,
+            rdf_df_small,
             "rdf",
             taxon_input=taxon_input.value,
             qid=qid,
             filters=criteria.to_filters_dict(),
         )
+        del rdf_df_small
 
         download_ui = mo.vstack(
             [
@@ -1820,7 +1826,6 @@ def generate_downloads(
         del csv_bytes, json_bytes, rdf_bytes
         if IS_PYODIDE:
             gc.collect()
-
     download_ui
     return
 
@@ -1904,17 +1909,17 @@ def main():
 
             formula_filt = None
             if any(
-                    [
-                        args.formula,
-                        args.c_min,
-                        args.c_max,
-                        args.h_min,
-                        args.h_max,
-                        args.n_min,
-                        args.n_max,
-                        args.o_min,
-                        args.o_max,
-                    ],
+                [
+                    args.formula,
+                    args.c_min,
+                    args.c_max,
+                    args.h_min,
+                    args.h_max,
+                    args.n_min,
+                    args.n_max,
+                    args.o_min,
+                    args.o_max,
+                ],
             ):
                 formula_filt = create_filters(
                     exact_formula=args.formula or "",
@@ -2023,7 +2028,7 @@ def main():
                     )
                     metadata_path = output_path.with_suffix(
                         output_path.suffix + ".metadata.json",
-                        )
+                    )
                     metadata_path.write_text(json.dumps(metadata, indent=2))
                     if args.verbose:
                         print(f"[+] Metadata: {metadata_path}", file=sys.stderr)
