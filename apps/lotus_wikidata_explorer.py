@@ -1,7 +1,6 @@
 # /// script
 # requires-python = "==3.13.*"
 # dependencies = [
-#     # "epam-indigo>=1.36.1",
 #     "great-tables==0.20.0",
 #     "marimo",
 #     "polars==1.37.1",
@@ -40,24 +39,19 @@ with app.setup:
     import polars as pl
     import io
     import json
-    import re
     import time
     import hashlib
     import sys
-    import urllib.request
     import urllib.parse
     import gc
-    from dataclasses import dataclass, field
-    from datetime import datetime
+    from dataclasses import dataclass
+    from datetime import date, datetime
     from rdflib import Graph, Literal, URIRef, BNode
     from rdflib.namespace import RDF, RDFS, XSD, DCTERMS
-    from typing import Any, Final, TypedDict, cast
+    from abc import ABC, abstractmethod
 
-    # Toggle this flag for local vs remote development
-    _USE_LOCAL = True  # Set to True for local development
+    _USE_LOCAL = True
     if _USE_LOCAL:
-        # Add your local module directory to the path
-        # Adjust this path to where your "modules" folder is located locally
         sys.path.insert(0, ".")
 
     from modules.text.formula.filters import FormulaFilters
@@ -69,12 +63,10 @@ with app.setup:
     from modules.knowledge.wikidata.entity.extract_from_url import extract_from_url
     from modules.knowledge.wikidata.url.constants import (
         ENTITY_PREFIX as WIKIDATA_ENTITY_PREFIX,
-    )
-    from modules.knowledge.wikidata.url.constants import (
         STATEMENT_PREFIX as WIKIDATA_STATEMENT_PREFIX,
+        WIKIDATA_HTTP_BASE,
+        WIKI_PREFIX,
     )
-    from modules.knowledge.wikidata.url.constants import WIKIDATA_HTTP_BASE
-    from modules.knowledge.wikidata.url.constants import WIKI_PREFIX
     from modules.knowledge.wikidata.html.scholia import scholia_url
     from modules.knowledge.wikidata.sparql.query_taxon_search import query_taxon_search
     from modules.knowledge.wikidata.sparql.query_taxon_connectivity import (
@@ -83,89 +75,40 @@ with app.setup:
     from modules.knowledge.wikidata.sparql.query_taxon_details import (
         query_taxon_details,
     )
-    from modules.knowledge.wikidata.sparql.query_sachem import query_sachem
     from modules.knowledge.wikidata.sparql.query_compounds import (
         query_compounds_by_taxon,
         query_all_compounds,
     )
+    from modules.knowledge.wikidata.sparql.query_sachem import query_sachem
     from modules.net.sparql.execute_with_retry import execute_with_retry
     from modules.net.sparql.parse_response import parse_sparql_response
     from modules.net.sparql.values_clause import values_clause
     from modules.chem.cdk.depict.svg_from_smiles import svg_from_smiles
-
-    # indigo alternative
-    # from modules.chem.indigo.depict.svg_from_mol import svg_from_mol
-    # from modules.chem.indigo.mol.mol_from_smiles import mol_from_smiles
     from modules.knowledge.rdf.graph.add_literal import add_literal
     from modules.knowledge.rdf.namespace.wikidata import WIKIDATA_NAMESPACES
-    from modules.text.formula.element_config import (
-        ELEMENT_DEFAULTS,
-    )
     from modules.io.compress.if_large import compress_if_large
 
-    # Patch urllib for Pyodide/WASM (browser) compatibility
     IS_PYODIDE = "pyodide" in sys.modules
     if IS_PYODIDE:
         import pyodide_http
 
         pyodide_http.patch_all()
 
-    # ====================================================================
-    # APPLICATION CONFIGURATION
-    # ====================================================================
-
-    class ConfigDict(TypedDict):
-        app_version: str
-        app_name: str
-        app_url: str
-        qlever_endpoint: str
-        wikidata_endpoint: str
-        idsm_endpoint: str
-        table_row_limit: int
-        download_embed_threshold_bytes: int
-        color_hyperlink: str
-        color_wikidata_blue: str
-        color_wikidata_green: str
-        color_wikidata_red: str
-        page_size_default: int
-        page_size_export: int
-        year_range_start: int
-        year_default_start: int
-        mass_default_min: int
-        mass_default_max: int
-        mass_ui_max: int
-        default_search_type: str
-        default_similarity_threshold: float
-        default_smiles: str
-        default_taxon: str
-
-    CONFIG: Final[ConfigDict] = {
+    CONFIG = {
         "app_version": "0.1.0",
         "app_name": "LOTUS Wikidata Explorer",
         "app_url": "https://github.com/Adafede/marimo/blob/main/apps/lotus_wikidata_explorer.py",
         "qlever_endpoint": "https://qlever.dev/api/wikidata",
-        "wikidata_endpoint": "https://query.wikidata.org/sparql",
-        "idsm_endpoint": "https://idsm.elixir-czech.cz/sparql/endpoint/",
-        "table_row_limit": 1_000,
+        "table_row_limit": 500,
         "download_embed_threshold_bytes": 500_000,
         "color_hyperlink": "#3377c4",
         "color_wikidata_blue": "#006699",
         "color_wikidata_green": "#339966",
         "color_wikidata_red": "#990000",
         "page_size_default": 10,
-        "page_size_export": 25,
-        "year_range_start": 1_700,
-        "year_default_start": 1_900,
-        "mass_default_min": 0,
-        "mass_default_max": 2_000,
-        "mass_ui_max": 10_000,
-        "default_search_type": "substructure",
-        "default_similarity_threshold": 0.8,
-        "default_smiles": "",
-        "default_taxon": "Gentiana lutea",
+        "page_size_export": 10,
     }
 
-    # Pluralization map for irregular forms
     PLURAL_MAP = {
         "Entry": "Entries",
         "entry": "entries",
@@ -173,1386 +116,1079 @@ with app.setup:
         "taxon": "taxa",
     }
 
-
-@app.class_definition
-@dataclass
-class SearchParams:
-    """Consolidated search parameters - replaces 30+ individual state variables."""
-
-    # Core search parameters
-    taxon: str = "Gentiana lutea"
-    smiles: str = ""
-    smiles_search_type: str = "substructure"
-    smiles_threshold: float = 0.8
-
-    # Mass filter parameters
-    mass_filter: bool = False
-    mass_min: float = 0.0
-    mass_max: float = 2000.0
-
-    # Year filter parameters
-    year_filter: bool = False
-    year_start: int = 1_900
-    year_end: int = field(default_factory=lambda: datetime.now().year)
-
-    # Formula filter parameters
-    formula_filter: bool = False
-    exact_formula: str = ""
-
-    # Element range parameters (min/max for C, H, N, O, P, S)
-    c_min: int | None = None
-    c_max: int | None = None
-    h_min: int | None = None
-    h_max: int | None = None
-    n_min: int | None = None
-    n_max: int | None = None
-    o_min: int | None = None
-    o_max: int | None = None
-    p_min: int | None = None
-    p_max: int | None = None
-    s_min: int | None = None
-    s_max: int | None = None
-
-    # Halogen filter states
-    f_state: str = "allowed"
-    cl_state: str = "allowed"
-    br_state: str = "allowed"
-    i_state: str = "allowed"
-
-    # Auto-run flag (set when URL params are detected)
-    auto_run: bool = False
-
-    @classmethod
-    def from_url_params(cls, params: dict) -> "SearchParams":
-        """Create SearchParams from URL query parameters."""
-        if not params or ("taxon" not in params and "smiles" not in params):
-            return cls()
-
-        ff = params.get("formula_filter") == "true"
-        # Parse element ranges with loop
-        elem_vals = {}
-        for e in ("c", "h", "n", "o", "p", "s"):
-            elem_vals[f"{e}_min"] = (
-                int(params[f"{e}_min"]) if f"{e}_min" in params else None
-            )
-            elem_vals[f"{e}_max"] = (
-                int(params[f"{e}_max"]) if f"{e}_max" in params else None
-            )
-
-        return cls(
-            taxon=params.get("taxon", CONFIG["default_taxon"]),
-            smiles=params.get("smiles", CONFIG["default_smiles"]),
-            smiles_search_type=params.get(
-                "smiles_search_type",
-                CONFIG["default_search_type"],
-            ),
-            smiles_threshold=float(
-                params.get("smiles_threshold", CONFIG["default_similarity_threshold"]),
-            ),
-            mass_filter=params.get("mass_filter") == "true",
-            mass_min=float(params.get("mass_min", CONFIG["mass_default_min"])),
-            mass_max=float(params.get("mass_max", CONFIG["mass_default_max"])),
-            year_filter=params.get("year_filter") == "true",
-            year_start=int(params.get("year_start", CONFIG["year_default_start"])),
-            year_end=int(params.get("year_end", datetime.now().year)),
-            formula_filter=ff,
-            exact_formula=params.get("exact_formula", ""),
-            **elem_vals,
-            f_state=params.get("f_state", "allowed"),
-            cl_state=params.get("cl_state", "allowed"),
-            br_state=params.get("br_state", "allowed"),
-            i_state=params.get("i_state", "allowed"),
-            auto_run=True,
-        )
-
-    def to_formula_filters(self) -> FormulaFilters | None:
-        """Convert to FormulaFilters if formula filter is active."""
-        if not self.formula_filter:
-            return None
-        elem_args = {}
-        for e in ("c", "h", "n", "o", "p", "s"):
-            min_key = f"{e}_min"
-            max_key = f"{e}_max"
-            min_v, max_v = getattr(self, min_key), getattr(self, max_key)
-            elem_args[min_key] = min_v or 0
-            elem_args[max_key] = (
-                max_v if max_v is not None else cast(int, CONFIG[f"element_{max_key}"])
-            )
-        return create_filters(
-            exact_formula=self.exact_formula,
-            **elem_args,
-            f_state=self.f_state,
-            cl_state=self.cl_state,
-            br_state=self.br_state,
-            i_state=self.i_state,
-        )
-
-
-@app.function
-def create_taxon_warning_html(
-    matches: list,
-    selected_qid: str,
-    is_exact: bool,
-) -> mo.Html:
-    """Create an HTML warning with clickable QID links and taxon details."""
-
-    match_type = "exact matches" if is_exact else "similar taxa"
-    intro = (
-        f"Ambiguous taxon name. Multiple {match_type} found:"
-        if is_exact
-        else "No exact match. Similar taxa found:"
-    )
-
-    # Build HTML list of matches
-    items = []
-    for match_data in matches:
-        qid = match_data[0]
-        name = match_data[1]
-        description = match_data[2] if len(match_data) > 2 else None
-        parent = match_data[3] if len(match_data) > 3 else None
-        edges_count = match_data[4] if len(match_data) > 4 else None
-
-        # Create clickable link using module function with custom styling
-        link_html = f'<a href="{scholia_url(qid)}" target="_blank" rel="noopener noreferrer" style="color: {CONFIG["color_hyperlink"]}; font-weight: bold;">{qid}</a>'
-
-        # Build details string
-        details = []
-        if name:
-            details.append(f"<em>{name}</em>")
-        if description:
-            details.append(f"{description}")
-        if parent:
-            details.append(f"parent: {parent}")
-        if edges_count is not None:
-            details.append(f"<strong>{edges_count:,} edges</strong>")
-
-        details_str = " - ".join(details) if details else ""
-
-        # Highlight the selected one
-        if qid == selected_qid:
-            items.append(
-                f"<li>{link_html} {details_str} <strong>< USING THIS ONE (most edges)</strong></li>",
-            )
-        else:
-            items.append(f"<li>{link_html} {details_str}</li>")
-
-    items_html = "".join(items)
-
-    html = f"""
-    <div style="line-height: 1.6;">
-        {intro}
-        <ul style="margin: 0.5em 0; padding-left: 1.5em;">
-            {items_html}
-        </ul>
-        <em>For precision, please use a specific QID directly in the search box. When ambiguous, the taxon with the most compound links is automatically selected.</em>
-    </div>
-    """
-
-    return mo.Html(html)
-
-
-@app.function
-def resolve_ambiguous_matches(
-    matches: list[tuple[str, str]],
-    is_exact: bool,
-) -> tuple[str, mo.Html]:
-    qids = tuple(qid for qid, _ in matches)
-    info = {qid: [0, "", "", ""] for qid in qids}
-
-    # --- connectivity ---
-    csv_bytes = execute_with_retry(
-        query_taxon_connectivity(values_clause("taxon", qids, prefix="wd:")),
-        endpoint=CONFIG["qlever_endpoint"],
-        fallback_endpoint=None,
-    )
-    if csv_bytes and csv_bytes.strip():
-        for row in parse_sparql_response(csv_bytes).collect().iter_rows(named=True):
-            taxon_url = row.get("taxon")
-            if taxon_url:
-                qid = extract_from_url(taxon_url, WIKIDATA_ENTITY_PREFIX)
-                info[qid][0] = int(row.get("count") or 0)
-    del csv_bytes
-
-    csv_bytes = execute_with_retry(
-        query_taxon_details(values_clause("taxon", qids, prefix="wd:")),
-        endpoint=CONFIG["qlever_endpoint"],
-        fallback_endpoint=None,
-    )
-    if csv_bytes and csv_bytes.strip():
-        for row in parse_sparql_response(csv_bytes).collect().iter_rows(named=True):
-            taxon_url = row.get("taxon")
-            if taxon_url:
-                qid = extract_from_url(taxon_url, WIKIDATA_ENTITY_PREFIX)
-                info[qid][1] = row.get("taxonDescription", "")
-                info[qid][2] = row.get("taxon_parentLabel", "")
-    del csv_bytes
-
-    # best qid (no sort yet)
-    selected_qid = max(qids, key=lambda q: info[q][0])
-
-    # sort once, only for display
-    matches_sorted = sorted(
-        matches,
-        key=lambda x: info[x[0]][0],
-        reverse=True,
-    )
-
-    matches_with_details = [
-        (qid, name, info[qid][1], info[qid][2], info[qid][0])
-        for qid, name in matches_sorted
-    ]
-
-    return selected_qid, create_taxon_warning_html(
-        matches_with_details,
-        selected_qid,
-        is_exact=is_exact,
-    )
-
-
-@app.function
-def resolve_taxon_to_qid(
-    taxon_input: str | int,
-) -> tuple[str | None, mo.Html | None]:
-    """Resolve taxon name or QID (int or string) to a valid QID."""
-    taxon_input = taxon_input.strip()
-
-    if taxon_input is None:
-        return None, None
-
-    # Convert ints to QID string
-    if isinstance(taxon_input, int):
-        return f"Q{taxon_input}", None
-
-    # Ensure we have a stripped string
-    taxon_input = str(taxon_input).strip()
-
-    # Handle wildcard for all taxa
-    if taxon_input == "*":
-        return "*", None
-
-    # Early return if input is already a QID like "Q42"
-    if taxon_input.upper().startswith("Q") and taxon_input[1:].isdigit():
-        return taxon_input.upper(), None
-
-    # Search for taxon by name (CSV for memory efficiency)
-    try:
-        query = query_taxon_search(taxon_input)
-        csv_bytes = execute_with_retry(
-            query,
-            endpoint=CONFIG["qlever_endpoint"],
-            fallback_endpoint=None,
-        )
-
-        if not csv_bytes or not csv_bytes.strip():
-            return None, None
-
-        df = parse_sparql_response(csv_bytes).collect()
-        del csv_bytes
-
-        if df.is_empty():
-            return None, None
-
-        # Extract matches
-        matches = [
-            (
-                extract_from_url(row["taxon"], WIKIDATA_ENTITY_PREFIX),
-                row["taxon_name"],
-            )
-            for row in df.iter_rows(named=True)
-            if row.get("taxon") and row.get("taxon_name")
-        ]
-
-        del df
-
-        if not matches:
-            return None, None
-
-        # Find exact matches (case-insensitive)
-        taxon_lower = taxon_input.lower()
-        exact_matches = [
-            (qid, name) for qid, name in matches if name.lower() == taxon_lower
-        ]
-
-        # Single exact match - perfect
-        if len(exact_matches) == 1:
-            return exact_matches[0][0], None
-
-        # Multiple exact matches - need to disambiguate
-        if len(exact_matches) > 1:
-            return resolve_ambiguous_matches(exact_matches, is_exact=True)
-
-        # No exact match but multiple similar matches - use best one with warning
-        if len(matches) > 1:
-            return resolve_ambiguous_matches(matches, is_exact=False)
-
-        return matches[0][0], None
-
-    except Exception:
-        return None, None
-
-
-@app.function
-def build_active_filters_dict(
-    mass_filter_active: bool,
-    mass_min_val: float | None,
-    mass_max_val: float | None,
-    year_filter_active: bool,
-    year_start_val: int | None,
-    year_end_val: int | None,
-    formula_filters: FormulaFilters | None,
-    smiles: str | None = None,
-    smiles_search_type: str | None = None,
-    smiles_threshold: float | None = None,
-) -> dict[str, Any]:
-    """Build a dictionary of active filters for metadata export."""
-    filters = {}
-
-    # Chemical structure (SMILES) search
-    if smiles and smiles.strip():
-        filters["chemical_structure"] = {
-            "smiles": smiles.strip(),
-            "search_type": smiles_search_type or "substructure",
-        }
-        # Add threshold only for similarity searches
-        if smiles_search_type == "similarity" and smiles_threshold is not None:
-            filters["chemical_structure"]["similarity_threshold"] = smiles_threshold
-
-    # Mass filter
-    if mass_filter_active and (mass_min_val is not None or mass_max_val is not None):
-        filters["mass"] = {
-            "min": mass_min_val,
-            "max": mass_max_val,
-        }
-
-    # Year filter
-    if year_filter_active and (year_start_val is not None or year_end_val is not None):
-        filters["publication_year"] = {
-            "start": year_start_val,
-            "end": year_end_val,
-        }
-
-    # Formula filter
-    formula_dict = serialize_filters(formula_filters)
-    if formula_dict:
-        filters["molecular_formula"] = formula_dict
-
-    return filters
-
-
-@app.function
-def generate_filename(
-    taxon_name: str,
-    file_type: str,
-    prefix: str = "lotus_data",
-    filters: dict[str, Any] | None = None,
-) -> str:
-    """Generate standardized, descriptive filename for exports."""
-    # Handle wildcard for all taxa
-    if taxon_name == "*":
-        safe_name = "all_taxa"
-    else:
-        # Replace spaces and special characters
-        safe_name = taxon_name.replace(" ", "_").replace("/", "_")
-
-    # Build filename components
-    components = [prefix, safe_name]
-
-    # Add SMILES search type if present
-    if filters and "chemical_structure" in filters:
-        search_type = filters["chemical_structure"].get(
-            "search_type",
-            "substructure",
-        )
-        components.append(search_type)  # Just the type, not "smiles_type"
-
-    # Add general filter indicator if other filters are active
-    other_filters = {
-        k: v for k, v in (filters or {}).items() if k != "chemical_structure"
-    }
-    if other_filters:
-        components.append("filtered")
-
-    date_str = datetime.now().strftime("%Y%m%d")
-    filename_base = "_".join(components)
-    return f"{date_str}_{filename_base}.{file_type}"
-
-
-@app.function
-def build_api_url(
-    taxon: str,
-    smiles: str,
-    smiles_search_type: str,
-    smiles_threshold: float,
-    mass_filter: bool,
-    mass_min: float,
-    mass_max: float,
-    year_filter: bool,
-    year_start: int,
-    year_end: int,
-    formula_filter: bool,
-    exact_formula: str,
-    c_min: int,
-    c_max: int,
-    h_min: int,
-    h_max: int,
-    n_min: int,
-    n_max: int,
-    o_min: int,
-    o_max: int,
-    p_min: int,
-    p_max: int,
-    s_min: int,
-    s_max: int,
-    f_state: str,
-    cl_state: str,
-    br_state: str,
-    i_state: str,
-) -> str:
-    """Build a shareable API URL from current search parameters."""
-    params = {}
-
-    # Taxon parameter
-    if taxon and taxon.strip():
-        params["taxon"] = taxon.strip()
-
-    # SMILES parameters
-    if smiles and smiles.strip():
-        params["smiles"] = smiles.strip()
-        params["smiles_search_type"] = smiles_search_type
-        if smiles_search_type == "similarity":
-            params["smiles_threshold"] = str(smiles_threshold)
-
-    # Mass filter
-    if mass_filter:
-        params["mass_filter"] = "true"
-        if mass_min is not None:
-            params["mass_min"] = str(mass_min)
-        if mass_max is not None:
-            params["mass_max"] = str(mass_max)
-
-    # Year filter
-    if year_filter:
-        params["year_filter"] = "true"
-        if year_start is not None:
-            params["year_start"] = str(year_start)
-        if year_end is not None:
-            params["year_end"] = str(year_end)
-
-    # Formula filter
-    if formula_filter:
-        params["formula_filter"] = "true"
-        if exact_formula and exact_formula.strip():
-            params["exact_formula"] = exact_formula.strip()
-
-        # Element ranges (only add non-default values)
-        for elem in ["c", "h", "n", "o", "p", "s"]:
-            min_val = locals()[f"{elem}_min"]
-            max_val = locals()[f"{elem}_max"]
-            if min_val > 0:
-                params[f"{elem}_min"] = str(min_val)
-            if max_val != ELEMENT_DEFAULTS[elem]:
-                params[f"{elem}_max"] = str(max_val)
-
-        # Halogen states (only add non-default)
-        for halogen, state in [
-            ("f", f_state),
-            ("cl", cl_state),
-            ("br", br_state),
-            ("i", i_state),
-        ]:
-            if state != "allowed":
-                params[f"{halogen}_state"] = state
-
-    # Build URL
-    if params:
-        query_string = urllib.parse.urlencode(params)
-        return f"?{query_string}"
-    else:
-        return ""
-
-
-@app.function
-def create_download_button(data: str, filename: str, label: str, base_mimetype: str):
-    """Create a download button with automatic compression for large files."""
-    # Convert to bytes if needed
-    data_bytes = data.encode("utf-8") if isinstance(data, str) else data
-    compressed_data, was_compressed = compress_if_large(
-        data_bytes,
-        CONFIG["download_embed_threshold_bytes"],
-    )
-
-    # Add compression indicator to label
-    display_label = label + (" (gzipped)" if was_compressed else "")
-
-    # Update filename extension if compressed
-    final_filename = filename + ".gz" if was_compressed else filename
-    final_mimetype = "application/gzip" if was_compressed else base_mimetype
-
-    # Use standard mo.download - works on desktop and most mobile
-    return mo.download(
-        data=compressed_data,
-        filename=final_filename,
-        label=display_label,
-        mimetype=final_mimetype,
-    )
-
-
-@app.function
-def query_wikidata(
-    qid: str,
-    year_start: int | None = None,
-    year_end: int | None = None,
-    mass_min: float | None = None,
-    mass_max: float | None = None,
-    formula_filters: FormulaFilters | None = None,
-    smiles: str | None = None,
-    smiles_search_type: str = "substructure",
-    smiles_threshold: float = 0.8,
-    endpoint: str = CONFIG["qlever_endpoint"],
-) -> pl.LazyFrame:
-    """
-    Query Wikidata and return LazyFrame (NOT materialized).
-    """
-    # Validation
-    if smiles_search_type not in ("substructure", "similarity"):
-        raise ValueError(f"Invalid smiles_search_type: '{smiles_search_type}'")
-
-    if not (0.0 <= smiles_threshold <= 1.0):
-        raise ValueError(f"Invalid smiles_threshold: {smiles_threshold}")
-
-    # Build query
-    if smiles:
-        query = query_sachem(
-            escaped_smiles=validate_and_escape(smiles),
-            search_type=smiles_search_type,
-            threshold=smiles_threshold,
-            taxon_qid=qid if qid != "*" else None,
-        )
-    elif qid == "*":
-        query = query_all_compounds()
-    else:
-        query = query_compounds_by_taxon(qid)
-
-    # Execute query
-    csv_bytes = execute_with_retry(query, endpoint)
-
-    if not csv_bytes or csv_bytes.strip() == b"":
-        return pl.LazyFrame()
-
-    # Parse to LazyFrame (NO materialization)
-    lazy_df = pl.scan_csv(
-        io.BytesIO(csv_bytes),
-        low_memory=True,
-        rechunk=False,
-    )
-
-    # Rename
-    lazy_df = lazy_df.rename(
-        {
-            "compoundLabel": "name",
-            "compound_inchikey": "inchikey",
-            "ref_qid": "reference",
-            "ref_date": "pub_date",
-            "compound_mass": "mass",
-            "compound_formula": "mf",
-        },
-    )
-
-    # Combine SMILES
-    lazy_df = lazy_df.with_columns(
-        [
-            pl.coalesce(["compound_smiles_iso", "compound_smiles_conn"]).alias(
-                "smiles",
-            ),
-        ],
-    )
-
-    # DOI extraction
-    lazy_df = lazy_df.with_columns(
-        [
-            pl.when(pl.col("ref_doi").str.starts_with("http"))
-            .then(pl.col("ref_doi").str.split("doi.org/").list.last())
-            .otherwise(pl.col("ref_doi"))
-            .alias("ref_doi"),
-        ],
-    )
-
-    # Date parsing
-    lazy_df = lazy_df.with_columns(
-        [
-            pl.when(pl.col("pub_date").is_not_null() & (pl.col("pub_date") != ""))
-            .then(
-                pl.col("pub_date")
-                .str.strptime(pl.Datetime, format="%Y-%m-%dT%H:%M:%SZ", strict=False)
-                .dt.date(),
-            )
-            .otherwise(None)
-            .alias("pub_date"),
-        ],
-    )
-
-    # Mass to Float32
-    lazy_df = lazy_df.with_columns(
-        [
-            pl.col("mass").cast(pl.Float32, strict=False),
-        ],
-    )
-
-    # Drop old columns
-    columns_to_drop = ["compound_smiles_iso", "compound_smiles_conn"]
-    lazy_df = lazy_df.drop(
-        [col for col in columns_to_drop if col in lazy_df.collect_schema().names()],
-    )
-
-    # Year filter
-    if year_start:
-        lazy_df = lazy_df.filter(pl.col("pub_date").dt.year() >= year_start)
-    if year_end:
-        lazy_df = lazy_df.filter(pl.col("pub_date").dt.year() <= year_end)
-
-    # Mass filter
-    if mass_min:
-        lazy_df = lazy_df.filter(pl.col("mass") >= mass_min)
-    if mass_max:
-        lazy_df = lazy_df.filter(pl.col("mass") <= mass_max)
-
-    # Formula filter
-    if (
-        formula_filters
-        and hasattr(formula_filters, "is_active")
-        and formula_filters.is_active()
-    ):
-        lazy_df = lazy_df.filter(
-            pl.col("mf").map_batches(
-                lambda s: s.map_elements(
-                    lambda f: match_filters(f or "", formula_filters),
-                    return_dtype=pl.Boolean,
-                ),
-            ),
-        )
-
-    # Add missing columns (lazy)
-    required = [
-        "compound",
-        "name",
-        "inchikey",
-        "smiles",
-        "taxon_name",
-        "taxon",
-        "ref_title",
-        "ref_doi",
-        "reference",
-        "pub_date",
-        "mass",
-        "mf",
-        "statement",
-        "ref",
-    ]
-    missing = [col for col in required if col not in lazy_df.collect_schema().names()]
-    if missing:
-        lazy_df = lazy_df.with_columns([pl.lit(None).alias(col) for col in missing])
-
-    # Deduplicate and sort
-    lazy_df = lazy_df.unique(
-        subset=["compound", "taxon", "reference"],
-        keep="first",
-    ).sort("name")
-
-    # Return LazyFrame - NO .collect()!
-    return lazy_df
-
-
-@app.function
-def build_display_dataframe(df: pl.LazyFrame) -> pl.DataFrame:
-    """Build display DataFrame with HTML-formatted columns."""
-
-    # Pre-compute colors (avoid repeated dictionary lookups)
-    color_compound = CONFIG["color_wikidata_red"]
-    color_taxon = CONFIG["color_wikidata_green"]
-    color_ref = CONFIG["color_wikidata_blue"]
-    color_link = CONFIG["color_hyperlink"]
-    limit = CONFIG["table_row_limit"]
-
-    # Physical limit
-    if limit:
-        df = df.limit(limit).collect()
-    else:
-        df = df.collect()
-
-    df = df.select(
-        [
-            pl.col("smiles").alias("Compound Depiction"),  # keep raw SMILES
-            pl.col("name").alias("Compound Name"),
-            pl.col("smiles").alias("Compound SMILES"),
-            pl.col("inchikey").alias("Compound InChIKey"),
-            pl.col("mf").alias("Compound Molecular Formula"),
-            pl.col("mass").alias("Compound Mass"),
-            pl.col("taxon_name").alias("Taxon Name"),
-            pl.col("ref_title").alias("Reference Title"),
-            pl.col("pub_date").alias("Reference Date"),
-            pl.col("ref_doi").alias("Reference DOI"),
-            pl.col("compound").alias("Compound QID"),
-            pl.col("taxon").alias("Taxon QID"),
-            pl.col("reference").alias("Reference QID"),
-            pl.col("statement").alias("Statement"),
-        ],
-    )
-
-    return df
-
-
-@app.function
-def prepare_export_dataframe(
-    lazy_df: pl.LazyFrame,
-    include_rdf_ref: bool = False,
-) -> pl.LazyFrame:
-    """
-    Prepare export transformations lazily.
-
-    Returns LazyFrame ready for .write_csv()/.write_json().
-    Those methods call .collect() internally.
-    """
-    exprs = [
-        pl.col("name").alias("compound_name"),
-        pl.col("smiles").alias("compound_smiles"),
-        pl.col("inchikey").alias("compound_inchikey"),
-        pl.col("mass").alias("compound_mass"),
-        pl.col("mf").alias("molecular_formula"),
-        pl.col("taxon_name"),
-        pl.col("ref_title").alias("reference_title"),
-        pl.col("ref_doi").alias("reference_doi"),
-        pl.col("pub_date").alias("reference_date"),
-        # QIDs (lazy concat)
-        pl.concat_str([pl.lit("Q"), pl.col("compound").cast(pl.Utf8)]).alias(
-            "compound_qid",
-        ),
-        pl.concat_str([pl.lit("Q"), pl.col("taxon").cast(pl.Utf8)]).alias("taxon_qid"),
-        pl.concat_str([pl.lit("Q"), pl.col("reference").cast(pl.Utf8)]).alias(
-            "reference_qid",
-        ),
-    ]
-
-    # Statement
-    if "statement" in lazy_df.collect_schema().names():
-        exprs.append(
-            pl.col("statement")
-            .str.replace(WIKIDATA_STATEMENT_PREFIX, "", literal=True)
-            .alias("statement_id"),
-        )
-
-    # RDF ref
-    if include_rdf_ref and "ref" in lazy_df.collect_schema().names():
-        exprs.append(pl.col("ref"))
-
-    return lazy_df.select(exprs)
-
-
-@app.function
-def create_export_metadata(
-    df: pl.DataFrame,
-    counts: dict,
-    taxon_input: str,
-    qid: str,
-    filters: dict[str, Any],
-    query_hash: str | None = None,
-    result_hash: str | None = None,
-) -> dict[str, Any]:
-    """Create FAIR-compliant metadata for exported datasets."""
-
-    # Build descriptive name and description based on search type
-    smiles_info = filters.get("chemical_structure", {}) if filters else {}
-
-    if smiles_info:
-        search_type = smiles_info.get("search_type", "substructure")
-        smiles_str = smiles_info.get("smiles", "")
-
-        if qid:
-            # Combined search
-            dataset_name = f"LOTUS Data - {search_type.title()} search in {taxon_input}"
-            description = (
-                f"Chemical compounds matching {search_type} search "
-                f"(SMILES: {smiles_str}) "
-                f"within taxon {taxon_input} (Wikidata QID: {qid}). "
-            )
-        else:
-            # SMILES-only search
-            dataset_name = f"LOTUS Data - Chemical {search_type.title()} Search"
-            description = (
-                f"Chemical compounds matching {search_type} search "
-                f"(SMILES: {smiles_str}). "
-            )
-
-        if search_type == "similarity":
-            threshold = smiles_info.get("similarity_threshold", 0.8)
-            description += f"Tanimoto similarity threshold: {threshold}. "
-    else:
-        # Taxon-only search
-        dataset_name = f"LOTUS Data - {taxon_input}"
-        description = f"Chemical compounds from taxon {taxon_input} " + (
-            f"(Wikidata QID: {qid}). " if qid else ". "
-        )
-
-    description += "Retrieved via LOTUS Wikidata Explorer with chemical search capabilities (SACHEM/IDSM)."
-
-    metadata: dict[str, Any] = {
-        "@context": "https://schema.org/",
-        "@type": "Dataset",
-        "name": dataset_name,
-        "description": description,
-        "version": CONFIG["app_version"],
-        "dateCreated": datetime.now().isoformat(),
-        "license": "https://creativecommons.org/publicdomain/zero/1.0/",
-        "creator": {
-            "@type": "SoftwareApplication",
-            "name": CONFIG["app_name"],
-            "version": CONFIG["app_version"],
-            "url": CONFIG["app_url"],
-        },
-        "provider": [
-            {"@type": "Organization", "name": n, "url": u}
-            for n, u in [
-                ("LOTUS Initiative", WIKI_PREFIX + "Q104225190"),
-                ("Wikidata", WIKIDATA_HTTP_BASE),
-                ("IDSM", "https://idsm.elixir-czech.cz/"),
-            ]
-        ],
-        "citation": [
-            {
-                "@type": "ScholarlyArticle",
-                "name": "LOTUS initiative",
-                "identifier": "https://doi.org/10.7554/eLife.70780",
-            },
-        ],
-        "distribution": [
-            {
-                "@type": "DataDownload",
-                "encodingFormat": f,
-                "contentUrl": f"data:{f}",
-            }
-            for f in ["text/csv", "application/json", "text/turtle"]
-        ],
-        "numberOfRecords": counts["n_entries"],
-        "variablesMeasured": [
-            "compound_name",
-            "compound_smiles",
-            "compound_inchikey",
-            "compound_mass",
-            "molecular_formula",
-            "taxon_name",
-            "reference_title",
-            "reference_doi",
-            "reference_date",
-            "compound_qid",
-            "taxon_qid",
-            "reference_qid",
-        ],
-        "search_parameters": {"taxon": taxon_input, "taxon_qid": qid},
-        "chemical_search_service": {
-            "name": "SACHEM",
-            "provider": "IDSM",
-            "endpoint": CONFIG["idsm_endpoint"],
-        },
-    }
-
-    if filters:
-        metadata["search_parameters"]["filters"] = filters
-    if query_hash or result_hash:
-        metadata["provenance"] = {}
-        if query_hash:
-            metadata["provenance"]["query_hash"] = {
-                "algorithm": "SHA-256",
-                "value": query_hash,
-            }
-        if result_hash:
-            metadata["provenance"]["result_hash"] = {
-                "algorithm": "SHA-256",
-                "value": result_hash,
-            }
-            metadata["provenance"]["dataset_uri"] = f"urn:hash:sha256:{result_hash}"
-
-    return metadata
-
-
-@app.function
-def create_citation_text(taxon_input: str) -> str:
-    """Generate citation text for the exported data."""
-    current_date = datetime.now().strftime("%B %d, %Y")
-    return f"""
-## How to Cite This Data
-
-### Dataset Citation
-LOTUS Initiative via Wikidata. ({datetime.now().year}). *Data for {taxon_input}*.
-Retrieved from LOTUS Wikidata Explorer on {current_date}.
-License: [CC0 1.0 Universal](https://creativecommons.org/publicdomain/zero/1.0/)
-
-### LOTUS Initiative Publication
-Rutz A, Sorokina M, Galgonek J, et al. (2022). The LOTUS initiative for open knowledge
-management in natural products research. *eLife* **11**:e70780.
-DOI: [10.7554/eLife.70780](https://doi.org/10.7554/eLife.70780)
-
-### This Tool
-{CONFIG["app_name"]} v{CONFIG["app_version"]}
-[Source Code]({CONFIG["app_url"]}) (AGPL-3.0)
-
-### Data Sources
-- **LOTUS Initiative**: [Q104225190](https://www.wikidata.org/wiki/Q104225190) - CC0 1.0
-- **Wikidata**: [www.wikidata.org](https://www.wikidata.org/) - CC0 1.0
-"""
-
-
-@app.function
-def compute_provenance_hashes(
-    qid: str | None,
-    taxon_input: str | None,
-    filters: dict[str, Any] | None,
-    df: pl.LazyFrame,
-) -> tuple[str, str]:
-    """
-    Compute query and result hashes for provenance tracking.
-
-    Returns:
-        Tuple of (query_hash, result_hash) where:
-        - query_hash: based on search parameters (what was asked)
-        - result_hash: based on compound identifiers (what was found)
-    """
-    # Query hash - small data, use direct approach
-    query_components = [qid or "", taxon_input or ""]
-    if filters:
-        query_components.append(json.dumps(filters, sort_keys=True))
-    query_hash = hashlib.sha256(
-        "|".join(query_components).encode("utf-8"),
-    ).hexdigest()
-
-    # Result hash - streaming approach for memory efficiency
-    result_hasher = hashlib.sha256()
-
-    # Determine available columns depending on LazyFrame vs DataFrame
-    try:
-        if isinstance(df, pl.LazyFrame):
-            cols = df.collect_schema().names()
-        else:
-            cols = df.columns
-    except Exception:
-        cols = []
-
-    compound_col = "compound_qid" if "compound_qid" in cols else "compound"
-
-    if compound_col in cols:
-        try:
-            # Normalize to a collected DataFrame of unique sorted IDs in a memory-conscious way
-            if isinstance(df, pl.LazyFrame):
-                tmp = (
-                    df.select(
-                        pl.col(compound_col)
-                        .cast(pl.Utf8)
-                        .str.replace(WIKIDATA_ENTITY_PREFIX, "", literal=True),
+    YEAR = date.today().year
+
+    # ========================================================================
+    # DOMAIN MODELS
+    # ========================================================================
+
+    @dataclass(frozen=True, slots=True)
+    class SearchCriteria:
+        """Immutable search parameters."""
+
+        taxon: str = ""
+        smiles: str = ""
+        smiles_search_type: str = "substructure"
+        smiles_threshold: float = 0.8
+        mass_range: tuple[float, float] = (0.0, 2000.0)
+        year_range: tuple[int, int] = (1900, datetime.now().year)
+        formula_filters: FormulaFilters | None = None
+
+        def has_mass_filter(self) -> bool:
+            return self.mass_range != (0.0, 2000.0)
+
+        def has_year_filter(self) -> bool:
+            return self.year_range != (1900, datetime.now().year)
+
+        def to_filters_dict(self) -> dict:
+            """Convert to filters dictionary."""
+            filters = {}
+            if self.smiles:
+                filters["chemical_structure"] = {
+                    "smiles": self.smiles,
+                    "search_type": self.smiles_search_type,
+                }
+                if self.smiles_search_type == "similarity":
+                    filters["chemical_structure"]["similarity_threshold"] = (
+                        self.smiles_threshold
                     )
-                    .drop_nulls()
-                    .unique()
-                    .sort(by=compound_col)
-                    .collect()
+            if self.has_mass_filter():
+                filters["mass"] = {"min": self.mass_range[0], "max": self.mass_range[1]}
+            if self.has_year_filter():
+                filters["publication_year"] = {
+                    "start": self.year_range[0],
+                    "end": self.year_range[1],
+                }
+            if self.formula_filters:
+                formula_dict = serialize_filters(self.formula_filters)
+                if formula_dict:
+                    filters["molecular_formula"] = formula_dict
+            return filters
+
+    @dataclass(frozen=True, slots=True)
+    class DatasetStats:
+        """Dataset statistics."""
+
+        n_compounds: int = 0
+        n_taxa: int = 0
+        n_references: int = 0
+        n_entries: int = 0
+
+        @classmethod
+        def from_lazyframe(cls, df: pl.LazyFrame) -> "DatasetStats":
+            stats = df.select(
+                [
+                    pl.col("compound")
+                    .approx_n_unique()
+                    .cast(pl.UInt32)
+                    .alias("n_compounds"),
+                    pl.col("taxon").approx_n_unique().cast(pl.UInt32).alias("n_taxa"),
+                    pl.col("reference")
+                    .approx_n_unique()
+                    .cast(pl.UInt32)
+                    .alias("n_refs"),
+                    pl.len().cast(pl.UInt32).alias("n_entries"),
+                ],
+                    ).collect()
+
+            if stats.is_empty():
+                return cls(0, 0, 0, 0)
+
+            return cls(
+                n_compounds=int(stats["n_compounds"][0]),
+                n_taxa=int(stats["n_taxa"][0]),
+                n_references=int(stats["n_refs"][0]),
+                n_entries=int(stats["n_entries"][0]),
+            )
+
+    # ========================================================================
+    # MEMORY MANAGEMENT
+    # ========================================================================
+
+    class MemoryManager:
+        def __init__(self, is_wasm: bool):
+            self.is_wasm = is_wasm
+
+        def get_batch_size(self, format: str) -> int:
+            sizes = {"csv": (2000, 10000), "json": (5000, 10000), "rdf": (500, 2000)}
+            wasm_size, desktop_size = sizes.get(format, (1000, 5000))
+            return wasm_size if self.is_wasm else desktop_size
+
+    # ========================================================================
+    # SERVICES
+    # ========================================================================
+
+    class WikidataQueryService:
+        def __init__(self, endpoint: str):
+            self.endpoint = endpoint
+
+        def fetch_compounds(
+                self,
+                qid: str,
+                smiles: str | None = None,
+                smiles_search_type: str = "substructure",
+                smiles_threshold: float = 0.8,
+        ) -> pl.LazyFrame:
+            query = self._build_query(qid, smiles, smiles_search_type, smiles_threshold)
+            csv_bytes = execute_with_retry(query, self.endpoint)
+
+            if not csv_bytes or csv_bytes.strip() == b"":
+                return pl.LazyFrame()
+
+            return pl.scan_csv(
+                io.BytesIO(csv_bytes),
+                low_memory=True,
+                rechunk=False,
+                dtypes={
+                    "compound": pl.UInt32,
+                    "taxon": pl.UInt32,
+                    "reference": pl.UInt32,
+                    "compound_mass": pl.Float32,
+                    "name": pl.Utf8,
+                    "inchikey": pl.Utf8,
+                    "smiles": pl.Utf8,
+                    "taxon_name": pl.Utf8,
+                    "ref_title": pl.Utf8,
+                    "ref_doi": pl.Utf8,
+                    "mf": pl.Utf8,
+                    "statement": pl.Utf8,
+                    "ref": pl.Utf8,
+                },
+            )
+
+        def _build_query(
+                self,
+                qid: str,
+                smiles: str | None,
+                search_type: str,
+                threshold: float,
+        ) -> str:
+            if smiles:
+                return query_sachem(
+                    escaped_smiles=validate_and_escape(smiles),
+                    search_type=search_type,
+                    threshold=threshold,
+                    taxon_qid=qid if qid != "*" else None,
                 )
+            elif qid == "*":
+                return query_all_compounds()
             else:
-                tmp = (
-                    df.select(
-                        pl.col(compound_col)
+                return query_compounds_by_taxon(qid)
+
+    class DataTransformService:
+        @staticmethod
+        def apply_standard_transforms(df: pl.LazyFrame) -> pl.LazyFrame:
+            df = DataTransformService.rename_columns(df)
+            df = DataTransformService.combine_smiles(df)
+            df = DataTransformService.extract_doi(df)
+            df = DataTransformService.parse_dates(df)
+            df = DataTransformService.cast_types(df)
+            df = DataTransformService.drop_old_columns(df)
+            df = DataTransformService.add_missing_columns(df)
+            df = DataTransformService.deduplicate(df)
+            return df
+
+        @staticmethod
+        def rename_columns(df: pl.LazyFrame) -> pl.LazyFrame:
+            return df.rename(
+                {
+                    "compoundLabel": "name",
+                    "compound_inchikey": "inchikey",
+                    "ref_qid": "reference",
+                    "ref_date": "pub_date",
+                    "compound_mass": "mass",
+                    "compound_formula": "mf",
+                },
+            )
+
+        @staticmethod
+        def combine_smiles(df: pl.LazyFrame) -> pl.LazyFrame:
+            return df.with_columns(
+                [
+                    pl.coalesce(["compound_smiles_iso", "compound_smiles_conn"]).alias(
+                        "smiles",
+                    ),
+                ],
+            )
+
+        @staticmethod
+        def extract_doi(df: pl.LazyFrame) -> pl.LazyFrame:
+            return df.with_columns(
+                [
+                    pl.when(pl.col("ref_doi").cast(pl.Utf8).str.starts_with("http"))
+                    .then(
+                        pl.col("ref_doi")
                         .cast(pl.Utf8)
-                        .str.replace(WIKIDATA_ENTITY_PREFIX, "", literal=True),
+                        .str.split("doi.org/")
+                        .list.last(),
+                        )
+                    .otherwise(pl.col("ref_doi"))
+                    .alias("ref_doi"),
+                ],
                     )
-                    .drop_nulls()
-                    .unique()
-                    .sort(by=compound_col)
+
+        @staticmethod
+        def parse_dates(df: pl.LazyFrame) -> pl.LazyFrame:
+            return df.with_columns(
+                [
+                    pl.when(
+                        pl.col("pub_date").is_not_null() & (pl.col("pub_date") != ""),
+                        )
+                    .then(
+                        pl.col("pub_date")
+                        .str.strptime(
+                            pl.Datetime,
+                            format="%Y-%m-%dT%H:%M:%SZ",
+                            strict=False,
+                        )
+                        .dt.date(),
+                        )
+                    .otherwise(None)
+                    .alias("pub_date"),
+                ],
+                    )
+
+        @staticmethod
+        def cast_types(df: pl.LazyFrame) -> pl.LazyFrame:
+            return df.with_columns(
+                [
+                    pl.col("compound").cast(pl.UInt32),
+                    # pl.col("name").cast(pl.Utf8),
+                    # pl.col("inchikey").cast(pl.Utf8),
+                    # pl.col("smiles").cast(pl.Utf8),
+                    # pl.col("taxon_name").cast(pl.Utf8),
+                    pl.col("taxon").cast(pl.UInt32),
+                    # pl.col("ref_title").cast(pl.Utf8),
+                    # pl.col("ref_doi").cast(pl.Utf8),
+                    pl.col("reference").cast(pl.UInt32),
+                    pl.col("mass").cast(pl.Float32),
+                    # pl.col("mf").cast(pl.Utf8),
+                    # pl.col("statement").cast(pl.Utf8),
+                    # pl.col("ref").cast(pl.Utf8),
+                ],
+            )
+
+        @staticmethod
+        def drop_old_columns(df: pl.LazyFrame) -> pl.LazyFrame:
+            to_drop = ["compound_smiles_iso", "compound_smiles_conn"]
+            return df.drop(
+                [col for col in to_drop if col in df.collect_schema().names()],
+            )
+
+        @staticmethod
+        def add_missing_columns(df: pl.LazyFrame) -> pl.LazyFrame:
+            required = [
+                "compound",
+                "name",
+                "inchikey",
+                "smiles",
+                "taxon_name",
+                "taxon",
+                "ref_title",
+                "ref_doi",
+                "reference",
+                "pub_date",
+                "mass",
+                "mf",
+                "statement",
+                "ref",
+            ]
+            missing = [
+                col for col in required if col not in df.collect_schema().names()
+            ]
+            if missing:
+                df = df.with_columns([pl.lit(None).alias(col) for col in missing])
+            return df
+
+        @staticmethod
+        def deduplicate(df: pl.LazyFrame) -> pl.LazyFrame:
+            return df.unique(
+                subset=["compound", "taxon", "reference"],
+                keep="first",
+            )
+
+    class FilterService:
+        @staticmethod
+        def apply_filters(df: pl.LazyFrame, criteria: SearchCriteria) -> pl.LazyFrame:
+            if criteria.has_year_filter():
+                df = FilterService.filter_by_year(df, criteria.year_range)
+            if criteria.has_mass_filter():
+                df = FilterService.filter_by_mass(df, criteria.mass_range)
+            if criteria.formula_filters and criteria.formula_filters.is_active():
+                df = FilterService.filter_by_formula(df, criteria.formula_filters)
+            return df
+
+        @staticmethod
+        def filter_by_year(
+                df: pl.LazyFrame,
+                year_range: tuple[int, int],
+        ) -> pl.LazyFrame:
+            year_start, year_end = year_range
+            if year_start:
+                df = df.filter(pl.col("pub_date").dt.year() >= year_start)
+            if year_end:
+                df = df.filter(pl.col("pub_date").dt.year() <= year_end)
+            return df
+
+        @staticmethod
+        def filter_by_mass(
+                df: pl.LazyFrame,
+                mass_range: tuple[float, float],
+        ) -> pl.LazyFrame:
+            mass_min, mass_max = mass_range
+            if mass_min:
+                df = df.filter(pl.col("mass") >= mass_min)
+            if mass_max:
+                df = df.filter(pl.col("mass") <= mass_max)
+            return df
+
+        @staticmethod
+        def filter_by_formula(
+                df: pl.LazyFrame,
+                formula_filters: FormulaFilters,
+        ) -> pl.LazyFrame:
+            return df.filter(
+                pl.col("mf").map_batches(
+                    lambda s: s.map_elements(
+                        lambda f: match_filters(f or "", formula_filters),
+                        return_dtype=pl.Boolean,
+                    ),
+                ),
+            )
+
+    class TaxonResolutionService:
+        def __init__(self, endpoint: str):
+            self.endpoint = endpoint
+
+        def resolve(self, taxon_input: str) -> tuple[str | None, mo.Html | None]:
+            taxon_input = str(taxon_input).strip()
+
+            if not taxon_input:
+                return None, None
+            if taxon_input == "*":
+                return "*", None
+            if taxon_input.upper().startswith("Q") and taxon_input[1:].isdigit():
+                return taxon_input.upper(), None
+
+            try:
+                query = query_taxon_search(taxon_input)
+                csv_bytes = execute_with_retry(
+                    query,
+                    self.endpoint,
+                    fallback_endpoint=None,
                 )
 
-            # Iterate rows to update hash without building large concatenated strings
-            col_name = tmp.columns[0] if tmp.columns else compound_col
-            for i, val in enumerate(tmp.get_column(col_name).to_list()):
-                if i > 0:
-                    result_hasher.update(b"|")
-                if val:
-                    result_hasher.update(str(val).encode("utf-8"))
-        except Exception:
-            # If anything goes wrong, leave the result_hasher as-is
+                if not csv_bytes or not csv_bytes.strip():
+                    return None, None
+
+                df = parse_sparql_response(csv_bytes).collect()
+                matches = [
+                    (
+                        extract_from_url(row["taxon"], WIKIDATA_ENTITY_PREFIX),
+                        row["taxon_name"],
+                    )
+                    for row in df.iter_rows(named=True)
+                    if row.get("taxon") and row.get("taxon_name")
+                ]
+
+                if not matches:
+                    return None, None
+
+                taxon_lower = taxon_input.lower()
+                exact_matches = [
+                    (qid, name) for qid, name in matches if name.lower() == taxon_lower
+                ]
+
+                if len(exact_matches) == 1:
+                    return exact_matches[0][0], None
+
+                if len(exact_matches) > 1:
+                    return self._resolve_ambiguous(exact_matches, is_exact=True)
+
+                if len(matches) > 1:
+                    return self._resolve_ambiguous(matches, is_exact=False)
+
+                return matches[0][0], None
+
+            except Exception:
+                return None, None
+
+        def _resolve_ambiguous(
+                self,
+                matches: list[tuple[str, str]],
+                is_exact: bool,
+        ) -> tuple[str, mo.Html]:
+            """Resolve ambiguous taxon matches."""
+            qids = tuple(qid for qid, _ in matches)
+            info = {qid: [0, "", "", ""] for qid in qids}
+
+            csv_bytes = execute_with_retry(
+                query_taxon_connectivity(values_clause("taxon", qids, prefix="wd:")),
+                endpoint=self.endpoint,
+                fallback_endpoint=None,
+            )
+            if csv_bytes and csv_bytes.strip():
+                for row in (
+                        parse_sparql_response(csv_bytes).collect().iter_rows(named=True)
+                ):
+                    taxon_url = row.get("taxon")
+                    if taxon_url:
+                        qid = extract_from_url(taxon_url, WIKIDATA_ENTITY_PREFIX)
+                        info[qid][0] = int(row.get("count") or 0)
+
+            csv_bytes = execute_with_retry(
+                query_taxon_details(values_clause("taxon", qids, prefix="wd:")),
+                endpoint=self.endpoint,
+                fallback_endpoint=None,
+            )
+            if csv_bytes and csv_bytes.strip():
+                for row in (
+                        parse_sparql_response(csv_bytes).collect().iter_rows(named=True)
+                ):
+                    taxon_url = row.get("taxon")
+                    if taxon_url:
+                        qid = extract_from_url(taxon_url, WIKIDATA_ENTITY_PREFIX)
+                        info[qid][1] = row.get("taxonDescription", "")
+                        info[qid][2] = row.get("taxon_parentLabel", "")
+
+            selected_qid = max(qids, key=lambda q: info[q][0])
+
+            matches_sorted = sorted(matches, key=lambda x: info[x[0]][0], reverse=True)
+            matches_with_details = [
+                (qid, name, info[qid][1], info[qid][2], info[qid][0])
+                for qid, name in matches_sorted
+            ]
+
+            return selected_qid, self._create_taxon_warning_html(
+                matches_with_details,
+                selected_qid,
+                is_exact,
+            )
+
+        def _create_taxon_warning_html(
+                self,
+                matches: list,
+                selected_qid: str,
+                is_exact: bool,
+        ) -> mo.Html:
+            """Create HTML warning for ambiguous taxon."""
+            match_type = "exact matches" if is_exact else "similar taxa"
+            intro = (
+                f"Ambiguous taxon name. Multiple {match_type} found:"
+                if is_exact
+                else "No exact match. Similar taxa found:"
+            )
+
+            items = []
+            for match_data in matches:
+                qid, name, description, parent, edges_count = match_data
+                link_html = f'<a href="{scholia_url(qid)}" target="_blank" style="color: {CONFIG["color_hyperlink"]}; font-weight: bold;">{qid}</a>'
+
+                details = []
+                if name:
+                    details.append(f"<em>{name}</em>")
+                if description:
+                    details.append(f"{description}")
+                if parent:
+                    details.append(f"parent: {parent}")
+                if edges_count is not None:
+                    details.append(f"<strong>{edges_count:,} edges</strong>")
+
+                details_str = " - ".join(details) if details else ""
+
+                if qid == selected_qid:
+                    items.append(
+                        f"<li>{link_html} {details_str} <strong>&lt; USING THIS ONE (most edges)</strong></li>",
+                    )
+                else:
+                    items.append(f"<li>{link_html} {details_str}</li>")
+
+            items_html = "".join(items)
+
+            html = f"""
+            <div style="line-height: 1.6;">
+                {intro}
+                <ul style="margin: 0.5em 0; padding-left: 1.5em;">
+                    {items_html}
+                </ul>
+                <em>For precision, use a specific QID in the search box.</em>
+            </div>
+            """
+
+            return mo.Html(html)
+
+    # ========================================================================
+    # EXPORT STRATEGIES
+    # ========================================================================
+
+    class ExportStrategy(ABC):
+        def __init__(self, memory: MemoryManager):
+            self.memory = memory
+
+        def export(self, df: pl.LazyFrame) -> bytes:
+            return self._to_bytes(df)
+
+        @abstractmethod
+        def _to_bytes(self, df: pl.LazyFrame) -> bytes:
             pass
 
-    return query_hash, result_hasher.hexdigest()
+    class CSVExportStrategy(ExportStrategy):
+        def _to_bytes(self, df: pl.LazyFrame) -> bytes:
+            df_collected = df.collect()
+            buffer = io.BytesIO()
+            df_collected.write_csv(buffer)
+            result = buffer.getvalue()
+            del df_collected, buffer
+            if self.memory.is_wasm:
+                gc.collect()
+            return result
 
+    class JSONExportStrategy(ExportStrategy):
+        def _to_bytes(self, df: pl.LazyFrame) -> bytes:
+            df_collected = df.collect()
+            json_str = df_collected.write_json()
+            result = json_str.encode("utf-8")
+            del df_collected
+            if self.memory.is_wasm:
+                gc.collect()
+            return result
 
-@app.function
-def create_dataset_uri(
-    qid: str,
-    taxon_input: str,
-    filters: dict[str, Any] | None,
-    df: pl.DataFrame,
-) -> tuple[URIRef, str, str]:
-    """
-    Create dataset URI based on result content for reproducibility.
+    class RDFExportStrategy(ExportStrategy):
+        def __init__(
+                self,
+                memory: MemoryManager,
+                taxon_input: str,
+                qid: str,
+                filters: dict,
+        ):
+            super().__init__(memory)
+            self.taxon_input = taxon_input
+            self.qid = qid
+            self.filters = filters
 
-    NOTE: LOTUS data is hosted on Wikidata (https://www.wikidata.org/wiki/Q104225190).
-    There is no separate LOTUS namespace - data is stored as regular Wikidata entities.
-    This export creates a virtual dataset URI for the query result using a
-    content-addressable URN based ONLY on what was found (not what was asked).
-    The query hash is returned separately for metadata storage.
-    """
-    query_hash, result_hash = compute_provenance_hashes(
-        qid,
-        taxon_input,
-        filters,
-        df,
-    )
+        def _to_bytes(self, df: pl.LazyFrame) -> bytes:
+            df_collected = df.collect()
 
-    # Create a content-addressable URI using URN scheme with ONLY result hash
-    # Format: urn:hash:sha256:RESULT_HASH
-    # This identifies the dataset by its content, not by how it was obtained
-    dataset_uri = URIRef(f"urn:hash:sha256:{result_hash}")
+            g = Graph()
+            for prefix, ns in WIKIDATA_NAMESPACES.items():
+                g.bind(prefix.lower(), ns)
+            g.bind("rdfs", RDFS)
+            g.bind("xsd", XSD)
+            g.bind("dcterms", DCTERMS)
 
-    return dataset_uri, query_hash, result_hash
-
-
-@app.function
-def build_dataset_description(
-    taxon_input: str,
-    filters: dict[str, Any],
-) -> tuple[str, str]:
-    """Build descriptive dataset name and description. Returns (name, description)."""
-    dataset_name = f"LOTUS Data for {taxon_input}"
-    dataset_desc = f"Chemical compounds found in taxon {taxon_input} from Wikidata"
-
-    if filters:
-        smiles_info = filters.get("chemical_structure", {})
-        if smiles_info:
-            search_type = smiles_info.get("search_type", "substructure")
-            dataset_desc += f" using {search_type} search"
-
-        if filters.get("mass"):
-            mass = filters["mass"]
-            dataset_desc += (
-                f", mass filter: {mass.get('min', 'N/A')}-{mass.get('max', 'N/A')} Da"
+            dataset_uri, query_hash, result_hash = self._create_dataset_uri(
+                df_collected,
+            )
+            self._add_metadata(
+                g,
+                dataset_uri,
+                len(df_collected),
+                query_hash,
+                result_hash,
             )
 
-        if filters.get("molecular_formula"):
-            dataset_desc += ", molecular formula constraints applied"
+            batch_size = self.memory.get_batch_size("rdf")
+            processed_taxa = set()
+            processed_refs = set()
+            ns_cache = {
+                k: WIKIDATA_NAMESPACES[k]
+                for k in ["WD", "WDT", "P", "PS", "PR", "PROV", "SCHEMA"]
+            }
 
-    return dataset_name, dataset_desc
+            for start_idx in range(0, len(df_collected), batch_size):
+                batch = df_collected[start_idx : start_idx + batch_size]
+                for row in batch.iter_rows(named=True):
+                    self._add_compound_triples(
+                        g,
+                        row,
+                        dataset_uri,
+                        processed_taxa,
+                        processed_refs,
+                        ns_cache,
+                    )
+                del batch
+                if self.memory.is_wasm:
+                    gc.collect()
 
+            result = g.serialize(format="turtle").encode("utf-8")
+            del df_collected, g
+            if self.memory.is_wasm:
+                gc.collect()
+            return result
 
-@app.function
-def add_dataset_metadata(
-    g: Graph,
-    dataset_uri: URIRef,
-    dataset_name: str,
-    dataset_desc: str,
-    qid: str,
-    df_len: int,
-    query_hash: str,
-    result_hash: str,
-) -> None:
-    """Add core dataset metadata to RDF graph (mutates graph in-place)."""
-    SCHEMA = WIKIDATA_NAMESPACES["SCHEMA"]
-    WD = WIKIDATA_NAMESPACES["WD"]
+        def _create_dataset_uri(self, df: pl.DataFrame) -> tuple[URIRef, str, str]:
+            query_components = [self.qid or "", self.taxon_input or ""]
+            if self.filters:
+                query_components.append(json.dumps(self.filters, sort_keys=True))
+            query_hash = hashlib.sha256(
+                "|".join(query_components).encode("utf-8"),
+            ).hexdigest()
 
-    # Dataset type and basic metadata
-    g.add((dataset_uri, RDF.type, SCHEMA.Dataset))
-    g.add((dataset_uri, SCHEMA.name, Literal(dataset_name, datatype=XSD.string)))
-    g.add(
-        (
-            dataset_uri,
-            SCHEMA.description,
-            Literal(dataset_desc, datatype=XSD.string),
-        ),
-    )
+            result_hasher = hashlib.sha256()
+            for val in (
+                    df.select(pl.col("compound_qid"))
+                            .to_series()
+                            .drop_nulls()
+                            .unique()
+                            .sort()
+            ):
+                result_hasher.update(str(val).encode("utf-8"))
+            result_hash = result_hasher.hexdigest()
 
-    # License and provenance - CC0 from Wikidata/LOTUS
-    g.add(
-        (
-            dataset_uri,
-            SCHEMA.license,
-            URIRef("https://creativecommons.org/publicdomain/zero/1.0/"),
-        ),
-    )
-    g.add((dataset_uri, SCHEMA.provider, URIRef(CONFIG["app_url"])))
-    g.add((dataset_uri, DCTERMS.source, URIRef(WIKIDATA_HTTP_BASE)))
+            return URIRef(f"urn:hash:sha256:{result_hash}"), query_hash, result_hash
 
-    # Dataset statistics and versioning
-    g.add(
-        (
-            dataset_uri,
-            SCHEMA.numberOfRecords,
-            Literal(df_len, datatype=XSD.integer),
-        ),
-    )
-    g.add(
-        (
-            dataset_uri,
-            SCHEMA.version,
-            Literal(CONFIG["app_version"], datatype=XSD.string),
-        ),
-    )
+        def _add_metadata(
+                self,
+                g: Graph,
+                dataset_uri: URIRef,
+                record_count: int,
+                query_hash: str,
+                result_hash: str,
+        ):
+            SCHEMA = WIKIDATA_NAMESPACES["SCHEMA"]
+            WD = WIKIDATA_NAMESPACES["WD"]
 
-    # Reference to LOTUS Initiative (Q104225190) as the source project
-    g.add(
-        (
-            dataset_uri,
-            SCHEMA.isBasedOn,
-            URIRef(WIKI_PREFIX + "Q104225190"),
-        ),
-    )
+            g.add((dataset_uri, RDF.type, SCHEMA.Dataset))
+            g.add(
+                (dataset_uri, SCHEMA.name, Literal(f"LOTUS Data - {self.taxon_input}")),
+            )
+            g.add(
+                (
+                    dataset_uri,
+                    SCHEMA.numberOfRecords,
+                    Literal(record_count, datatype=XSD.integer),
+                ),
+            )
+            g.add((dataset_uri, SCHEMA.version, Literal(CONFIG["app_version"])))
+            g.add((dataset_uri, SCHEMA.provider, URIRef(CONFIG["app_url"])))
+            g.add((dataset_uri, DCTERMS.source, URIRef(WIKIDATA_HTTP_BASE)))
+            g.add((dataset_uri, SCHEMA.isBasedOn, URIRef(WIKI_PREFIX + "Q104225190")))
 
-    # Link to the taxon being queried (if specific)
-    if qid and qid != "*":
-        g.add((dataset_uri, SCHEMA.about, WD[qid]))
+            if self.qid and self.qid != "*":
+                g.add((dataset_uri, SCHEMA.about, WD[self.qid]))
 
-    # Add provenance hashes for reproducibility
-    # Query hash stored as additional metadata (how dataset was generated)
-    g.add(
-        (
-            dataset_uri,
-            DCTERMS.provenance,
-            Literal(
-                f"Generated by query with hash: {query_hash}",
-                datatype=XSD.string,
-            ),
-        ),
-    )
-    # Result hash is implicit in the dataset URI itself (urn:hash:sha256:RESULT_HASH)
-    # but we also add it explicitly for clarity
-    g.add(
-        (
-            dataset_uri,
-            DCTERMS.identifier,
-            Literal(f"sha256:{result_hash}", datatype=XSD.string),
-        ),
-    )
+            g.add(
+                (dataset_uri, DCTERMS.provenance, Literal(f"Query hash: {query_hash}")),
+            )
+            g.add((dataset_uri, DCTERMS.identifier, Literal(f"sha256:{result_hash}")))
 
+        def _add_compound_triples(
+                self,
+                g: Graph,
+                row: dict,
+                dataset_uri: URIRef,
+                processed_taxa: set,
+                processed_refs: set,
+                ns_cache: dict,
+        ):
+            WD, WDT, P, PS, PR, PROV, SCHEMA = (
+                ns_cache[k] for k in ["WD", "WDT", "P", "PS", "PR", "PROV", "SCHEMA"]
+            )
 
-@app.function
-def add_compound_triples(
-    g: Graph,
-    row: dict[str, Any],
-    dataset_uri: URIRef,
-    processed_taxa: set,
-    processed_refs: set,
-    ns_cache: dict,
-) -> None:
-    """Add all triples for a single compound using Wikidata's full RDF structure."""
-    WD = ns_cache["WD"]
-    WDT = ns_cache["WDT"]
-    P = ns_cache["P"]
-    PS = ns_cache["PS"]
-    PR = ns_cache["PR"]
-    PROV = ns_cache["PROV"]
-    SCHEMA = ns_cache["SCHEMA"]
+            compound_qid = row.get("compound_qid")
+            if not compound_qid:
+                return
 
-    compound_qid = row.get("compound_qid", "")
-    if not compound_qid:
-        return
+            compound_uri = WD[compound_qid]
+            g.add((dataset_uri, SCHEMA.hasPart, compound_uri))
 
-    compound_uri = WD[compound_qid]
+            add_literal(g, compound_uri, WDT.P235, row.get("compound_inchikey"))
+            add_literal(g, compound_uri, WDT.P233, row.get("compound_smiles"))
+            add_literal(g, compound_uri, WDT.P274, row.get("molecular_formula"))
+            add_literal(g, compound_uri, RDFS.label, row.get("compound_name"))
 
-    # Link compound to dataset
-    g.add((dataset_uri, SCHEMA.hasPart, compound_uri))
+            if row.get("compound_mass") is not None:
+                add_literal(g, compound_uri, WDT.P2067, row["compound_mass"], XSD.float)
 
-    # Compound identifiers using Wikidata properties (direct properties)
-    add_literal(
-        g,
-        compound_uri,
-        WDT.P235,
-        row.get("compound_inchikey"),
-    )  # InChIKey
-    add_literal(
-        g,
-        compound_uri,
-        WDT.P233,
-        row.get("compound_smiles"),
-    )  # Canonical SMILES
-    add_literal(
-        g,
-        compound_uri,
-        WDT.P274,
-        row.get("molecular_formula"),
-    )  # Molecular formula
+            taxon_qid = row.get("taxon_qid")
+            ref_qid = row.get("reference_qid")
+            statement_uri_str = row.get("statement_id")
+            ref_uri_str = row.get("ref")
 
-    # Mass (P2067)
-    if row.get("compound_mass") is not None:
-        add_literal(
-            g,
-            compound_uri,
-            WDT.P2067,
-            row["compound_mass"],
-            XSD.float,
-        )
+            if taxon_qid:
+                taxon_uri = WD[taxon_qid]
+                statement_node = (
+                    URIRef(WIKIDATA_STATEMENT_PREFIX + statement_uri_str)
+                    if statement_uri_str
+                    else BNode()
+                )
 
-    # Compound label
-    add_literal(g, compound_uri, RDFS.label, row.get("compound_name"))
+                g.add((compound_uri, P.P703, statement_node))
+                g.add((statement_node, PS.P703, taxon_uri))
 
-    # Taxonomic association using P703 (found in taxon) with FULL STATEMENT STRUCTURE
-    # This mirrors the SPARQL query pattern:
-    #   ?compound p:P703 ?statement.
-    #   ?statement ps:P703 ?taxon;
-    #              prov:wasDerivedFrom ?ref.
-    #   ?ref pr:P248 ?ref_qid.
-    taxon_qid = row.get("taxon_qid")
-    ref_qid = row.get("reference_qid")
-    statement_uri = row.get("statement")
-    ref_uri_str = row.get("ref")
+                if ref_qid:
+                    ref_uri = WD[ref_qid]
+                    ref_node = URIRef(ref_uri_str) if ref_uri_str else BNode()
 
-    if taxon_qid:
-        taxon_uri = WD[taxon_qid]
+                    g.add((statement_node, PROV.wasDerivedFrom, ref_node))
+                    g.add((ref_node, PR.P248, ref_uri))
 
-        # Use actual statement URI from Wikidata if available, otherwise use blank node
-        if statement_uri and statement_uri.strip():
-            statement_node = URIRef(statement_uri)
-        else:
-            statement_node = BNode()
+                    if ref_qid not in processed_refs:
+                        add_literal(g, ref_uri, WDT.P1476, row.get("reference_title"))
+                        add_literal(g, ref_uri, RDFS.label, row.get("reference_title"))
+                        add_literal(g, ref_uri, WDT.P356, row.get("reference_doi"))
+                        if row.get("reference_date"):
+                            add_literal(
+                                g,
+                                ref_uri,
+                                WDT.P577,
+                                str(row["reference_date"]),
+                                XSD.date,
+                            )
+                        processed_refs.add(ref_qid)
 
-        # Full statement pattern (following Wikidata RDF structure)
-        g.add(
-            (compound_uri, P.P703, statement_node),
-        )  # compound has a P703 statement
-        g.add((statement_node, PS.P703, taxon_uri))  # statement value is the taxon
+                g.add((compound_uri, WDT.P703, taxon_uri))
 
-        # Add provenance if reference exists
-        if ref_qid:
-            ref_uri = WD[ref_qid]
+                if taxon_qid not in processed_taxa:
+                    add_literal(g, taxon_uri, WDT.P225, row.get("taxon_name"))
+                    add_literal(g, taxon_uri, RDFS.label, row.get("taxon_name"))
+                    processed_taxa.add(taxon_qid)
 
-            # Use actual reference URI from Wikidata if available, otherwise use blank node
-            if ref_uri_str and ref_uri_str.strip():
-                ref_node = URIRef(ref_uri_str)
+    # ========================================================================
+    # FACADE
+    # ========================================================================
+
+    class LOTUSExplorer:
+        def __init__(self, config: dict, is_wasm: bool = False):
+            self.config = config
+            self.memory = MemoryManager(is_wasm)
+            self.query_service = WikidataQueryService(config["qlever_endpoint"])
+            self.transform_service = DataTransformService()
+            self.filter_service = FilterService()
+            self.taxon_service = TaxonResolutionService(config["qlever_endpoint"])
+
+        def resolve_taxon(
+                self,
+                taxon_input: str,
+        ) -> tuple[str | None, mo.Html | None]:
+            return self.taxon_service.resolve(taxon_input)
+
+        def search(
+                self,
+                criteria: SearchCriteria,
+                qid: str,
+        ) -> tuple[pl.LazyFrame, DatasetStats]:
+            raw_data = self.query_service.fetch_compounds(
+                qid,
+                criteria.smiles,
+                criteria.smiles_search_type,
+                criteria.smiles_threshold,
+            )
+            transformed_data = self.transform_service.apply_standard_transforms(
+                raw_data,
+            )
+            filtered_data = self.filter_service.apply_filters(
+                transformed_data,
+                criteria,
+            )
+            stats = DatasetStats.from_lazyframe(filtered_data)
+            return filtered_data, stats
+
+        def export(self, df: pl.LazyFrame, format: str, **kwargs) -> bytes:
+            if format == "csv":
+                strategy = CSVExportStrategy(self.memory)
+            elif format == "json":
+                strategy = JSONExportStrategy(self.memory)
+            elif format == "rdf":
+                strategy = RDFExportStrategy(
+                    self.memory,
+                    kwargs["taxon_input"],
+                    kwargs["qid"],
+                    kwargs.get("filters", {}),
+                )
             else:
-                ref_node = BNode()
+                raise ValueError(f"Unknown format: {format}")
+            return strategy.export(df)
 
-            # Link statement to reference via provenance
-            g.add((statement_node, PROV.wasDerivedFrom, ref_node))
+        def prepare_export_dataframe(
+                self,
+                df: pl.LazyFrame,
+                include_rdf_ref: bool = False,
+        ) -> pl.LazyFrame:
+            exprs = [
+                pl.col("name").alias("compound_name"),
+                pl.col("smiles").alias("compound_smiles"),
+                pl.col("inchikey").alias("compound_inchikey"),
+                pl.col("mass").alias("compound_mass"),
+                pl.col("mf").alias("molecular_formula"),
+                pl.col("taxon_name"),
+                pl.col("ref_title").alias("reference_title"),
+                pl.col("ref_doi").alias("reference_doi"),
+                pl.col("pub_date").alias("reference_date"),
+                pl.concat_str([pl.lit("Q"), pl.col("compound").cast(pl.Utf8)]).alias(
+                    "compound_qid",
+                ),
+                pl.concat_str([pl.lit("Q"), pl.col("taxon").cast(pl.Utf8)]).alias(
+                    "taxon_qid",
+                ),
+                pl.concat_str([pl.lit("Q"), pl.col("reference").cast(pl.Utf8)]).alias(
+                    "reference_qid",
+                ),
+            ]
 
-            # Reference stated in (pr:P248)
-            g.add((ref_node, PR.P248, ref_uri))
-
-            # Add reference metadata once per unique reference
-            if ref_qid not in processed_refs:
-                # P1476: title
-                add_literal(
-                    g,
-                    ref_uri,
-                    WDT.P1476,
-                    row.get("reference_title"),
-                )
-                add_literal(
-                    g,
-                    ref_uri,
-                    RDFS.label,
-                    row.get("reference_title"),
-                )
-
-                # P356: DOI
-                if row.get("reference_doi"):
-                    add_literal(
-                        g,
-                        ref_uri,
-                        WDT.P356,
-                        row.get("reference_doi"),
+            if "statement" in df.collect_schema().names():
+                exprs.append(
+                    pl.col("statement")
+                    .cast(pl.Utf8)
+                    .str.replace(WIKIDATA_STATEMENT_PREFIX, "", literal=True)
+                    .alias("statement_id"),
                     )
 
-                # P577: publication date
-                if row.get("reference_date"):
-                    add_literal(
-                        g,
-                        ref_uri,
-                        WDT.P577,
-                        str(row["reference_date"]),
-                        XSD.date,
-                    )
+            if include_rdf_ref and "ref" in df.collect_schema().names():
+                exprs.append(pl.col("ref"))
 
-                processed_refs.add(ref_qid)
+            return df.select(exprs)
 
-        # Also add the simplified direct triple for convenience (wdt: namespace)
-        g.add((compound_uri, WDT.P703, taxon_uri))
+        def build_display_dataframe(self, df: pl.LazyFrame, limit: int) -> pl.DataFrame:
+            df = df.select(
+                [
+                    pl.col("smiles").alias("Compound Depiction"),
+                    pl.col("name").alias("Compound Name"),
+                    pl.col("smiles").alias("Compound SMILES"),
+                    pl.col("inchikey").alias("Compound InChIKey"),
+                    pl.col("mf").alias("Compound Molecular Formula"),
+                    pl.col("mass").alias("Compound Mass"),
+                    pl.col("taxon_name").alias("Taxon Name"),
+                    pl.col("ref_title").alias("Reference Title"),
+                    pl.col("pub_date").alias("Reference Date"),
+                    pl.col("ref_doi").alias("Reference DOI"),
+                    pl.col("compound").alias("Compound QID"),
+                    pl.col("taxon").alias("Taxon QID"),
+                    pl.col("reference").alias("Reference QID"),
+                    pl.col("statement").alias("Statement"),
+                ],
+            )
+            return df.limit(limit).collect() if limit else df.collect()
 
-        # Add taxon metadata once per unique taxon
-        if taxon_qid not in processed_taxa:
-            # P225: taxon name
-            add_literal(g, taxon_uri, WDT.P225, row.get("taxon_name"))
-            add_literal(g, taxon_uri, RDFS.label, row.get("taxon_name"))
-            processed_taxa.add(taxon_qid)
+        def compute_hashes(
+                self,
+                qid: str,
+                taxon_input: str,
+                filters: dict,
+                df: pl.LazyFrame,
+        ) -> tuple[str, str]:
+            query_components = [qid or "", taxon_input or ""]
+            if filters:
+                query_components.append(json.dumps(filters, sort_keys=True))
+            query_hash = hashlib.sha256(
+                "|".join(query_components).encode("utf-8"),
+            ).hexdigest()
 
+            result_hasher = hashlib.sha256()
+            try:
+                unique_compounds = (
+                    df.select(pl.col("compound"))
+                    .drop_nulls()
+                    .unique()
+                    .sort("compound")
+                    .collect()
+                )
+                # Stream in batches instead of full list
+                for batch in unique_compounds.iter_slices(1000):
+                    for val in batch["compound"]:
+                        if val:
+                            result_hasher.update(str(val).encode("utf-8"))
+                del unique_compounds
+                if self.memory.is_wasm:
+                    gc.collect()
+            except Exception:
+                pass
 
-@app.function
-def export_to_rdf_turtle(
-    df: pl.DataFrame | pl.LazyFrame,
-    taxon_input: str,
-    qid: str,
-    filters: dict[str, Any] | None = None,
-) -> str:
-    """Export data to RDF Turtle format using Wikidata's full RDF structure."""
-    if isinstance(df, pl.LazyFrame):
-        df = df.collect()
-    # Initialize graph
-    g = Graph()
+            return query_hash, result_hasher.hexdigest()
 
-    # Bind namespaces from WIKIDATA_NAMESPACES
-    g.bind("wd", WIKIDATA_NAMESPACES["WD"])
-    g.bind("wdref", WIKIDATA_NAMESPACES["WDREF"])
-    g.bind("wds", WIKIDATA_NAMESPACES["WDS"])
-    g.bind("wdt", WIKIDATA_NAMESPACES["WDT"])
-    g.bind("p", WIKIDATA_NAMESPACES["P"])
-    g.bind("ps", WIKIDATA_NAMESPACES["PS"])
-    g.bind("pr", WIKIDATA_NAMESPACES["PR"])
-    g.bind("prov", WIKIDATA_NAMESPACES["PROV"])
-    g.bind("schema", WIKIDATA_NAMESPACES["SCHEMA"])
-    g.bind("rdfs", RDFS)
-    g.bind("xsd", XSD)
-    g.bind("dcterms", DCTERMS)
+        def create_metadata(
+                self,
+                stats: DatasetStats,
+                taxon_input: str,
+                qid: str,
+                filters: dict,
+                query_hash: str,
+                result_hash: str,
+        ) -> dict:
+            smiles_info = filters.get("chemical_structure", {})
+            if smiles_info:
+                search_type = smiles_info.get("search_type", "substructure")
+                dataset_name = (
+                    f"LOTUS Data - {search_type.title()} search in {taxon_input}"
+                )
+                description = f"Chemical compounds from taxon {taxon_input}"
+                if qid and qid != "*":
+                    description += f" (Wikidata QID: {qid})"
+                description += f". Retrieved via LOTUS Wikidata Explorer with {search_type} chemical search (SACHEM/IDSM)."
+            else:
+                dataset_name = f"LOTUS Data - {taxon_input}"
+                description = f"Chemical compounds from taxon {taxon_input}"
+                if qid and qid != "*":
+                    description += f" (Wikidata QID: {qid})"
+                description += ". Retrieved via LOTUS Wikidata Explorer."
 
-    # Pre-cache namespace references (avoid repeated dict lookups per row)
-    ns_cache = {
-        "WD": WIKIDATA_NAMESPACES["WD"],
-        "WDT": WIKIDATA_NAMESPACES["WDT"],
-        "P": WIKIDATA_NAMESPACES["P"],
-        "PS": WIKIDATA_NAMESPACES["PS"],
-        "PR": WIKIDATA_NAMESPACES["PR"],
-        "PROV": WIKIDATA_NAMESPACES["PROV"],
-        "SCHEMA": WIKIDATA_NAMESPACES["SCHEMA"],
-    }
+            metadata = {
+                "@context": "https://schema.org/",
+                "@type": "Dataset",
+                "name": dataset_name,
+                "description": description,
+                "version": CONFIG["app_version"],
+                "dateCreated": datetime.now().isoformat(),
+                "license": "https://creativecommons.org/publicdomain/zero/1.0/",
+                "creator": {
+                    "@type": "SoftwareApplication",
+                    "name": CONFIG["app_name"],
+                    "version": CONFIG["app_version"],
+                    "url": CONFIG["app_url"],
+                },
+                "provider": [
+                    {
+                        "@type": "Organization",
+                        "name": "LOTUS Initiative",
+                        "url": "https://www.wikidata.org/wiki/Q104225190",
+                    },
+                    {
+                        "@type": "Organization",
+                        "name": "Wikidata",
+                        "url": "http://www.wikidata.org/",
+                    },
+                ],
+                "citation": [
+                    {
+                        "@type": "ScholarlyArticle",
+                        "name": "LOTUS initiative",
+                        "identifier": "https://doi.org/10.7554/eLife.70780",
+                    },
+                ],
+                "distribution": [
+                    {
+                        "@type": "DataDownload",
+                        "encodingFormat": "text/csv",
+                        "contentUrl": "data:text/csv",
+                    },
+                    {
+                        "@type": "DataDownload",
+                        "encodingFormat": "application/json",
+                        "contentUrl": "data:application/json",
+                    },
+                    {
+                        "@type": "DataDownload",
+                        "encodingFormat": "text/turtle",
+                        "contentUrl": "data:text/turtle",
+                    },
+                ],
+                "numberOfRecords": stats.n_entries,
+                "variablesMeasured": [
+                    "compound_name",
+                    "compound_smiles",
+                    "compound_inchikey",
+                    "compound_mass",
+                    "molecular_formula",
+                    "taxon_name",
+                    "reference_title",
+                    "reference_doi",
+                    "reference_date",
+                    "compound_qid",
+                    "taxon_qid",
+                    "reference_qid",
+                ],
+                "search_parameters": {
+                    "taxon": taxon_input,
+                    "taxon_qid": qid if qid else None,
+                },
+            }
 
-    # Create dataset URI with provenance hashes
-    dataset_uri, query_hash, result_hash = create_dataset_uri(
-        qid,
-        taxon_input,
-        filters,
-        df,
-    )
+            if smiles_info:
+                metadata["provider"].append(
+                    {
+                        "@type": "Organization",
+                        "name": "IDSM",
+                        "url": "https://idsm.elixir-czech.cz/",
+                    }
+                )
+                metadata["chemical_search_service"] = {
+                    "name": "SACHEM",
+                    "provider": "IDSM",
+                    "endpoint": "https://idsm.elixir-czech.cz/sparql/endpoint/",
+                }
 
-    # Build dataset description
-    dataset_name, dataset_desc = build_dataset_description(taxon_input, filters)
+            if filters:
+                metadata["search_parameters"]["filters"] = filters
 
-    # Add dataset metadata
-    add_dataset_metadata(
-        g,
-        dataset_uri,
-        dataset_name,
-        dataset_desc,
-        qid,
-        len(df),
-        query_hash,
-        result_hash,
-    )
+            metadata["provenance"] = {
+                "query_hash": {
+                    "algorithm": "SHA-256",
+                    "value": query_hash,
+                },
+                "result_hash": {
+                    "algorithm": "SHA-256",
+                    "value": result_hash,
+                },
+                "dataset_uri": f"urn:hash:sha256:{result_hash}",
+            }
 
-    # Track unique entities to avoid redundant triples (efficiency)
-    processed_taxa = set()
-    processed_refs = set()
+            return metadata
 
-    # Add compound data with cached namespaces
-    for row in df.iter_rows(named=True):
-        add_compound_triples(
-            g,
-            row,
-            dataset_uri,
-            processed_taxa,
-            processed_refs,
-            ns_cache,
+        def create_citation(self, taxon_input: str) -> str:
+            current_date = datetime.now().strftime("%B %d, %Y")
+            return f"""
+                    ## How to Cite This Data
+
+                    ### Dataset Citation
+                    LOTUS Initiative via Wikidata. ({datetime.now().year}). *Data for {taxon_input}*.
+                    Retrieved from LOTUS Wikidata Explorer on {current_date}.
+                    License: [CC0 1.0 Universal](https://creativecommons.org/publicdomain/zero/1.0/)
+
+                    ### LOTUS Initiative Publication
+                    Rutz A, Sorokina M, Galgonek J, et al. (2022). The LOTUS initiative for open knowledge
+                    management in natural products research. *eLife* **11**:e70780.
+                    DOI: [10.7554/eLife.70780](https://doi.org/10.7554/eLife.70780)
+                    """
+
+        def build_shareable_url(self, criteria: SearchCriteria) -> str:
+            params = {}
+            if criteria.taxon:
+                params["taxon"] = criteria.taxon
+            if criteria.smiles:
+                params["smiles"] = criteria.smiles
+                params["smiles_search_type"] = criteria.smiles_search_type
+                if criteria.smiles_search_type == "similarity":
+                    params["smiles_threshold"] = str(criteria.smiles_threshold)
+            if criteria.has_mass_filter():
+                params["mass_filter"] = "true"
+                params["mass_min"] = str(criteria.mass_range[0])
+                params["mass_max"] = str(criteria.mass_range[1])
+            if criteria.has_year_filter():
+                params["year_filter"] = "true"
+                params["year_start"] = str(criteria.year_range[0])
+                params["year_end"] = str(criteria.year_range[1])
+
+            if params:
+                return f"?{urllib.parse.urlencode(params)}"
+            return ""
+
+    # ========================================================================
+    # UTILITIES
+    # ========================================================================
+
+    def generate_filename(taxon_name: str, file_type: str, filters: dict = None) -> str:
+        safe_name = (
+            taxon_name.replace(" ", "_").replace("/", "_")
+            if taxon_name != "*"
+            else "all_taxa"
         )
+        date_str = datetime.now().strftime("%Y%m%d")
+        return f"{date_str}_lotus_{safe_name}.{file_type}"
 
-    # Serialize to Turtle format
-    return g.serialize(format="turtle")
+    def create_download_button(data: bytes, filename: str, label: str, mimetype: str):
+        compressed, was_compressed = compress_if_large(
+            data,
+            CONFIG["download_embed_threshold_bytes"],
+        )
+        final_filename = filename + ".gz" if was_compressed else filename
+        final_mimetype = "application/gzip" if was_compressed else mimetype
+        display_label = label + (" (gzipped)" if was_compressed else "")
+        return mo.download(
+            data=compressed,
+            filename=final_filename,
+            label=display_label,
+            mimetype=final_mimetype,
+        )
 
 
 @app.cell
@@ -1584,185 +1220,78 @@ def md_title():
 #     )
 #     return
 
-
 @app.cell
-def ui_url_api():
-    # Compact help - collapsed by default
-    help_section = mo.accordion(
+def ui_help():
+    mo.accordion(
         {
-            "Help & API": mo.md(
-                """
-                **Search:** Enter a taxon name (e.g., *Gentiana lutea*) and/or a SMILES structure, then click Search.
+            "Help & API": mo.md("""
+    **Search:** Enter a taxon name (e.g., *Gentiana lutea*) and/or a SMILES structure.
 
-                **URL API:** `?taxon=Salix&smiles=CC(=O)Oc1ccccc1C(=O)O` | `?taxon=*&mass_filter=true&mass_min=300`
-                """,
-            ),
+    **URL API:** `?taxon=Salix&smiles=CC(=O)Oc1ccccc1C(=O)O`
+    """),
         },
     )
-    help_section
     return
 
 
 @app.cell
-def url_params_check():
-    # URL parameter detection - simple notification
-    _url_params_check = mo.query_params()
-    if _url_params_check and (
-        "taxon" in _url_params_check or "smiles" in _url_params_check
-    ):
-        taxon = _url_params_check.get("taxon", "")
-        smiles = _url_params_check.get("smiles", "")
-        msg = f"**Auto-search:** {taxon}" if taxon else ""
-        if smiles:
-            msg += f" SMILES: `{smiles}`"
-        mo.callout(mo.md(msg), kind="info").style(
-            style={
-                "overflow-wrap": "anywhere",
-            },
-        )
-    return
-
-
-@app.cell
-def ui_search_params(search_params):
-    ## TAXON INPUT
+def ui_search_inputs():
     taxon_input = mo.ui.text(
-        value=search_params.taxon,
-        label="Taxon Name or Wikidata QID - Optional",
-        placeholder="e.g., Gentiana lutea, Q157115, or * for all",
+        value="Gentiana lutea",
+        label="Taxon Name or QID",
         full_width=True,
     )
-
-    ## SMILES INPUT
-    smiles_input = mo.ui.text(
-        value=search_params.smiles,
-        label="Chemical Structure (SMILES) - Optional",
-        placeholder="e.g., c1ccccc1 or CC(=O)Oc1ccccc1C(=O)O",
-        full_width=True,
-    )
-
+    smiles_input = mo.ui.text(value="", label="SMILES", full_width=True)
     smiles_search_type = mo.ui.dropdown(
         options=["substructure", "similarity"],
-        value=search_params.smiles_search_type,
-        label="Search Type",
-        full_width=True,
+        value="substructure",
     )
-
     smiles_threshold = mo.ui.slider(
         start=0.0,
         stop=1.0,
         step=0.05,
-        value=search_params.smiles_threshold,
-        label="Similarity Threshold",
-        full_width=True,
+        value=0.8,
+        label="Threshold",
     )
-
-    ## MASS FILTERS
-    mass_filter = mo.ui.checkbox(
-        label="Mass filter",
-        value=search_params.mass_filter,
-    )
-
-    mass_min = mo.ui.number(
-        value=search_params.mass_min,
-        start=0,
-        stop=CONFIG["mass_ui_max"],
-        step=0.001,
-        label="Min (Da)",
-        full_width=True,
-    )
-    mass_max = mo.ui.number(
-        value=search_params.mass_max,
-        start=0,
-        stop=CONFIG["mass_ui_max"],
-        step=0.001,
-        label="Max (Da)",
-        full_width=True,
-    )
-
-    formula_filter = mo.ui.checkbox(
-        label="Formula filter",
-        value=search_params.formula_filter,
-    )
-    exact_formula = mo.ui.text(
-        value=search_params.exact_formula,
-        label="Formula",
-        placeholder="C15H10O5",
-        full_width=True,
-    )
-
-    # Element min/max inputs
-    def _mk(element: str, min_val, max_val):
-        default_max = ELEMENT_DEFAULTS[element.lower()]
-        return (
-            mo.ui.number(
-                value=min_val,
-                start=0,
-                stop=default_max,
-                label=f"{element} min",
-                full_width=True,
-            ),
-            mo.ui.number(
-                value=max_val if max_val is not None else default_max,
-                start=0,
-                stop=default_max,
-                label=f"{element} max",
-                full_width=True,
-            ),
-        )
-
-    c_min, c_max = _mk("C", search_params.c_min, search_params.c_max)
-    h_min, h_max = _mk("H", search_params.h_min, search_params.h_max)
-    n_min, n_max = _mk("N", search_params.n_min, search_params.n_max)
-    o_min, o_max = _mk("O", search_params.o_min, search_params.o_max)
-    p_min, p_max = _mk("P", search_params.p_min, search_params.p_max)
-    s_min, s_max = _mk("S", search_params.s_min, search_params.s_max)
-
-    # Halogen selectors
-    _ho = ["allowed", "required", "excluded"]
+    mass_filter = mo.ui.checkbox(label="Mass filter", value=False)
+    mass_min = mo.ui.number(value=0, start=0, stop=10000, label="Min (Da)")
+    mass_max = mo.ui.number(value=2000, start=0, stop=10000, label="Max (Da)")
+    year_filter = mo.ui.checkbox(label="Year filter", value=False)
+    year_start = mo.ui.number(value=1900, start=1700, stop=YEAR, label="From")
+    year_end = mo.ui.number(value=YEAR, start=1700, stop=YEAR, label="To")
+    formula_filter = mo.ui.checkbox(label="Formula filter", value=False)
+    exact_formula = mo.ui.text(value="", label="Exact Formula", placeholder="C15H10O5")
+    c_min = mo.ui.number(value=0, start=0, stop=100, label="C min")
+    c_max = mo.ui.number(value=100, start=0, stop=100, label="C max")
+    h_min = mo.ui.number(value=0, start=0, stop=200, label="H min")
+    h_max = mo.ui.number(value=200, start=0, stop=200, label="H max")
+    n_min = mo.ui.number(value=0, start=0, stop=50, label="N min")
+    n_max = mo.ui.number(value=50, start=0, stop=50, label="N max")
+    o_min = mo.ui.number(value=0, start=0, stop=50, label="O min")
+    o_max = mo.ui.number(value=50, start=0, stop=50, label="O max")
+    p_min = mo.ui.number(value=0, start=0, stop=20, label="P min")
+    p_max = mo.ui.number(value=20, start=0, stop=20, label="P max")
+    s_min = mo.ui.number(value=0, start=0, stop=20, label="S min")
+    s_max = mo.ui.number(value=20, start=0, stop=20, label="S max")
     f_state = mo.ui.dropdown(
-        options=_ho,
-        value=search_params.f_state,
+        options=["allowed", "required", "excluded"],
+        value="allowed",
         label="F",
-        full_width=True,
     )
     cl_state = mo.ui.dropdown(
-        options=_ho,
-        value=search_params.cl_state,
+        options=["allowed", "required", "excluded"],
+        value="allowed",
         label="Cl",
-        full_width=True,
     )
     br_state = mo.ui.dropdown(
-        options=_ho,
-        value=search_params.br_state,
+        options=["allowed", "required", "excluded"],
+        value="allowed",
         label="Br",
-        full_width=True,
     )
     i_state = mo.ui.dropdown(
-        options=_ho,
-        value=search_params.i_state,
+        options=["allowed", "required", "excluded"],
+        value="allowed",
         label="I",
-        full_width=True,
-    )
-
-    current_year = datetime.now().year
-    year_filter = mo.ui.checkbox(
-        label="Year filter",
-        value=search_params.year_filter,
-    )
-    year_start = mo.ui.number(
-        value=search_params.year_start,
-        start=CONFIG["year_range_start"],
-        stop=current_year,
-        label="From",
-        full_width=True,
-    )
-    year_end = mo.ui.number(
-        value=search_params.year_end,
-        start=CONFIG["year_range_start"],
-        stop=current_year,
-        label="To",
-        full_width=True,
     )
 
     run_button = mo.ui.run_button(label="Search Wikidata")
@@ -1800,73 +1329,65 @@ def ui_search_params(search_params):
 
 
 @app.cell
-def ui_filters(
-    br_state,
-    c_max,
-    c_min,
-    cl_state,
-    exact_formula,
-    f_state,
-    formula_filter,
-    h_max,
-    h_min,
-    i_state,
-    mass_filter,
-    mass_max,
-    mass_min,
-    n_max,
-    n_min,
-    o_max,
-    o_min,
-    p_max,
-    p_min,
-    run_button,
-    s_max,
-    s_min,
-    smiles_input,
-    smiles_search_type,
-    smiles_threshold,
-    taxon_input,
-    year_end,
-    year_filter,
-    year_start,
+def ui_search_panel(
+        br_state,
+        c_max,
+        c_min,
+        cl_state,
+        exact_formula,
+        f_state,
+        formula_filter,
+        h_max,
+        h_min,
+        i_state,
+        mass_filter,
+        mass_max,
+        mass_min,
+        n_max,
+        n_min,
+        o_max,
+        o_min,
+        p_max,
+        p_min,
+        run_button,
+        s_max,
+        s_min,
+        smiles_input,
+        smiles_search_type,
+        smiles_threshold,
+        taxon_input,
+        year_end,
+        year_filter,
+        year_start,
 ):
-    # Build structure search section
     structure_fields = [smiles_input, smiles_search_type]
     if smiles_search_type.value == "similarity":
         structure_fields.append(smiles_threshold)
 
-    # Main search: search + taxon + SMILES side by side
     main_search = mo.hstack(
-        [mo.vstack([run_button, taxon_input]), mo.vstack(structure_fields)],
+        [
+            mo.vstack([taxon_input, run_button]),
+            mo.vstack(structure_fields),
+        ],
         gap=2,
         widths="equal",
+        wrap=True,
     )
 
-    # Filter checkboxes inline
-    filter_row = mo.hstack(
-        [mass_filter, year_filter, formula_filter],
-        gap=2,
-        justify="start",
-    )
+    filter_row = mo.hstack([mass_filter, year_filter, formula_filter], gap=2, wrap=True)
+    filters_ui = [filter_row, main_search]
 
-    # Build filters UI - compact
-    filters_ui = [main_search, filter_row]
-
-    # Conditional filter fields - all inline
     if mass_filter.value:
-        filters_ui.append(mo.hstack([mass_min, mass_max], gap=2, widths="equal"))
-
+        filters_ui.append(mo.hstack([mass_min, mass_max], gap=2, wrap=True))
     if year_filter.value:
-        filters_ui.append(mo.hstack([year_start, year_end], gap=2, widths="equal"))
-
+        filters_ui.append(mo.hstack([year_start, year_end], gap=2, wrap=True))
     if formula_filter.value:
         filters_ui.extend(
             [
                 exact_formula,
-                mo.hstack([c_min, c_max, h_min, h_max, n_min, n_max], gap=1),
-                mo.hstack([o_min, o_max, p_min, p_max, s_min, s_max], gap=1),
-                mo.hstack([f_state, cl_state, br_state, i_state], gap=1),
+                mo.hstack([c_min, c_max, h_min, h_max, n_min, n_max], gap=1, wrap=True),
+                mo.hstack([o_min, o_max, p_min, p_max, s_min, s_max], gap=1, wrap=True),
+                mo.hstack([f_state, cl_state, br_state, i_state], gap=1, wrap=True),
             ],
         )
 
@@ -1875,749 +1396,65 @@ def ui_filters(
 
 
 @app.cell
-def launch_query(
-    br_state,
-    c_max,
-    c_min,
-    cl_state,
-    exact_formula,
-    f_state,
-    formula_filter,
-    h_max,
-    h_min,
-    i_state,
-    mass_filter,
-    mass_max,
-    mass_min,
-    n_max,
-    n_min,
-    o_max,
-    o_min,
-    p_max,
-    p_min,
-    run_button,
-    s_max,
-    s_min,
-    search_params,
-    smiles_input,
-    smiles_search_type,
-    smiles_threshold,
-    taxon_input,
-    year_end,
-    year_filter,
-    year_start,
+def execute_search(
+        br_state,
+        c_max,
+        c_min,
+        cl_state,
+        exact_formula,
+        f_state,
+        formula_filter,
+        h_max,
+        h_min,
+        i_state,
+        mass_filter,
+        mass_max,
+        mass_min,
+        n_max,
+        n_min,
+        o_max,
+        o_min,
+        p_max,
+        p_min,
+        run_button,
+        s_max,
+        s_min,
+        smiles_input,
+        smiles_search_type,
+        smiles_threshold,
+        taxon_input,
+        year_end,
+        year_filter,
+        year_start,
 ):
-    """Execute query and return LazyFrame (NOT materialized)."""
-    # Auto-run if URL parameters or button clicked
-    if not run_button.value and not search_params.auto_run:
-        lazy_results = None
-        qid = None
-        taxon_warning = None
+    if not run_button.value:
+        lotus, results, stats, qid, criteria, query_hash, result_hash, taxon_warning = (
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
     else:
         start_time = time.time()
+        lotus = LOTUSExplorer(CONFIG, IS_PYODIDE)
 
-        # Get input values
-        smiles_str = smiles_input.value.strip() if smiles_input.value else ""
-        taxon_input_str = taxon_input.value.strip()
-
-        # Determine search mode based on inputs
-        # 1. Both present: use both (SMILES search filtered by taxon)
-        # 2. SMILES only (taxon is empty or "*"): use SMILES only
-        # 3. Taxon only (SMILES empty): use taxon only
-
-        use_smiles = bool(smiles_str)
-        use_taxon = bool(taxon_input_str and taxon_input_str != "*")
-
-        # Initialize all return values for all paths
-        qid = None
-        taxon_warning = None
-        lazy_results = None
-
-        if use_smiles and use_taxon:
-            # Both present - search by structure within taxon
-            spinner_message = (
-                f"Searching for SMILES '{smiles_str}' in {taxon_input_str}"
-            )
-        elif use_smiles:
-            # SMILES only
-            spinner_message = f"Searching for SMILES: {smiles_str}"
-        else:
-            # Taxon only
-            if taxon_input_str == "*":
-                spinner_message = "Searching all taxa ..."
-            else:
-                spinner_message = f"Searching for: {taxon_input_str}"
-
-        with mo.status.spinner(title=spinner_message):
-            # Resolve taxon if using taxon (either alone or with SMILES)
-            if use_taxon or (not use_smiles and taxon_input_str):
-                taxon_input_str = taxon_input.value.strip()
-                qid, taxon_warning = resolve_taxon_to_qid(taxon_input_str)
-                if not qid:
-                    mo.stop(
-                        True,
-                        mo.callout(
-                            mo.md(
-                                f"**Taxon not found**\n\n"
-                                f"Could not find '{taxon_input_str}' in Wikidata.\n\n"
-                                f"**Suggestions:**\n"
-                                f"- Check spelling (scientific names are case-sensitive)\n"
-                                f"- Try a different taxonomic level (e.g., genus instead of species)\n"
-                                f"- Use a Wikidata QID directly (e.g., Q157115)",
-                            ),
-                            kind="warn",
-                        ).style(
-                            style={
-                                "overflow-wrap": "anywhere",
-                            },
-                        ),
-                    )
-
-            try:
-                formula_filt = None
-                if formula_filter.value:
-                    formula_filt = create_filters(
-                        exact_formula=exact_formula.value,
-                        c_min=c_min.value,
-                        c_max=c_max.value,
-                        h_min=h_min.value,
-                        h_max=h_max.value,
-                        n_min=n_min.value,
-                        n_max=n_max.value,
-                        o_min=o_min.value,
-                        o_max=o_max.value,
-                        p_min=p_min.value,
-                        p_max=p_max.value,
-                        s_min=s_min.value,
-                        s_max=s_max.value,
-                        f_state=f_state.value,
-                        cl_state=cl_state.value,
-                        br_state=br_state.value,
-                        i_state=i_state.value,
-                    )
-                lazy_results = query_wikidata(
-                    qid=qid if qid else "",
-                    year_start=year_start.value if year_filter.value else None,
-                    year_end=year_end.value if year_filter.value else None,
-                    mass_min=mass_min.value if mass_filter.value else None,
-                    mass_max=mass_max.value if mass_filter.value else None,
-                    formula_filters=formula_filt,
-                    smiles=smiles_str,
-                    smiles_search_type=smiles_search_type.value,
-                    smiles_threshold=smiles_threshold.value,
-                )
-            except Exception as e:
-                mo.stop(
-                    True,
-                    mo.callout(
-                        mo.md(f"**Query Error:** {str(e)}"),
-                        kind="danger",
-                    ).style(
-                        style={
-                            "overflow-wrap": "anywhere",
-                        },
-                    ),
-                )
-        elapsed = round(time.time() - start_time, 2)
-        _ = mo.md(f"Query executed in **{elapsed}s**")
-    return lazy_results, qid, taxon_warning
-
-
-@app.function
-def get_counts(lazy_df: pl.LazyFrame) -> dict:
-    """
-    Get counts without materializing full DataFrame.
-
-    Only materializes 1 row with aggregations.
-    """
-
-    counts_lazy = lazy_df.select(
-        [
-            pl.col("compound").n_unique().alias("n_compounds"),
-            pl.col("taxon").n_unique().alias("n_taxa"),
-            pl.col("reference").n_unique().alias("n_refs"),
-            pl.len().alias("n_entries"),
-        ],
-    )
-
-    # Materialize ONLY the counts (1 row)
-    counts_df = counts_lazy.collect()
-
-    if counts_df.is_empty():
-        return {"n_compounds": 0, "n_taxa": 0, "n_refs": 0, "n_entries": 0}
-
-    return {
-        "n_compounds": int(counts_df["n_compounds"][0]),
-        "n_taxa": int(counts_df["n_taxa"][0]),
-        "n_refs": int(counts_df["n_refs"][0]),
-        "n_entries": int(counts_df["n_entries"][0]),
-    }
-
-
-@app.cell
-def get_counts_lazy(lazy_results):
-    """Get counts without materializing full dataset."""
-
-    if lazy_results is None:
-        counts = None
-    else:
-        # *** ONLY MATERIALIZES 1 ROW (4 integers) ***
-        counts = get_counts(lazy_results)
-    return (counts,)
-
-
-@app.cell
-def display_summary(
-    br_state,
-    c_max,
-    c_min,
-    cl_state,
-    counts,
-    download_ui,
-    exact_formula,
-    f_state,
-    formula_filter,
-    h_max,
-    h_min,
-    i_state,
-    mass_filter,
-    mass_max,
-    mass_min,
-    n_max,
-    n_min,
-    o_max,
-    o_min,
-    p_max,
-    p_min,
-    qid,
-    query_hash,
-    result_hash,
-    run_button,
-    s_max,
-    s_min,
-    search_params,
-    smiles_input,
-    smiles_search_type,
-    smiles_threshold,
-    taxon_input,
-    taxon_warning,
-    year_end,
-    year_filter,
-    year_start,
-):
-    """Display summary - NO lazy_results reference."""
-
-    # Check if we have results
-    if (not run_button.value and not search_params.auto_run) or counts is None:
-        summary_and_downloads = mo.Html("")
-    elif counts["n_compounds"] == 0:
-        # Show no compounds message
-        parts = []
-        if taxon_warning:
-            parts.append(
-                mo.callout(taxon_warning, kind="warn").style(
-                    style={"overflow-wrap": "anywhere"},
+        qid, taxon_warning = lotus.resolve_taxon(taxon_input.value)
+        if not qid:
+            mo.stop(
+                True,
+                mo.callout(
+                    mo.md(f"**Taxon not found:** {taxon_input.value}"),
+                    kind="warn",
                 ),
             )
 
-        if qid == "*":
-            parts.append(
-                mo.callout(
-                    mo.md(
-                        "No compounds found for **all taxa** with the current filters.",
-                    ),
-                    kind="warn",
-                ).style(style={"overflow-wrap": "anywhere"}),
-            )
-        else:
-            parts.append(
-                mo.callout(
-                    mo.md(
-                        f"No compounds found for **{taxon_input.value}** ([{qid}]({scholia_url(qid)})).",
-                    ),
-                    kind="warn",
-                ).style(style={"overflow-wrap": "anywhere"}),
-            )
-        summary_and_downloads = mo.vstack(parts) if len(parts) > 1 else parts[0]
-    else:
-        n_compounds = counts["n_compounds"]
-        n_taxa = counts["n_taxa"]
-        n_refs = counts["n_refs"]
-        n_entries = counts["n_entries"]
-
-        # Results header
-        results_header = mo.md("## Results")
-
-        # Taxon info
-        if qid == "*":
-            taxon_info = "All taxa"
-        else:
-            taxon_info = f"{taxon_input.value} [{qid}]({scholia_url(qid)})"
-
-        # Add SMILES info
-        if smiles_input.value and smiles_input.value.strip():
-            _smiles_str = smiles_input.value.strip()
-            search_type = smiles_search_type.value
-
-            if search_type == "similarity":
-                threshold_val = smiles_threshold.value
-                smiles_info = f"SMILES: `{_smiles_str}` ({search_type}, threshold: {threshold_val})"
-            else:
-                smiles_info = f"SMILES: `{_smiles_str}` ({search_type})"
-
-            combined_info = f"{taxon_info} - {smiles_info}"
-        else:
-            combined_info = taxon_info
-
-        # Search info with hashes
-        search_info_display = mo.md(
-            f"**{combined_info}**\n"
-            f"**Hashes:**\n"
-            f"\t*Query*: `{query_hash}`"
-            f"\t*Results*: `{result_hash}`",
-        ).style(style={"overflow-wrap": "anywhere"})
-
-        # Stats cards
-        stats_data = [
-            (n_compounds, "Compound"),
-            (n_taxa, "Taxon"),
-            (n_refs, "Reference"),
-            (n_entries, "Entry"),
-        ]
-        stats_cards = mo.hstack(
-            [
-                mo.stat(
-                    value=f"{n:,}",
-                    label=f"{pluralize(name, n, irregular=PLURAL_MAP)}",
-                    bordered=False,
-                )
-                for n, name in stats_data
-            ],
-            gap=0,
-            justify="start",
-            wrap=True,
-        ).style(style={"overflow-wrap": "anywhere"})
-
-        search_and_stats = mo.vstack([search_info_display, stats_cards], gap=2)
-
-        # Build API URL
-        api_url = build_api_url(
-            taxon=taxon_input.value,
-            smiles=smiles_input.value,
-            smiles_search_type=smiles_search_type.value,
-            smiles_threshold=smiles_threshold.value,
-            mass_filter=mass_filter.value,
-            mass_min=mass_min.value,
-            mass_max=mass_max.value,
-            year_filter=year_filter.value,
-            year_start=year_start.value,
-            year_end=year_end.value,
-            formula_filter=formula_filter.value,
-            exact_formula=exact_formula.value,
-            c_min=c_min.value,
-            c_max=c_max.value,
-            h_min=h_min.value,
-            h_max=h_max.value,
-            n_min=n_min.value,
-            n_max=n_max.value,
-            o_min=o_min.value,
-            o_max=o_max.value,
-            p_min=p_min.value,
-            p_max=p_max.value,
-            s_min=s_min.value,
-            s_max=s_max.value,
-            f_state=f_state.value,
-            cl_state=cl_state.value,
-            br_state=br_state.value,
-            i_state=i_state.value,
-        )
-
-        # Shareable URL
-        if api_url:
-            url_display = mo.md(f"""
-                **Shareable URL**
-
-                Copy and append this to your notebook URL:
-                ```
-                {api_url}
-                ```
-                """)
-            api_url_section = mo.accordion(
-                {"Share this search": url_display},
-                multiple=False,
-            )
-        else:
-            api_url_section = mo.Html("")
-
-        # Build summary
-        summary_parts = [results_header, search_and_stats]
-        if api_url:
-            summary_parts.append(api_url_section)
-        if taxon_warning:
-            summary_parts.append(
-                mo.callout(taxon_warning, kind="warn").style(
-                    style={"overflow-wrap": "anywhere"},
-                ),
-            )
-
-        # Combine summary and downloads
-        summary_and_downloads = mo.vstack(
-            [mo.vstack(summary_parts), download_ui],
-            gap=3,
-        )
-
-    summary_and_downloads
-    return
-
-
-@app.function
-def df_to_csv_bytes(df: pl.LazyFrame | pl.DataFrame) -> bytes:
-    """Convert a Polars DataFrame to CSV safely in batches for WASM."""
-    if isinstance(df, pl.LazyFrame):
-        df = df.collect()
-    buffer = io.BytesIO()
-    df.write_csv(buffer)
-    return buffer.getvalue()
-
-
-@app.function
-def df_to_json_bytes_streaming(df: pl.LazyFrame, batch_size: int = 10000) -> bytes:
-    """Process in 10K row chunks instead of all at once."""
-    buffer = io.BytesIO()
-    buffer.write(b"[")
-
-    for offset in range(0, total_rows, batch_size):
-        batch = df.slice(offset, batch_size).collect()
-        # Write batch, then delete it
-        buffer.write(batch.write_json())
-        del batch
-
-    buffer.write(b"]")
-    return buffer.getvalue()
-
-
-@app.function
-def df_to_json_bytes(df: pl.LazyFrame | pl.DataFrame) -> bytes:
-    """
-    Convert DataFrame to JSON bytes.
-    """
-    if isinstance(df, pl.LazyFrame):
-        total_rows = df.select(pl.count()).collect()["count"][0]
-        lazy_df = df
-    else:
-        total_rows = len(df)
-        lazy_df = df.lazy()
-
-    buffer = io.BytesIO()
-    buffer.write(b"[\n")
-
-    # Small batches for WASM
-    batch_size = 1000 if IS_PYODIDE else 5000
-    first_record = True
-
-    for offset in range(0, total_rows, batch_size):
-        batch = lazy_df.slice(offset, batch_size).collect()
-
-        for record in batch.to_dicts():
-            if not first_record:
-                buffer.write(b",\n")
-            first_record = False
-
-            # Serialize and encode to bytes
-            record_json = json.dumps(record, default=str, ensure_ascii=False)
-            buffer.write(record_json.encode("utf-8"))  # ← Explicit encoding
-
-            del record_json
-
-        del batch
-
-        if IS_PYODIDE and offset % (batch_size * 5) == 0:
-            gc.collect()
-
-    buffer.write(b"\n]")
-    result = buffer.getvalue()
-
-    del buffer
-    if IS_PYODIDE:
-        gc.collect()
-
-    return result
-
-
-@app.function
-def export_to_rdf_turtle_batched(
-    df: pl.DataFrame | pl.LazyFrame,
-    taxon_input: str,
-    qid: str,
-    filters: dict[str, Any] | None = None,
-    batch_size: int = 1000,
-) -> str:
-    """
-    Export to full RDF Turtle format with batched processing.
-
-    Memory optimization: Process compounds in batches to reduce peak memory.
-    Graph structure: IDENTICAL to original (full provenance, statements, refs)
-
-    Args:
-        batch_size: Number of compounds to process at once (default 1000)
-                   Lower = less memory, slightly slower
-                   Higher = more memory, slightly faster
-    """
-    if isinstance(df, pl.LazyFrame):
-        df = df.collect()
-
-    # Initialize graph
-    g = Graph()
-
-    # Bind namespaces (same as original)
-    g.bind("wd", WIKIDATA_NAMESPACES["WD"])
-    g.bind("wdref", WIKIDATA_NAMESPACES["WDREF"])
-    g.bind("wds", WIKIDATA_NAMESPACES["WDS"])
-    g.bind("wdt", WIKIDATA_NAMESPACES["WDT"])
-    g.bind("p", WIKIDATA_NAMESPACES["P"])
-    g.bind("ps", WIKIDATA_NAMESPACES["PS"])
-    g.bind("pr", WIKIDATA_NAMESPACES["PR"])
-    g.bind("prov", WIKIDATA_NAMESPACES["PROV"])
-    g.bind("schema", WIKIDATA_NAMESPACES["SCHEMA"])
-    g.bind("rdfs", RDFS)
-    g.bind("xsd", XSD)
-    g.bind("dcterms", DCTERMS)
-
-    # Pre-cache namespace references
-    ns_cache = {
-        "WD": WIKIDATA_NAMESPACES["WD"],
-        "WDT": WIKIDATA_NAMESPACES["WDT"],
-        "P": WIKIDATA_NAMESPACES["P"],
-        "PS": WIKIDATA_NAMESPACES["PS"],
-        "PR": WIKIDATA_NAMESPACES["PR"],
-        "PROV": WIKIDATA_NAMESPACES["PROV"],
-        "SCHEMA": WIKIDATA_NAMESPACES["SCHEMA"],
-    }
-
-    # Create dataset URI with provenance hashes (same as original)
-    dataset_uri, query_hash, result_hash = create_dataset_uri(
-        qid,
-        taxon_input,
-        filters,
-        df,
-    )
-
-    # Build dataset description (same as original)
-    dataset_name, dataset_desc = build_dataset_description(taxon_input, filters)
-
-    # Add dataset metadata (same as original)
-    add_dataset_metadata(
-        g,
-        dataset_uri,
-        dataset_name,
-        dataset_desc,
-        qid,
-        len(df),
-        query_hash,
-        result_hash,
-    )
-
-    # Track unique entities (same as original)
-    processed_taxa = set()
-    processed_refs = set()
-
-    # === OPTIMIZATION: Process compounds in batches ===
-    total_rows = len(df)
-
-    for start_idx in range(0, total_rows, batch_size):
-        end_idx = min(start_idx + batch_size, total_rows)
-
-        # Get batch slice (in-memory, but only batch_size rows)
-        batch = df[start_idx:end_idx]
-
-        # Add compound triples for this batch (FULL STRUCTURE - identical to original)
-        for row in batch.iter_rows(named=True):
-            add_compound_triples(
-                g,
-                row,
-                dataset_uri,
-                processed_taxa,
-                processed_refs,
-                ns_cache,
-            )
-
-        # Note: We don't delete the batch here because the graph holds references
-        # to the data. The batch object itself is small - just row references.
-        # The memory savings come from not materializing all rows at once.
-
-    # Serialize to Turtle format (same as original)
-    return g.serialize(format="turtle")
-
-
-@app.function
-def df_to_json_bytes_batched(
-    df: pl.LazyFrame | pl.DataFrame,
-    batch_size: int = 5000,
-) -> bytes:
-    """
-    Stream JSON export in batches - simple and effective.
-
-    Memory: Only one batch in memory at a time.
-    Format: Standard JSON array (identical to df.write_json())
-    """
-    if isinstance(df, pl.LazyFrame):
-        # Get total count without materializing
-        total_rows = df.select(pl.count()).collect()["count"][0]
-    else:
-        total_rows = len(df)
-        df = df.lazy()
-
-    import io
-
-    buffer = io.BytesIO()
-
-    # Start JSON array
-    buffer.write(b"[\n")
-
-    first = True
-    for offset in range(0, total_rows, batch_size):
-        # Collect only this batch
-        batch = df.slice(offset, batch_size).collect()
-
-        # Convert to JSON records
-        for row_dict in batch.to_dicts():
-            if not first:
-                buffer.write(b",\n")
-            first = False
-
-            # Write row as JSON
-            import json
-
-            buffer.write(json.dumps(row_dict, default=str).encode("utf-8"))
-
-        # Clean up batch
-        del batch
-
-    # Close JSON array
-    buffer.write(b"\n]")
-
-    return buffer.getvalue()
-
-
-@app.function
-def df_to_json_bytes_smart(df: pl.LazyFrame | pl.DataFrame) -> bytes:
-    """Smart JSON: standard if small, batched if large."""
-    if isinstance(df, pl.LazyFrame):
-        total_rows = df.select(pl.count()).collect()["count"][0]
-    else:
-        total_rows = len(df)
-
-    # Use standard JSON for small datasets (faster)
-    if total_rows <= 3000:
-        if isinstance(df, pl.LazyFrame):
-            df = df.collect()
-        return df.write_json().encode("utf-8")
-    else:
-        # Use batched JSON for large datasets (memory-safe)
-        return df_to_json_bytes_batched(df, batch_size=5000)
-
-
-@app.function
-def export_to_rdf_turtle_smart(
-    df: pl.DataFrame | pl.LazyFrame,
-    taxon_input: str,
-    qid: str,
-    filters: dict[str, Any] | None = None,
-) -> str:
-    """Smart RDF: standard if small, batched if large."""
-    if isinstance(df, pl.LazyFrame):
-        df = df.collect()
-
-    total_rows = len(df)
-
-    # Use standard RDF for small datasets (faster)
-    if total_rows <= 2000:
-        return export_to_rdf_turtle(df, taxon_input, qid, filters)
-    else:
-        # Use batched RDF for large datasets (memory-safe, full structure)
-        return export_to_rdf_turtle_batched(
-            df,
-            taxon_input,
-            qid,
-            filters,
-            batch_size=1000,
-        )
-
-
-@app.cell
-def generate_results(
-    br_state,
-    c_max,
-    c_min,
-    cl_state,
-    counts,
-    exact_formula,
-    f_state,
-    formula_filter,
-    h_max,
-    h_min,
-    i_state,
-    lazy_results,
-    mass_filter,
-    mass_max,
-    mass_min,
-    n_max,
-    n_min,
-    o_max,
-    o_min,
-    p_max,
-    p_min,
-    qid,
-    run_button,
-    s_max,
-    s_min,
-    search_params,
-    smiles_input,
-    smiles_search_type,
-    smiles_threshold,
-    taxon_input,
-    year_end,
-    year_filter,
-    year_start,
-):
-    """Generate results - NO reference to display_summary."""
-
-    if (not run_button.value and not search_params.auto_run) or lazy_results is None:
-        download_ui = mo.Html("")
-        tables_ui = mo.Html("")
-        ui_is_large_dataset = False
-        taxon_name = taxon_input.value
-        active_filters = {}
-        csv_generate_button = None
-        json_generate_button = None
-        rdf_generate_button = None
-        csv_generation_data = None
-        json_generation_data = None
-        rdf_generation_data = None
-        query_hash = None
-        result_hash = None
-    elif counts["n_entries"] == 0:
-        download_ui = mo.callout(
-            mo.md("No compounds match your search criteria."),
-            kind="neutral",
-        ).style(style={"overflow-wrap": "anywhere"})
-        taxon_name = taxon_input.value
-        tables_ui = mo.Html("")
-        ui_is_large_dataset = False
-        active_filters = {}
-        csv_generate_button = None
-        json_generate_button = None
-        rdf_generate_button = None
-        csv_generation_data = None
-        json_generation_data = None
-        rdf_generation_data = None
-        query_hash = None
-        result_hash = None
-    else:
-        # Build filters
-        _formula_filt = None
+        formula_filt = None
         if formula_filter.value:
-            _formula_filt = create_filters(
+            formula_filt = create_filters(
                 exact_formula=exact_formula.value,
                 c_min=c_min.value,
                 c_max=c_max.value,
@@ -2636,492 +1473,356 @@ def generate_results(
                 br_state=br_state.value,
                 i_state=i_state.value,
             )
-        active_filters = build_active_filters_dict(
-            mass_filter_active=mass_filter.value,
-            mass_min_val=mass_min.value if mass_filter.value else None,
-            mass_max_val=mass_max.value if mass_filter.value else None,
-            year_filter_active=year_filter.value,
-            year_start_val=year_start.value if year_filter.value else None,
-            year_end_val=year_end.value if year_filter.value else None,
-            formula_filters=_formula_filt,
-            smiles=smiles_input.value,
+
+        criteria = SearchCriteria(
+            taxon=taxon_input.value,
+            smiles=smiles_input.value.strip() if smiles_input.value else "",
             smiles_search_type=smiles_search_type.value,
             smiles_threshold=smiles_threshold.value,
+            mass_range=(mass_min.value, mass_max.value)
+            if mass_filter.value
+            else (0.0, 2000.0),
+            year_range=(year_start.value, year_end.value)
+            if year_filter.value
+            else (1900, YEAR),
+            formula_filters=formula_filt,
         )
 
-        # Compute hashes
-        query_hash, result_hash = compute_provenance_hashes(
+        with mo.status.spinner("Searching..."):
+            results, stats = lotus.search(criteria, qid)
+
+        query_hash, result_hash = lotus.compute_hashes(
             qid,
             taxon_input.value,
-            active_filters,
-            lazy_results,
+            criteria.to_filters_dict(),
+            results,
         )
 
-        taxon_name = taxon_input.value
-        ui_is_large_dataset = counts["n_entries"] > CONFIG["table_row_limit"]
-        # Display table data (apply row limit & depiction logic)
-        # Build display DataFrame
-        total_rows = counts["n_entries"]
-        if total_rows > CONFIG["table_row_limit"]:
-            limited_df_for_display = lazy_results.limit(CONFIG["table_row_limit"])
-            display_note = mo.callout(
-                mo.md(
-                    f"**Large Dataset Optimization**\n\n"
-                    f"Your search returned **{total_rows:,} rows**. For optimal performance:\n"
-                    f"- Displaying first **{CONFIG['table_row_limit']:,} rows** in table view\n"
-                    f"- Downloads are generated on-demand (click Generate buttons)\n"
-                    f"- Export view disabled for large datasets",
-                ),
-                kind="info",
-            ).style(style={"overflow-wrap": "anywhere"})
-        else:
-            display_note = mo.Html("")
-            limited_df_for_display = lazy_results
+        elapsed = round(time.time() - start_time, 2)
+        mo.md(f"Query executed in **{elapsed}s**")
+    return (
+        criteria,
+        lotus,
+        qid,
+        query_hash,
+        result_hash,
+        results,
+        stats,
+        taxon_warning,
+    )
 
-        display_df = build_display_dataframe(limited_df_for_display)
-        del limited_df_for_display
-        if IS_PYODIDE:
-            gc.collect()
 
-        base_export = prepare_export_dataframe(lazy_results, include_rdf_ref=False)
-        rdf_export = prepare_export_dataframe(lazy_results, include_rdf_ref=True)
-        # Create metadata using already-built active_filters
-        metadata = create_export_metadata(
-            lazy_results if ui_is_large_dataset else base_export,
-            counts,
-            taxon_input.value,
-            qid,
-            active_filters,
-            query_hash,
-            result_hash,
+@app.cell
+def display_results(
+        criteria,
+        lotus,
+        qid,
+        query_hash,
+        result_hash,
+        results,
+        stats,
+        taxon_input,
+        taxon_warning,
+):
+    if results is None or stats is None:
+        result_ui = mo.Html("")
+    elif stats.n_entries == 0:
+        result_ui = mo.callout(
+            mo.md(f"No compounds found for **{taxon_input.value}**"),
+            kind="warn",
         )
-        metadata_json = json.dumps(metadata, indent=2)
-        citation_text = create_citation_text(taxon_input.value)
-        # Delete lazy_results NOW (saves 2 GB)
-        del lazy_results
-        if IS_PYODIDE:
-            gc.collect()
-
-        # Prepare generation data
-        if ui_is_large_dataset:
-            # Pre-materialize exports ONCE
-            with mo.status.spinner("Preparing exports..."):
-                # Create buttons
-                csv_generate_button = mo.ui.run_button(label="Generate CSV")
-                json_generate_button = mo.ui.run_button(label="Generate JSON")
-                rdf_generate_button = mo.ui.run_button(label="Generate RDF/Turtle")
-                buttons = [
-                    csv_generate_button,
-                    json_generate_button,
-                    rdf_generate_button,
-                ]
-                # Store materialized exports (NOT lazy_results)
-                csv_generation_data = {
-                    "export_df": base_export,
-                    "taxon_input": taxon_input.value,
-                    "qid": qid,
-                    "active_filters": active_filters,
-                    "lazy": False,  # Already materialized
-                    "is_large": True,
-                }
-                json_generation_data = {
-                    "export_df": base_export,  # Same reference, no copy
-                    "taxon_input": taxon_input.value,
-                    "qid": qid,
-                    "active_filters": active_filters,
-                    "lazy": False,
-                    "is_large": True,
-                }
-                rdf_generation_data = {
-                    "export_df": rdf_export,  # Different (has ref column)
-                    "taxon_input": taxon_input.value,
-                    "qid": qid,
-                    "active_filters": active_filters,
-                    "lazy": False,
-                    "is_large": True,
-                }
-                # Metadata download
-                metadata_button = mo.download(
-                    data=metadata_json,
-                    filename=generate_filename(
-                        taxon_input.value,
-                        "json",
-                        prefix="lotus_metadata",
-                        filters=active_filters,
-                    ),
-                    label="Metadata",
-                    mimetype="application/json",
-                )
-                download_ui = mo.vstack(
-                    [
-                        mo.md("### Download Data"),
-                        mo.hstack(buttons, gap=2, wrap=True),
-                        metadata_button,
-                    ],
-                )
-        else:
-            csv_generate_button = None
-            json_generate_button = None
-            rdf_generate_button = None
-            csv_generation_data = None
-            json_generation_data = None
-            rdf_generation_data = None
-            buttons = [
-                create_download_button(
-                    df_to_csv_bytes(base_export.collect()),
-                    generate_filename(taxon_input.value, "csv", filters=active_filters),
-                    "CSV",
-                    "text/csv",
-                ),
-                create_download_button(
-                    base_export.collect().write_json(),
-                    generate_filename(
-                        taxon_input.value,
-                        "json",
-                        filters=active_filters,
-                    ),
-                    "JSON",
-                    "application/json",
-                ),
-                create_download_button(
-                    export_to_rdf_turtle(
-                        rdf_export,
-                        taxon_input.value,
-                        qid,
-                        active_filters,
-                    ),
-                    generate_filename(taxon_input.value, "ttl", filters=active_filters),
-                    "RDF/Turtle",
-                    "text/turtle",
-                ),
-                mo.download(
-                    data=metadata_json,
-                    filename=generate_filename(
-                        taxon_input.value,
-                        "json",
-                        prefix="lotus_metadata",
-                        filters=active_filters,
-                    ),
-                    label="Metadata",
-                    mimetype="application/json",
-                ),
-            ]
-            download_ui = mo.vstack(
-                [
-                    mo.md("### Download Data"),
-                    mo.hstack(buttons, gap=2, wrap=True),
-                ],
-            )
+    else:
+        display_df = lotus.build_display_dataframe(results, CONFIG["table_row_limit"])
 
         def wrap_image2(smiles: str):
-            if not smiles:
-                return ""
-            svg = svg_from_smiles(smiles)
-            return mo.image(svg)
+            return mo.image(svg_from_smiles(smiles)) if smiles else ""
 
-        def wrap_qid(qid: str, color: str):
-            if not qid:
+        def wrap_qid(qid_val: str, color: str):
+            if not qid_val:
                 return ""
-            url = f"https://scholia.toolforge.org/Q{qid}"
+            if qid == "*":
+                url = "https://qlever.scholia.wiki/taxon/all"
+            else:
+                url = f"https://scholia.toolforge.org/{qid}"
             return mo.Html(
-                f'<a href="{url}" style="color:{color};" target="_blank">Q{qid}</a>',
+                f'<a href="{url}" style="color:{color};" target="_blank">Q{qid_val}</a>',
             )
 
-        def wrap_doi(doi: str, color: str):
+        def wrap_doi(doi: str):
             if not doi:
                 return ""
             url = f"https://doi.org/{doi}"
             return mo.Html(
-                f'<a href="{url}" style="color:{color};" target="_blank">{doi}</a>',
+                f'<a href="{url}" style="color:{CONFIG["color_hyperlink"]};" target="_blank">{doi}</a>',
             )
 
         def wrap_statement(statement: str):
             if not statement:
                 return ""
-            # Extract bare ID from URL or keep as-is
-            statement_id = statement.split("/")[-1]
+            statement_id = statement.replace(WIKIDATA_STATEMENT_PREFIX, "")
             url = f"https://www.wikidata.org/entity/statement/{statement_id}"
             return mo.Html(
                 f'<a href="{url}" style="color:{CONFIG["color_hyperlink"]};" target="_blank">{statement_id}</a>',
             )
 
-        # Tables UI
-        tables_ui = mo.vstack(
+        display_taxon = "all taxa" if taxon_input.value == "*" else taxon_input.value
+        if qid == "*":
+            search_info = mo.md(
+                f"**{display_taxon}**\n\n"
+                f"**Hashes:** *Query*: `{query_hash}` | *Results*: `{result_hash}`",
+            )
+        else:
+            search_info = mo.md(
+                f"**{display_taxon}** ([{qid}](https://scholia.toolforge.org/{qid}))\n\n"
+                f"**Hashes:** *Query*: `{query_hash}` | *Results*: `{result_hash}`",
+            )
+
+        stats_ui = mo.hstack(
             [
-                mo.md("### Browse Data"),
-                display_note,
-                mo.ui.tabs(
-                    {
-                        "Display": mo.ui.table(
-                            data=display_df,
-                            format_mapping={
-                                "Compound Depiction": wrap_image2,
-                                "Compound QID": lambda x: wrap_qid(
-                                    x,
-                                    CONFIG["color_wikidata_red"],
-                                ),
-                                "Taxon QID": lambda x: wrap_qid(
-                                    x,
-                                    CONFIG["color_wikidata_green"],
-                                ),
-                                "Reference QID": lambda x: wrap_qid(
-                                    x,
-                                    CONFIG["color_wikidata_blue"],
-                                ),
-                                "Reference DOI": lambda x: wrap_doi(
-                                    x,
-                                    CONFIG["color_hyperlink"],
-                                ),
-                                "Statement": wrap_statement,
-                            },
-                            selection=None,
-                            page_size=CONFIG["page_size_default"],
-                        ),
-                        "Export View": base_export.collect(),
-                        "Citation": mo.md(citation_text),
-                        "Metadata": mo.md(f"```json\n{metadata_json}\n```"),
-                    },
-                ).style(style={"overflow-wrap": "anywhere"}),
+                mo.stat(
+                    value=f"{stats.n_compounds:,}",
+                    label=pluralize(
+                        "Compound",
+                        stats.n_compounds,
+                        irregular=PLURAL_MAP,
+                    ),
+                ),
+                mo.stat(
+                    value=f"{stats.n_taxa:,}",
+                    label=pluralize("Taxon", stats.n_taxa, irregular=PLURAL_MAP),
+                ),
+                mo.stat(
+                    value=f"{stats.n_references:,}",
+                    label=pluralize(
+                        "Reference",
+                        stats.n_references,
+                        irregular=PLURAL_MAP,
+                    ),
+                ),
+                mo.stat(
+                    value=f"{stats.n_entries:,}",
+                    label=pluralize("Entry", stats.n_entries, irregular=PLURAL_MAP),
+                ),
             ],
+            gap=0,
+            wrap=True,
         )
-    return (
-        csv_generate_button,
-        csv_generation_data,
-        download_ui,
-        json_generate_button,
-        json_generation_data,
-        query_hash,
-        rdf_generate_button,
-        rdf_generation_data,
-        result_hash,
-        tables_ui,
-        taxon_name,
-        total_rows,
-    )
+
+        table_ui = mo.ui.table(
+            data=display_df,
+            format_mapping={
+                "Compound Depiction": wrap_image2,
+                "Compound QID": lambda x: wrap_qid(x, CONFIG["color_wikidata_red"]),
+                "Taxon QID": lambda x: wrap_qid(x, CONFIG["color_wikidata_green"]),
+                "Reference QID": lambda x: wrap_qid(x, CONFIG["color_wikidata_blue"]),
+                "Reference DOI": wrap_doi,
+                "Statement": wrap_statement,
+            },
+            page_size=CONFIG["page_size_default"],
+        )
+
+        export_df_preview = (
+            lotus.prepare_export_dataframe(results, include_rdf_ref=False)
+            .limit(10)
+            .collect()
+        )
+        metadata = lotus.create_metadata(
+            stats,
+            taxon_input.value,
+            qid,
+            criteria.to_filters_dict(),
+            query_hash,
+            result_hash,
+        )
+        citation = lotus.create_citation(taxon_input.value)
+
+        tabs_ui = mo.ui.tabs(
+            {
+                "Display": table_ui,
+                "Export View": mo.ui.table(
+                    data=export_df_preview,
+                    page_size=CONFIG["page_size_export"],
+                ),
+                "Citation": mo.md(citation),
+                "Metadata": mo.md(f"```json\n{json.dumps(metadata, indent=2)}\n```"),
+            },
+        )
+
+        shareable_url = lotus.build_shareable_url(criteria)
+
+        result_parts = [mo.md("## Results"), search_info, stats_ui]
+        if shareable_url:
+            result_parts.append(
+                mo.accordion(
+                    {"Share this search": mo.md(f"```\n{shareable_url}\n```")},
+                ),
+            )
+        if taxon_warning:
+            result_parts.append(mo.callout(taxon_warning, kind="warn"))
+        result_parts.append(tabs_ui)
+
+        result_ui = mo.vstack(result_parts)
+
+    result_ui
+    return
+
+
+@app.cell
+def is_large(results, stats):
+    """Check if dataset is large."""
+    if results is None or stats is None:
+        is_large = False
+    else:
+        is_large = stats.n_entries > CONFIG["table_row_limit"]
+    return (is_large,)
+
+
+@app.cell
+def generate_buttons(is_large, lotus, results):
+    if results is None or not is_large:
+        csv_btn = None
+        json_btn = None
+        rdf_btn = None
+        export_df = pl.LazyFrame(schema={"compound_qid": pl.Utf8})
+        rdf_df = pl.LazyFrame(schema={"compound_qid": pl.Utf8})
+    else:
+        csv_btn = mo.ui.run_button(label="Generate CSV")
+        json_btn = mo.ui.run_button(label="Generate JSON")
+        rdf_btn = mo.ui.run_button(label="Generate RDF")
+        export_df = lotus.prepare_export_dataframe(results, include_rdf_ref=False)
+        rdf_df = lotus.prepare_export_dataframe(results, include_rdf_ref=True)
+
+        del results
+        if IS_PYODIDE:
+            gc.collect()
+    return csv_btn, export_df, json_btn, rdf_btn, rdf_df
 
 
 @app.cell
 def generate_downloads(
-    csv_generate_button,
-    csv_generation_data,
-    json_generate_button,
-    json_generation_data,
-    rdf_generate_button,
-    rdf_generation_data,
-    taxon_name,
+        criteria,
+        csv_btn,
+        export_df,
+        is_large,
+        json_btn,
+        lotus,
+        qid,
+        rdf_btn,
+        rdf_df,
+        stats,
+        taxon_input,
 ):
-    """Handle downloads with proper cleanup"""
-
-    def get_export_and_cleanup(generation_data, include_rdf_ref=False):
-        """
-        Get export dataframe and delete source data.
-
-        Uses unique variable names to avoid conflicts.
-        """
-        if generation_data and generation_data.get("lazy"):
-            source_lazy_df = generation_data["results_df"]
-
-            # Prepare export
-            prepared_export = prepare_export_dataframe(
-                source_lazy_df,
-                include_rdf_ref=include_rdf_ref,
-            )
-
-            # === DELETE source data ===
-            del source_lazy_df
-            generation_data["results_df"] = None  # Clear reference
-
-            if IS_PYODIDE:
-                gc.collect()
-
-            return prepared_export
-        elif generation_data:
-            return generation_data.get("export_df")
-        else:
-            return None
-
-    # CSV generation
-    if (
-        csv_generation_data
-        and csv_generation_data.get("is_large")
-        and csv_generate_button
-        and csv_generate_button.value
-    ):
-        with mo.status.spinner("Generating CSV..."):
-            csv_export_df = get_export_and_cleanup(csv_generation_data, False)
-
-            csv_raw_bytes = df_to_csv_bytes(csv_export_df)
-
-            del csv_export_df
-            if IS_PYODIDE:
-                gc.collect()
-
-            csv_compressed, csv_was_compressed = compress_if_large(
-                csv_raw_bytes,
-                CONFIG["download_embed_threshold_bytes"],
-            )
-
-            del csv_raw_bytes
-
-            csv_filename = generate_filename(
-                taxon_name,
-                "csv" + (".gz" if csv_was_compressed else ""),
-                filters=csv_generation_data["active_filters"],
-            )
-
-            csv_ui = mo.vstack(
-                [
-                    mo.callout(mo.md("**CSV Ready**"), kind="success"),
-                    mo.download(
-                        data=csv_compressed,
-                        filename=csv_filename,
-                        label="Download CSV",
-                        mimetype="application/gzip"
-                        if csv_was_compressed
-                        else "text/csv",
-                    ),
-                ],
-            )
-    else:
-        csv_ui = mo.Html("")
-
-    # JSON generation
-    if (
-        json_generation_data
-        and json_generation_data.get("is_large")
-        and json_generate_button
-        and json_generate_button.value
-    ):
-        with mo.status.spinner("Generating JSON..."):
-            try:
-                json_export_df = json_generation_data.get("export_df")
-
-                if json_export_df is None:
-                    raise ValueError("Export data not available")
-
-                # Generate JSON bytes (already returns bytes)
-                json_raw_bytes = df_to_json_bytes(json_export_df)
-
-                # No need to delete export_df if it's shared
+    if stats is None or stats.n_entries == 0:
+        download_ui = mo.Html("")
+    elif is_large:
+        if csv_btn and csv_btn.value:
+            with mo.status.spinner("Generating CSV..."):
+                csv_bytes = lotus.export(export_df, "csv")
+                csv_ui = create_download_button(
+                    csv_bytes,
+                    generate_filename(taxon_input.value, "csv"),
+                    "CSV",
+                    "text/csv",
+                )
+                del csv_bytes
                 if IS_PYODIDE:
                     gc.collect()
+        else:
+            csv_ui = mo.Html("")
 
-                # Compress
-                json_compressed, json_was_compressed = compress_if_large(
-                    json_raw_bytes,
-                    CONFIG["download_embed_threshold_bytes"],
+        if json_btn and json_btn.value:
+            with mo.status.spinner("Generating JSON..."):
+                json_bytes = lotus.export(export_df, "json")
+                json_ui = create_download_button(
+                    json_bytes,
+                    generate_filename(taxon_input.value, "json"),
+                    "JSON",
+                    "application/json",
                 )
+                del json_bytes
+                if IS_PYODIDE:
+                    gc.collect()
+        else:
+            json_ui = mo.Html("")
 
-                del json_raw_bytes
-
-                json_filename = generate_filename(
-                    taxon_name,
-                    "json" + (".gz" if json_was_compressed else ""),
-                    filters=json_generation_data["active_filters"],
+        if rdf_btn and rdf_btn.value:
+            with mo.status.spinner("Generating RDF..."):
+                rdf_bytes = lotus.export(
+                    rdf_df,
+                    "rdf",
+                    taxon_input=taxon_input.value,
+                    qid=qid,
+                    filters=criteria.to_filters_dict(),
                 )
+                rdf_ui = create_download_button(
+                    rdf_bytes,
+                    generate_filename(taxon_input.value, "ttl"),
+                    "RDF",
+                    "text/turtle",
+                )
+                del rdf_bytes
+                if IS_PYODIDE:
+                    gc.collect()
+        else:
+            rdf_ui = mo.Html("")
 
-                json_ui = mo.vstack(
+        download_ui = mo.vstack(
+            [
+                mo.md("### Download Data"),
+                mo.hstack([csv_btn, json_btn, rdf_btn], gap=2, wrap=True),
+                csv_ui,
+                json_ui,
+                rdf_ui,
+            ],
+        )
+    else:
+        csv_bytes = lotus.export(export_df, "csv")
+        json_bytes = lotus.export(export_df, "json")
+        rdf_bytes = lotus.export(
+            rdf_df,
+            "rdf",
+            taxon_input=taxon_input.value,
+            qid=qid,
+            filters=criteria.to_filters_dict(),
+        )
+
+        download_ui = mo.vstack(
+            [
+                mo.md("### Download Data"),
+                mo.hstack(
                     [
-                        mo.callout(mo.md("**JSON Ready**"), kind="success"),
-                        mo.download(
-                            data=json_compressed,
-                            filename=json_filename,
-                            label="Download JSON",
-                            mimetype="application/gzip"
-                            if json_was_compressed
-                            else "application/json",
+                        create_download_button(
+                            csv_bytes,
+                            generate_filename(taxon_input.value, "csv"),
+                            "CSV",
+                            "text/csv",
+                        ),
+                        create_download_button(
+                            json_bytes,
+                            generate_filename(taxon_input.value, "json"),
+                            "JSON",
+                            "application/json",
+                        ),
+                        create_download_button(
+                            rdf_bytes,
+                            generate_filename(taxon_input.value, "ttl"),
+                            "RDF",
+                            "text/turtle",
                         ),
                     ],
-                )
-            except Exception as e:
-                json_ui = mo.callout(
-                    mo.md(f"**JSON Generation Failed**: {str(e)}"),
-                    kind="danger",
-                )
-    else:
-        json_ui = mo.Html("")
-
-    # RDF generation
-    if (
-        rdf_generation_data
-        and rdf_generation_data.get("is_large")
-        and rdf_generate_button
-        and rdf_generate_button.value
-    ):
-        with mo.status.spinner("Generating RDF/Turtle..."):
-            rdf_export_df = get_export_and_cleanup(rdf_generation_data, True)
-
-            rdf_string = export_to_rdf_turtle(
-                rdf_export_df,
-                rdf_generation_data["taxon_input"],
-                rdf_generation_data["qid"],
-                rdf_generation_data["active_filters"],
-            )
-
-            del rdf_export_df
-            if IS_PYODIDE:
-                gc.collect()
-
-            rdf_raw_bytes = rdf_string.encode("utf-8")
-            del rdf_string
-
-            rdf_compressed, rdf_was_compressed = compress_if_large(
-                rdf_raw_bytes,
-                CONFIG["download_embed_threshold_bytes"],
-            )
-
-            del rdf_raw_bytes
-
-            rdf_filename = generate_filename(
-                taxon_name,
-                "ttl" + (".gz" if rdf_was_compressed else ""),
-                filters=rdf_generation_data["active_filters"],
-            )
-
-            rdf_ui = mo.vstack(
-                [
-                    mo.callout(mo.md("**RDF Ready**"), kind="success"),
-                    mo.download(
-                        data=rdf_compressed,
-                        filename=rdf_filename,
-                        label="Download RDF/Turtle",
-                        mimetype="application/gzip"
-                        if rdf_was_compressed
-                        else "text/turtle",
-                    ),
-                ],
-            )
-    else:
-        rdf_ui = mo.Html("")
-
-    # Final cleanup
-    if IS_PYODIDE:
-        gc.collect()
-
-    mo.vstack([csv_ui, json_ui, rdf_ui], gap=2)
-    return
-
-
-@app.cell
-def ui_tables(tables_ui):
-    tables_ui
-    return
-
-
-@app.cell
-def ui_params():
-    # URL parameter detection and state initialization using SearchParams dataclass
-    _query_params = mo.query_params()
-    # Convert QueryParams to dict for SearchParams
-    _url_params = {k: _query_params[k] for k in _query_params} if _query_params else {}
-    search_params = SearchParams.from_url_params(_url_params)
-
-    # Display auto-search message if URL parameters detected
-    if search_params.auto_run:
-        _ = mo.md(
-            f"**Auto-executing search for:** {search_params.taxon if search_params.taxon else search_params.smiles}",
+                    gap=2,
+                    wrap=True,
+                ),
+            ],
         )
-    return (search_params,)
+
+        # Clean up all bytes
+        del csv_bytes, json_bytes, rdf_bytes
+        if IS_PYODIDE:
+            gc.collect()
+
+    download_ui
+    return
 
 
 @app.cell
@@ -3145,16 +1846,13 @@ def footer():
     return
 
 
-@app.function
 def main():
+    """Entry point for CLI and GUI modes."""
     if len(sys.argv) > 1 and sys.argv[1] == "export":
-        # CLI mode - extract and reuse app.setup functions
         import argparse
-        import gzip
         from pathlib import Path
 
-        # Parse CLI arguments
-        parser = argparse.ArgumentParser(description="Export LOTUS data")
+        parser = argparse.ArgumentParser(description="Export LOTUS data via CLI")
         parser.add_argument("export")
         parser.add_argument("--taxon", help="Taxon name or QID")
         parser.add_argument("--output", "-o", help="Output file")
@@ -3164,225 +1862,60 @@ def main():
             choices=["csv", "json", "ttl"],
             default="csv",
         )
-        parser.add_argument("--year-start", type=int, help="Minimum publication year")
-        parser.add_argument("--year-end", type=int, help="Maximum publication year")
-        parser.add_argument("--mass-min", type=float, help="Minimum molecular mass")
-        parser.add_argument("--mass-max", type=float, help="Maximum molecular mass")
-
-        # Molecular formula filters
-        parser.add_argument(
-            "--formula",
-            help="Exact molecular formula (e.g., C15H10O5)",
-        )
-        parser.add_argument("--c-min", type=int, help="Minimum carbon atoms")
-        parser.add_argument("--c-max", type=int, help="Maximum carbon atoms")
-        parser.add_argument("--h-min", type=int, help="Minimum hydrogen atoms")
-        parser.add_argument("--h-max", type=int, help="Maximum hydrogen atoms")
-        parser.add_argument("--n-min", type=int, help="Minimum nitrogen atoms")
-        parser.add_argument("--n-max", type=int, help="Maximum nitrogen atoms")
-        parser.add_argument("--o-min", type=int, help="Minimum oxygen atoms")
-        parser.add_argument("--o-max", type=int, help="Maximum oxygen atoms")
-
-        parser.add_argument(
-            "--smiles",
-            help="SMILES string for chemical structure search",
-        )
+        parser.add_argument("--smiles", help="SMILES string")
         parser.add_argument(
             "--smiles-search-type",
-            choices=["exact", "substructure", "similarity"],
-            help="Type of SMILES search (exact, substructure, or similarity)",
+            choices=["substructure", "similarity"],
+            default="substructure",
         )
-        parser.add_argument(
-            "--smiles-threshold",
-            type=float,
-            default=0.8,
-            help="Similarity threshold (0.0-1.0, default: 0.8)",
-        )
-        parser.add_argument(
-            "--compress",
-            action="store_true",
-            help="Compress output with gzip",
-        )
-        parser.add_argument(
-            "--show-metadata",
-            action="store_true",
-            help="Display FAIR-compliant dataset metadata and exit (no data export)",
-        )
-        parser.add_argument(
-            "--export-metadata",
-            action="store_true",
-            help="Export metadata as JSON file alongside data (creates <output>.metadata.json)",
-        )
-        parser.add_argument(
-            "--verbose",
-            "-v",
-            action="store_true",
-            help="Verbose output",
-        )
+        parser.add_argument("--smiles-threshold", type=float, default=0.8)
+        parser.add_argument("--year-start", type=int)
+        parser.add_argument("--year-end", type=int)
+        parser.add_argument("--mass-min", type=float)
+        parser.add_argument("--mass-max", type=float)
+        parser.add_argument("--formula", help="Exact molecular formula")
+        parser.add_argument("--c-min", type=int)
+        parser.add_argument("--c-max", type=int)
+        parser.add_argument("--h-min", type=int)
+        parser.add_argument("--h-max", type=int)
+        parser.add_argument("--n-min", type=int)
+        parser.add_argument("--n-max", type=int)
+        parser.add_argument("--o-min", type=int)
+        parser.add_argument("--o-max", type=int)
+        parser.add_argument("--compress", action="store_true")
+        parser.add_argument("--show-metadata", action="store_true")
+        parser.add_argument("--export-metadata", action="store_true")
+        parser.add_argument("--verbose", "-v", action="store_true")
         args = parser.parse_args()
 
         try:
-            with open(__file__, encoding="utf-8") as f:
-                file_content = f.read()
-
-            # Strategy: Extract app.setup block AND all @app.function decorated functions
-            # This ensures we get imports, constants, and all the actual functions
-            setup_start = file_content.find("with app.setup:")
-            if setup_start == -1:
-                raise RuntimeError("Could not find app.setup block")
-
-            setup_start += len("with app.setup:\n")
-            next_app_cell = file_content.find("\n@app.", setup_start)
-
-            if next_app_cell == -1:
-                raise RuntimeError("Could not find end of app.setup block")
-
-            setup_block = file_content[setup_start:next_app_cell]
-
-            # Dedent app.setup (remove 4-space indentation)
-            setup_lines = []
-            for line in setup_block.split("\n"):
-                if line.startswith("    "):
-                    setup_lines.append(line[4:])
-                elif line.strip() == "":
-                    setup_lines.append("")
-                else:
-                    break
-
-            # Extract all @app.class_definition blocks (dataclasses like ElementRange, FormulaFilters, SearchParams)
-
-            class_pattern = r"@app\.class_definition\s*\n@dataclass"
-            class_blocks = []
-
-            for match in re.finditer(class_pattern, file_content):
-                class_start = match.start()
-
-                # Find where this class ends (next @app. or def main)
-                next_decorator = file_content.find("\n@app.", class_start + 1)
-                next_main = file_content.find("\ndef main", class_start)
-
-                if next_decorator != -1:
-                    class_end = next_decorator
-                elif next_main != -1:
-                    class_end = next_main
-                else:
-                    class_end = len(file_content)
-
-                # Extract class definition (skip the @app.class_definition decorator)
-                dataclass_start = file_content.find("@dataclass", class_start)
-                class_block = file_content[dataclass_start:class_end].strip()
-                class_blocks.append(class_block)
-
-            # Extract all @app.function blocks (they contain the actual functions)
-            function_pattern = r"@app\.function\s*\ndef\s+(\w+)"
-            function_blocks = []
-
-            # Find all @app.function decorated functions
-            for match in re.finditer(function_pattern, file_content):
-                func_name = match.group(1)
-                func_start = match.start()
-
-                # Find where this function ends (next @app. or if __name__)
-                next_decorator = file_content.find("\n@app.", func_start + 1)
-                next_main = file_content.find("\nif __name__", func_start)
-
-                if next_decorator != -1:
-                    func_end = next_decorator
-                elif next_main != -1:
-                    func_end = next_main
-                else:
-                    func_end = len(file_content)
-
-                # Extract function definition (skip the @app.function decorator)
-                func_def_start = file_content.find("def " + func_name, func_start)
-                func_block = file_content[func_def_start:func_end].strip()
-                function_blocks.append(func_block)
-
-            # Combine setup, classes, and functions into executable code
-            combined_code = (
-                "\n".join(setup_lines)
-                + "\n\n"
-                + "\n\n".join(class_blocks)
-                + "\n\n"
-                + "\n\n".join(function_blocks)
-            )
-
-            # Execute in isolated namespace
-            namespace = {}
-            exec(combined_code, namespace)
+            lotus = LOTUSExplorer(CONFIG, False)
 
             if args.taxon is None:
                 args.taxon = "*"
 
-            if args.verbose:
-                print(f"Querying LOTUS data for: {args.taxon}", file=sys.stderr)
-
-            # Resolve taxon using the REAL function
-            qid, warning = resolve_taxon_to_qid(args.taxon)
+            qid, _ = lotus.resolve_taxon(args.taxon)
             if not qid:
                 print(f"[x] Taxon not found: {args.taxon}", file=sys.stderr)
                 sys.exit(1)
 
-            # Improved verbose logging
             if args.verbose:
-                print("Search Configuration:", file=sys.stderr)
-                print(f"   Taxon: {args.taxon} (QID: {qid})", file=sys.stderr)
+                print(f"Querying: {args.taxon} (QID: {qid})", file=sys.stderr)
 
-                if args.smiles:
-                    print(f"   SMILES: {args.smiles}", file=sys.stderr)
-                    print(
-                        f"   Search Type: {args.smiles_search_type or 'substructure'}",
-                        file=sys.stderr,
-                    )
-                    if args.smiles_search_type == "similarity":
-                        print(
-                            f"   Similarity Threshold: {args.smiles_threshold}",
-                            file=sys.stderr,
-                        )
-
-                filters_applied = []
-                if args.year_start:
-                    filters_applied.append(f"year >= {args.year_start}")
-                if args.year_end:
-                    filters_applied.append(f"year <= {args.year_end}")
-                if args.mass_min:
-                    filters_applied.append(f"mass >= {args.mass_min}")
-                if args.mass_max:
-                    filters_applied.append(f"mass <= {args.mass_max}")
-                if args.formula:
-                    filters_applied.append(f"formula = {args.formula}")
-                elem_args = [
-                    args.c_min,
-                    args.c_max,
-                    args.h_min,
-                    args.h_max,
-                    args.n_min,
-                    args.n_max,
-                    args.o_min,
-                    args.o_max,
-                ]
-                if any(elem_args):
-                    filters_applied.append("element ranges")
-                if filters_applied:
-                    print(
-                        f"   Filters: {', '.join(filters_applied)}",
-                        file=sys.stderr,
-                    )
-                print(file=sys.stderr)
-
-            # Build formula filters if any formula arguments provided
             formula_filt = None
-            elem_args = [
-                args.c_min,
-                args.c_max,
-                args.h_min,
-                args.h_max,
-                args.n_min,
-                args.n_max,
-                args.o_min,
-                args.o_max,
-            ]
-            if args.formula or any(elem_args):
+            if any(
+                    [
+                        args.formula,
+                        args.c_min,
+                        args.c_max,
+                        args.h_min,
+                        args.h_max,
+                        args.n_min,
+                        args.n_max,
+                        args.o_min,
+                        args.o_max,
+                    ],
+            ):
                 formula_filt = create_filters(
                     exact_formula=args.formula or "",
                     c_min=args.c_min or 0,
@@ -3403,167 +1936,97 @@ def main():
                     i_state="allowed",
                 )
 
-            # Query using the REAL function with all arguments
-            df = query_wikidata(
-                qid=qid,
-                year_start=args.year_start,
-                year_end=args.year_end,
-                mass_min=args.mass_min,
-                mass_max=args.mass_max,
-                formula_filters=formula_filt,
-                smiles=args.smiles,
-                smiles_search_type=args.smiles_search_type or "substructure",
+            criteria = SearchCriteria(
+                taxon=args.taxon,
+                smiles=args.smiles or "",
+                smiles_search_type=args.smiles_search_type,
                 smiles_threshold=args.smiles_threshold,
-            ).collect()
+                mass_range=(args.mass_min or 0.0, args.mass_max or 2000.0)
+                if args.mass_min or args.mass_max
+                else (0.0, 2000.0),
+                year_range=(args.year_start or 1900, args.year_end or YEAR)
+                if args.year_start or args.year_end
+                else (1900, YEAR),
+                formula_filters=formula_filt,
+            )
 
-            if df.is_empty():
+            results, stats = lotus.search(criteria, qid)
+
+            if stats.n_entries == 0:
                 print("[x] No data found", file=sys.stderr)
                 sys.exit(1)
 
             if args.verbose:
-                print("Query Results:", file=sys.stderr)
+                print(f"Found {stats.n_entries:,} entries", file=sys.stderr)
 
-                # Show unique counts if columns exist
-                if "compound" in df.collect_schema().names():
-                    unique_compounds = df.select(pl.col("compound")).n_unique()
-                    print(
-                        f"   Unique compounds: {unique_compounds:,}",
-                        file=sys.stderr,
-                    )
-                if "taxon" in df.collect_schema().names():
-                    unique_taxa = df.select(pl.col("taxon")).n_unique()
-                    print(f"   Unique taxa: {unique_taxa:,}", file=sys.stderr)
-                if "reference" in df.collect_schema().names():
-                    unique_refs = df.select(pl.col("reference")).n_unique()
-                    print(
-                        f"   Unique references: {unique_refs:,}",
-                        file=sys.stderr,
-                    )
-                print(file=sys.stderr)  # Empty line for readability
-
-            # Build filters dict in the same format as the UI (needed for metadata and provenance)
-
-            filters = {}
-
-            # Year filter
-            if args.year_start or args.year_end:
-                filters["publication_year"] = {}
-                if args.year_start:
-                    filters["publication_year"]["min"] = args.year_start
-                if args.year_end:
-                    filters["publication_year"]["max"] = args.year_end
-
-            # Mass filter
-            if args.mass_min or args.mass_max:
-                filters["molecular_mass"] = {}
-                if args.mass_min:
-                    filters["molecular_mass"]["min"] = args.mass_min
-                if args.mass_max:
-                    filters["molecular_mass"]["max"] = args.mass_max
-
-            # Chemical structure filter
-            if args.smiles:
-                filters["chemical_structure"] = {
-                    "smiles": args.smiles,
-                    "search_type": args.smiles_search_type or "substructure",
-                }
-                if args.smiles_search_type == "similarity":
-                    filters["chemical_structure"]["similarity_threshold"] = (
-                        args.smiles_threshold
-                    )
-
-            # Molecular formula filter
-            if formula_filt and formula_filt.is_active():
-                filters["molecular_formula"] = serialize_filters(formula_filt)
-
-            # Compute hashes for provenance using centralized helper
-            query_hash, result_hash = compute_provenance_hashes(
+            query_hash, result_hash = lotus.compute_hashes(
                 qid,
                 args.taxon,
-                filters if filters else None,
-                df,
+                criteria.to_filters_dict(),
+                results,
             )
 
-            # Show metadata mode - use the REAL create_export_metadata function
             if args.show_metadata:
-                # Use the REAL metadata function from app.setup with provenance hashes
-                metadata = create_export_metadata(
-                    df,
-                    {"n_entries": len(df)},
+                metadata = lotus.create_metadata(
+                    stats,
                     args.taxon,
                     qid,
-                    filters if filters else None,
-                    query_hash=query_hash,
-                    result_hash=result_hash,
+                    criteria.to_filters_dict(),
+                    query_hash,
+                    result_hash,
                 )
                 print(json.dumps(metadata, indent=2))
+                sys.exit(0)
 
-            # Export data using REAL functions
-            if args.format == "csv":
-                # CSV export: exclude ref column (statement included for transparency)
-                export_df = prepare_export_dataframe(
-                    df,
+            if args.format in ["csv", "json"]:
+                export_df = lotus.prepare_export_dataframe(
+                    results,
                     include_rdf_ref=False,
                 )
-                data = export_df.write_csv().encode("utf-8")
-            elif args.format == "json":
-                # JSON export: exclude ref column (statement included for transparency)
-                export_df = prepare_export_dataframe(
-                    df,
-                    include_rdf_ref=False,
-                )
-                data = export_df.write_json().encode("utf-8")
-            elif args.format == "ttl":
-                # RDF export: include ref column for full provenance
-                export_df = prepare_export_dataframe(df, include_rdf_ref=True)
-                data = export_to_rdf_turtle_smart(
-                    export_df,
-                    args.taxon,
-                    qid,
-                    filters if filters else None,
-                ).encode("utf-8")
             else:
-                print(f"[x] Unknown format: {args.format}", file=sys.stderr)
-                sys.exit(1)
+                export_df = lotus.prepare_export_dataframe(
+                    results,
+                    include_rdf_ref=True,
+                )
 
-            # Compress if requested
+            data = lotus.export(
+                export_df,
+                args.format,
+                taxon_input=args.taxon,
+                qid=qid,
+                filters=criteria.to_filters_dict(),
+            )
+
             if args.compress:
+                import gzip
+
                 buffer = io.BytesIO()
                 with gzip.GzipFile(fileobj=buffer, mode="wb") as gz:
                     gz.write(data)
                 data = buffer.getvalue()
 
-            # Write output
             if args.output:
                 output_path = Path(args.output)
                 output_path.parent.mkdir(parents=True, exist_ok=True)
                 output_path.write_bytes(data)
                 if args.verbose:
-                    print(
-                        f"[+] Exported {len(data):,} bytes to: {output_path}",
-                        file=sys.stderr,
-                    )
+                    print(f"[+] Exported to: {output_path}", file=sys.stderr)
 
-                # Export metadata if requested
                 if args.export_metadata:
-                    metadata = create_export_metadata(
-                        df,
-                        {"n_entries": len(df)},
+                    metadata = lotus.create_metadata(
+                        stats,
                         args.taxon,
                         qid,
-                        filters if filters else None,
-                        query_hash=query_hash,
-                        result_hash=result_hash,
+                        criteria.to_filters_dict(),
+                        query_hash,
+                        result_hash,
                     )
                     metadata_path = output_path.with_suffix(
                         output_path.suffix + ".metadata.json",
-                    )
+                        )
                     metadata_path.write_text(json.dumps(metadata, indent=2))
                     if args.verbose:
-                        print(
-                            f"[+] Exported metadata to: {metadata_path}",
-                            file=sys.stderr,
-                        )
+                        print(f"[+] Metadata: {metadata_path}", file=sys.stderr)
             else:
                 sys.stdout.buffer.write(data)
 
