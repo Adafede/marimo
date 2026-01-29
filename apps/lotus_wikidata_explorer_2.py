@@ -1548,7 +1548,7 @@ def display_results(
         if shareable_url:
             result_parts.append(
                 mo.accordion(
-                    {"Share this search": mo.md(f"```\n{shareable_url}\n```")}
+                    {"Share this search": mo.md(f"```\n{shareable_url}\n```")},
                 ),
             )
         if taxon_warning:
@@ -1574,18 +1574,23 @@ def is_large(results, stats):
 @app.cell
 def generate_buttons(is_large, lotus, results):
     if results is None or not is_large:
-        csv_btn, json_btn, rdf_btn, rdf_df = pl.LazyFrame(), None, None, None
+        csv_btn = None
+        json_btn = None
+        rdf_btn = None
+        export_df = pl.LazyFrame(schema={"compound_qid": pl.Utf8})
+        rdf_df = pl.LazyFrame(schema={"compound_qid": pl.Utf8})
     else:
         csv_btn = mo.ui.run_button(label="Generate CSV")
         json_btn = mo.ui.run_button(label="Generate JSON")
         rdf_btn = mo.ui.run_button(label="Generate RDF")
+        export_df = lotus.prepare_export_dataframe(results, include_rdf_ref=False)
         rdf_df = lotus.prepare_export_dataframe(results, include_rdf_ref=True)
 
         del results
         if IS_PYODIDE:
             gc.collect()
 
-    return csv_btn, json_btn, rdf_btn, rdf_df
+    return csv_btn, json_btn, rdf_btn, export_df, rdf_df
 
 
 @app.cell
@@ -1597,6 +1602,7 @@ def generate_downloads(
     lotus,
     qid,
     rdf_btn,
+    export_df,
     rdf_df,
     results,
     stats,
@@ -1605,10 +1611,9 @@ def generate_downloads(
     if stats is None or stats.n_entries == 0:
         download_ui = mo.Html("")
     elif is_large:
-        # CSV
         if csv_btn and csv_btn.value:
             with mo.status.spinner("Generating CSV..."):
-                csv_bytes = lotus.export(rdf_df.drop("ref"), "csv")
+                csv_bytes = lotus.export(export_df, "csv")
                 csv_ui = create_download_button(
                     csv_bytes,
                     generate_filename(taxon_input.value, "csv"),
@@ -1623,7 +1628,7 @@ def generate_downloads(
 
         if json_btn and json_btn.value:
             with mo.status.spinner("Generating JSON..."):
-                json_bytes = lotus.export(rdf_df.drop("ref"), "json")
+                json_bytes = lotus.export(export_df, "json")
                 json_ui = create_download_button(
                     json_bytes,
                     generate_filename(taxon_input.value, "json"),
@@ -1667,8 +1672,8 @@ def generate_downloads(
             ],
         )
     else:
-        csv_bytes = lotus.export(rdf_df.drop("ref"), "csv")
-        json_bytes = lotus.export(rdf_df.drop("ref"), "json")
+        csv_bytes = lotus.export(rdf_df, "csv")
+        json_bytes = lotus.export(rdf_df, "json")
         rdf_bytes = lotus.export(
             rdf_df,
             "rdf",
@@ -1707,8 +1712,8 @@ def generate_downloads(
             ],
         )
 
-        # Clean up
-        del csv_bytes, json_bytes, rdf_bytes, export_df, rdf_export_df
+        # Clean up all bytes
+        del csv_bytes, json_bytes, rdf_bytes
         if IS_PYODIDE:
             gc.collect()
 
