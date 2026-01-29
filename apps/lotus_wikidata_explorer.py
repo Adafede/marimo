@@ -50,7 +50,7 @@ with app.setup:
     from rdflib.namespace import RDF, RDFS, XSD, DCTERMS
     from abc import ABC, abstractmethod
 
-    _USE_LOCAL = False
+    _USE_LOCAL = True
     if _USE_LOCAL:
         sys.path.insert(0, ".")
 
@@ -239,7 +239,7 @@ with app.setup:
                 io.BytesIO(csv_bytes),
                 low_memory=True,
                 rechunk=False,
-                dtypes={
+                schema_overrides={
                     "compound": pl.UInt32,
                     "taxon": pl.UInt32,
                     "reference": pl.UInt32,
@@ -264,11 +264,18 @@ with app.setup:
             threshold: float,
         ) -> str:
             if smiles:
+                if not qid or qid == "":
+                    effective_qid = None
+                elif qid == "*":
+                    effective_qid = "Q2382443"  # Biota
+                else:
+                    effective_qid = qid
+
                 return query_sachem(
                     escaped_smiles=validate_and_escape(smiles),
                     search_type=search_type,
                     threshold=threshold,
-                    taxon_qid=qid if qid != "*" else None,
+                    taxon_qid=effective_qid,
                 )
             elif qid == "*":
                 return query_all_compounds()
@@ -1202,6 +1209,7 @@ def md_title():
     """)
     return
 
+
 @app.cell
 def ui_help():
     mo.accordion(
@@ -1427,8 +1435,6 @@ def execute_search(
         qid, taxon_warning = lotus.resolve_taxon(taxon_input.value)
         if not taxon_input.value.strip() and not smiles_input.value.strip():
             mo.stop(True, "Need taxon or SMILES")
-        if not taxon_input.value.strip():
-            qid = "*"  # All taxa
         else:
             qid, taxon_warning = lotus.resolve_taxon(taxon_input.value)
 
@@ -1544,15 +1550,26 @@ def display_results(
                 f'<a href="{url}" style="color:{CONFIG["color_hyperlink"]};" target="_blank">{statement_id}</a>',
             )
 
-        display_taxon = "all taxa" if criteria.taxon == "*" else criteria.taxon
+        display_taxon = (
+            "all taxa"
+            if criteria.taxon == "*"
+            else criteria.taxon
+            if criteria.taxon is not None
+            else ""
+        )
         display_compound = (
             f"**SMILES:** `{criteria.smiles}` ({criteria.smiles_search_type})\n\n"
             if criteria.smiles
             else "\n\n"
         )
-        if qid == "*":
+        if display_taxon == "all taxa":
             search_info = mo.md(
                 f"**{display_taxon}** ([Scholia](https://scholia.toolforge.org/taxon)) {display_compound}"
+                f"**Hashes:** *Query*: `{query_hash}` | *Results*: `{result_hash}`",
+            )
+        elif display_taxon == "":
+            search_info = mo.md(
+                f"{display_compound}"
                 f"**Hashes:** *Query*: `{query_hash}` | *Results*: `{result_hash}`",
             )
         else:
@@ -1698,7 +1715,6 @@ def generate_downloads(
     if stats is None or stats.n_entries == 0:
         download_ui = mo.Html("")
     elif is_large:
-        del results
         if csv_btn and csv_btn.value:
             with mo.status.spinner("Generating CSV..."):
                 csv_bytes = lotus.export(export_df, "csv")

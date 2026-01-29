@@ -111,7 +111,7 @@ WHERE {{
 
     # Get taxonomic associations with provenance (optional)
     OPTIONAL {{
-        ?compound p:P703 ?statement .
+        ?c p:P703 ?statement .
         ?statement ps:P703 ?t ;
                    prov:wasDerivedFrom ?ref .
         ?ref pr:P248 ?r .
