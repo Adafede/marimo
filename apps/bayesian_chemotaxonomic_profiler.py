@@ -122,6 +122,10 @@ with app.setup:
     from scipy.special import betainc, betaincinv
     from urllib.parse import quote
 
+    _USE_LOCAL = False
+    if _USE_LOCAL:
+        sys.path.insert(0, ".")
+
     from modules.chem.cdk.depict.svg_from_smiles import svg_from_smiles
     from modules.knowledge.wikidata.taxon.ranks import get_rank_label, get_rank_order
     from modules.net.sparql.execute_with_retry import execute_with_retry
@@ -2584,6 +2588,30 @@ def methods_summary(
     """),
         ],
     )
+    _out
+    return
+
+
+@app.cell
+def ui_disclaimer():
+    if IS_PYODIDE:
+        _out = mo.callout(
+            mo.md("""
+            **Browser Version Limitations:**
+            - Might fail because of memory constraints
+            - For unlimited results, run locally:
+            ```bash
+            uvx marimo run https://adafede.github.io/marimo/apps/bayesian_chemotaxonomic_profiler.py
+            ```
+            """),
+            kind="warn",
+        ).style(
+            style={
+                "overflow-wrap": "anywhere",
+            },
+        )
+    else:
+        _out = mo.Html("")
     _out
     return
 
