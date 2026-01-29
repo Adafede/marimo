@@ -1641,24 +1641,26 @@ def display_results(
             else ""
         )
         display_compound = (
-            f"**SMILES:** `{criteria.smiles}` ({criteria.smiles_search_type})\n\n"
+            f"**SMILES:** `{criteria.smiles}` ({criteria.smiles_search_type}) \n\n"
             if criteria.smiles
             else "\n\n"
         )
+        display_hashes = (
+            f"**Hashes:** \n\n"
+            f"*Query*: `{query_hash}` - "
+            f"*Results*: `{result_hash}`"
+        )
         if display_taxon == "all taxa":
             search_info = mo.md(
-                f"**{display_taxon}** ([Scholia](https://scholia.toolforge.org/taxon)) {display_compound}"
-                f"**Hashes:** *Query*: `{query_hash}` | *Results*: `{result_hash}`",
+                f"**{display_taxon}** ([Scholia](https://scholia.toolforge.org/taxon)) {display_compound} {display_hashes}",
             )
         elif display_taxon == "":
             search_info = mo.md(
-                f"{display_compound}"
-                f"**Hashes:** *Query*: `{query_hash}` | *Results*: `{result_hash}`",
+                f"{display_compound} {display_hashes}",
             )
         else:
             search_info = mo.md(
-                f"**{display_taxon}** ([{qid}](https://scholia.toolforge.org/{qid})) {display_compound}"
-                f"**Hashes:** *Query*: `{query_hash}` | *Results*: `{result_hash}`",
+                f"**{display_taxon}** ([{qid}](https://scholia.toolforge.org/{qid})) {display_compound} {display_hashes}",
             )
 
         stats_ui = mo.hstack(
@@ -1734,7 +1736,15 @@ def display_results(
 
         shareable_url = lotus.build_shareable_url(criteria)
 
-        result_parts = [mo.md("## Results"), search_info, stats_ui]
+        result_parts = [
+            mo.md("## Results"),
+            search_info.style(
+                style={
+                    "overflow-wrap": "anywhere",
+                },
+            ),
+            stats_ui,
+        ]
         if shareable_url:
             result_parts.append(
                 mo.accordion(
