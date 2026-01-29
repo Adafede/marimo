@@ -1809,7 +1809,7 @@ def generate_downloads(
     if stats is None or stats.n_entries == 0:
         download_ui = mo.Html("")
     elif is_large:
-        if csv_btn and csv_btn.value:
+        if csv_btn.value:
             with mo.status.spinner("Generating CSV..."):
                 csv_bytes = lotus.export(export_df, "csv")
                 csv_ui = create_download_button(
@@ -1824,7 +1824,7 @@ def generate_downloads(
         else:
             csv_ui = mo.Html("")
 
-        if json_btn and json_btn.value:
+        if json_btn.value:
             with mo.status.spinner("Generating JSON..."):
                 json_bytes = lotus.export(export_df, "json")
                 json_ui = create_download_button(
@@ -1839,7 +1839,7 @@ def generate_downloads(
         else:
             json_ui = mo.Html("")
 
-        if rdf_btn and rdf_btn.value:
+        if rdf_btn.value:
             with mo.status.spinner("Generating RDF..."):
                 rdf_bytes = lotus.export(
                     rdf_df,
