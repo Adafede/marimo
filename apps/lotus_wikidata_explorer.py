@@ -1757,6 +1757,7 @@ def generate_downloads(
     lotus,
     metadata,
     qid,
+    query_hash,
     result_hash,
     results,
     run_button,
@@ -1803,7 +1804,7 @@ def generate_downloads(
             ),
             mo.download(
                 label="Metadata",
-                filename=f"{result_hash}_metadata.json",
+                filename=f"{query_hash}_{result_hash}_metadata.json",
                 mimetype="application/json",
                 data=lambda: json.dumps(metadata, indent=2).encode("utf-8"),
             ),
