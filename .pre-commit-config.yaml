@@ -18,6 +18,7 @@ repos:
       - id: destroyed-symlinks
       - id: detect-private-key
       - id: end-of-file-fixer
+        exclude: "^apps/public/"
       - id: fix-byte-order-marker
       - id: mixed-line-ending
       - id: trailing-whitespace
@@ -42,14 +43,14 @@ repos:
     hooks:
       - id: add-trailing-comma
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.14.14
+    rev: v0.15.0
     hooks:
       - id: ruff-check
         args:
           - --fix
       - id: ruff-format
   - repo: https://github.com/tombi-toml/tombi-pre-commit
-    rev: v0.7.25
+    rev: v0.7.26
     hooks:
       - id: tombi-format
       - id: tombi-lint
@@ -57,8 +58,9 @@ repos:
     rev: v1
     hooks:
       - id: typos
+        exclude: "^apps/public/"
   - repo: https://github.com/astral-sh/uv-pre-commit
-    rev: 0.9.28
+    rev: 0.9.29
     hooks:
       - id: uv-lock
   - repo: local
