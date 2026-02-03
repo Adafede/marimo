@@ -1646,9 +1646,7 @@ def display_results(
             else "\n\n"
         )
         display_hashes = (
-            f"**Hashes:** \n\n"
-            f"*Query*: `{query_hash}` - "
-            f"*Results*: `{result_hash}`"
+            f"**Hashes:** \n\n*Query*: `{query_hash}` - *Results*: `{result_hash}`"
         )
         if display_taxon == "all taxa":
             search_info = mo.md(
