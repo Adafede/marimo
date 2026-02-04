@@ -92,7 +92,6 @@ with app.setup:
 
     IS_PYODIDE = "pyodide" in sys.modules
     if IS_PYODIDE:
-        import csv
         import pyodide_http
 
         pyodide_http.patch_all()
@@ -322,7 +321,9 @@ with app.setup:
             # Create BytesIO wrapper
             bytes_stream = io.BytesIO(csv_bytes)
             text_stream = io.TextIOWrapper(
-                bytes_stream, encoding="utf-8", errors="replace"
+                bytes_stream,
+                encoding="utf-8",
+                errors="replace",
             )
             reader = csv.DictReader(text_stream)
 
@@ -1961,12 +1962,13 @@ def display_results(
         def wrap_qid(qid_val: str | int, color: str) -> mo.Html:
             if not qid_val:
                 return mo.Html("")
-            if qid == "*":
+            if qid_val == "*":
                 url = "https://qlever.scholia.wiki/taxon/all"
-            else:
-                url = f"https://scholia.toolforge.org/{qid}"
+            qid_str = str(qid_val)
+            qid_norm = qid_str if qid_str.startswith("Q") else f"Q{qid_str}"
+            url = f"https://scholia.toolforge.org/{qid_norm}"
             return mo.Html(
-                f'<a href="{url}" style="color:{color};" target="_blank">Q{qid_val}</a>',
+                f'<a href="{url}" style="color:{color};" target="_blank">{qid_norm}</a>',
             )
 
         def wrap_doi(doi: str) -> mo.Html:
@@ -2263,6 +2265,10 @@ def main():
         parser.add_argument("--n-max", type=int)
         parser.add_argument("--o-min", type=int)
         parser.add_argument("--o-max", type=int)
+        parser.add_argument("--p-min", type=int)
+        parser.add_argument("--p-max", type=int)
+        parser.add_argument("--s-min", type=int)
+        parser.add_argument("--s-max", type=int)
         parser.add_argument("--compress", action="store_true")
         parser.add_argument("--show-metadata", action="store_true")
         parser.add_argument("--export-metadata", action="store_true")
@@ -2303,6 +2309,10 @@ def main():
                     args.n_max,
                     args.o_min,
                     args.o_max,
+                    args.p_min,
+                    args.p_max,
+                    args.s_min,
+                    args.s_max,
                 ],
             ):
                 formula_filt = create_filters(
@@ -2315,10 +2325,10 @@ def main():
                     n_max=args.n_max or ELEMENT_DEFAULTS["n"],
                     o_min=args.o_min or 0,
                     o_max=args.o_max or ELEMENT_DEFAULTS["o"],
-                    p_min=0,
-                    p_max=ELEMENT_DEFAULTS["p"],
-                    s_min=0,
-                    s_max=ELEMENT_DEFAULTS["s"],
+                    p_min=args.p_min or 0,
+                    p_max=args.p_max or ELEMENT_DEFAULTS["p"],
+                    s_min=args.s_min or 0,
+                    s_max=args.s_max or ELEMENT_DEFAULTS["s"],
                     f_state="allowed",
                     cl_state="allowed",
                     br_state="allowed",
