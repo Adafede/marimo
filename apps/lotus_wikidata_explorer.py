@@ -37,6 +37,8 @@ app = marimo.App(width="full", app_title="LOTUS Wikidata Explorer")
 with app.setup:
     import marimo as mo
     import polars as pl
+    import array
+    import csv
     import io
     import json
     import time
@@ -90,6 +92,7 @@ with app.setup:
 
     IS_PYODIDE = "pyodide" in sys.modules
     if IS_PYODIDE:
+        import csv
         import pyodide_http
 
         pyodide_http.patch_all()
@@ -215,12 +218,321 @@ with app.setup:
             return wasm_size if self.is_wasm else desktop_size
 
     # ========================================================================
+    # NORMALIZED DATA STORAGE (Memory-efficient for WASM)
+    # ========================================================================
+
+    @dataclass
+    class NormalizedDataset:
+        """
+        Memory-efficient normalized storage for compound-taxon-reference data.
+
+        Instead of storing denormalized rows with repeated metadata, we store:
+        - facts: DataFrame with just IDs (compound, taxon, reference, statement, ref)
+        - compound_meta: DataFrame with compound metadata (name, inchikey, smiles, mass, mf)
+        - taxon_meta: DataFrame with taxon metadata (taxon_name)
+        - ref_meta: DataFrame with reference metadata (ref_title, ref_doi, pub_date)
+
+        This significantly reduces memory usage for large datasets where the same
+        compound/taxon/reference appears in multiple rows.
+        """
+
+        facts: pl.LazyFrame  # compound, taxon, reference, statement, ref
+        compound_meta: pl.LazyFrame  # compound, name, inchikey, smiles, mass, mf
+        taxon_meta: pl.LazyFrame  # taxon, taxon_name
+        ref_meta: pl.LazyFrame  # reference, ref_title, ref_doi, pub_date
+
+        def to_denormalized(self) -> pl.LazyFrame:
+            """Join all tables to produce the full denormalized view."""
+            return (
+                self.facts.join(self.compound_meta, on="compound", how="left")
+                .join(self.taxon_meta, on="taxon", how="left")
+                .join(self.ref_meta, on="reference", how="left")
+            )
+
+        @classmethod
+        def empty(cls) -> "NormalizedDataset":
+            """Create an empty normalized dataset."""
+            return cls(
+                facts=pl.LazyFrame(
+                    schema={
+                        "compound": pl.UInt32,
+                        "taxon": pl.UInt32,
+                        "reference": pl.UInt32,
+                        "statement": pl.Utf8,
+                        "ref": pl.Utf8,
+                    },
+                ),
+                compound_meta=pl.LazyFrame(
+                    schema={
+                        "compound": pl.UInt32,
+                        "name": pl.Utf8,
+                        "inchikey": pl.Utf8,
+                        "smiles": pl.Utf8,
+                        "mass": pl.Float32,
+                        "mf": pl.Utf8,
+                    },
+                ),
+                taxon_meta=pl.LazyFrame(
+                    schema={
+                        "taxon": pl.UInt32,
+                        "taxon_name": pl.Utf8,
+                    },
+                ),
+                ref_meta=pl.LazyFrame(
+                    schema={
+                        "reference": pl.UInt32,
+                        "ref_title": pl.Utf8,
+                        "ref_doi": pl.Utf8,
+                        "pub_date": pl.Date,
+                    },
+                ),
+            )
+
+        @classmethod
+        def from_csv_bytes(cls, csv_bytes: bytes) -> "NormalizedDataset":
+            """
+            Parse CSV bytes in a streaming manner and build normalized tables.
+
+            This is the key memory optimization: instead of loading the entire
+            denormalized CSV into memory, we stream through it once and build
+            deduplicated lookup tables.
+
+            Uses io.TextIOWrapper for true streaming without creating a full
+            string copy of the data.
+            """
+            # Quick empty check without creating a copy via strip()
+            if not csv_bytes or len(csv_bytes) < 10:
+                return cls.empty()
+
+            # Dictionaries for deduplication (use dict for O(1) lookup)
+            compound_meta: dict[
+                int,
+                tuple,
+            ] = {}  # compound_id -> (name, inchikey, smiles, mass, mf)
+            taxon_meta: dict[int, str] = {}  # taxon_id -> taxon_name
+            ref_meta: dict[int, tuple] = {}  # ref_id -> (ref_title, ref_doi, pub_date)
+
+            # Lists for fact table - use array for integers (more compact)
+            facts_compound: array.array = array.array("I")  # unsigned int
+            facts_taxon: array.array = array.array("I")
+            facts_reference: array.array = array.array("I")
+            facts_statement: list[str | None] = []
+            facts_ref: list[str | None] = []
+
+            # Create BytesIO wrapper
+            bytes_stream = io.BytesIO(csv_bytes)
+            text_stream = io.TextIOWrapper(
+                bytes_stream, encoding="utf-8", errors="replace"
+            )
+            reader = csv.DictReader(text_stream)
+
+            row_count = 0
+            gc_interval = 5000 if IS_PYODIDE else 50000  # More frequent GC in WASM
+
+            for row in reader:
+                row_count += 1
+                # Extract IDs (these are returned as integers from SPARQL)
+                try:
+                    compound_id = int(row.get("compound") or 0)
+                    taxon_id = int(row.get("taxon") or 0)
+                    ref_id = int(row.get("ref_qid") or row.get("reference") or 0)
+                except (ValueError, TypeError):
+                    continue  # Skip malformed rows
+
+                if compound_id == 0:
+                    continue  # Skip rows without compound
+
+                # Add to fact table (use array.append for compact int storage)
+                facts_compound.append(compound_id)
+                facts_taxon.append(taxon_id)
+                facts_reference.append(ref_id)
+                # Don't intern statement/ref - they're mostly unique URIs
+                stmt = row.get("statement")
+                ref_val = row.get("ref")
+                facts_statement.append(stmt if stmt else None)
+                facts_ref.append(ref_val if ref_val else None)
+
+                # Deduplicate compound metadata
+                if compound_id not in compound_meta:
+                    # Prefer isomeric SMILES, fall back to connectivity SMILES
+                    smiles = (
+                        row.get("compound_smiles_iso")
+                        or row.get("compound_smiles_conn")
+                        or None
+                    )
+                    try:
+                        mass = (
+                            float(row.get("compound_mass"))
+                            if row.get("compound_mass")
+                            else None
+                        )
+                    except (ValueError, TypeError):
+                        mass = None
+                    # Intern strings to save memory on repeated values
+                    name = row.get("compoundLabel")
+                    inchikey = row.get("compound_inchikey")
+                    mf = row.get("compound_formula")
+                    compound_meta[compound_id] = (
+                        sys.intern(name) if name else None,
+                        sys.intern(inchikey) if inchikey else None,
+                        smiles,  # SMILES are usually unique, don't intern
+                        mass,
+                        sys.intern(mf) if mf else None,
+                    )
+
+                # Deduplicate taxon metadata
+                if taxon_id and taxon_id not in taxon_meta:
+                    taxon_name = row.get("taxon_name")
+                    taxon_meta[taxon_id] = (
+                        sys.intern(taxon_name) if taxon_name else None
+                    )
+
+                # Deduplicate reference metadata
+                if ref_id and ref_id not in ref_meta:
+                    # Extract DOI (remove URL prefix if present)
+                    ref_doi = row.get("ref_doi") or None
+                    if ref_doi and ref_doi.startswith("http"):
+                        parts = ref_doi.split("doi.org/")
+                        ref_doi = parts[-1] if len(parts) > 1 else ref_doi
+
+                    # Parse date
+                    pub_date_str = row.get("ref_date") or None
+                    pub_date = None
+                    if pub_date_str:
+                        try:
+                            pub_date = datetime.strptime(
+                                pub_date_str,
+                                "%Y-%m-%dT%H:%M:%SZ",
+                            ).date()
+                        except ValueError:
+                            pass
+
+                    ref_title = row.get("ref_title")
+                    ref_meta[ref_id] = (
+                        sys.intern(ref_title) if ref_title else None,
+                        sys.intern(ref_doi) if ref_doi else None,
+                        pub_date,
+                    )
+
+                # Periodic GC in WASM to prevent memory buildup
+                if IS_PYODIDE and row_count % gc_interval == 0:
+                    gc.collect()
+
+            # Close and free the streams
+            text_stream.close()
+            bytes_stream.close()
+            del text_stream, bytes_stream
+            # Trigger GC after freeing streams - this is crucial to free csv_bytes reference
+            if IS_PYODIDE:
+                gc.collect()
+
+            # Convert arrays to lists for polars (polars doesn't accept array.array directly)
+            facts_compound_list = facts_compound.tolist()
+            facts_taxon_list = facts_taxon.tolist()
+            facts_reference_list = facts_reference.tolist()
+            # Free the arrays immediately
+            del facts_compound, facts_taxon, facts_reference
+            if IS_PYODIDE:
+                gc.collect()
+
+            # Build DataFrames from collected data
+            facts_df = pl.LazyFrame(
+                {
+                    "compound": facts_compound_list,
+                    "taxon": facts_taxon_list,
+                    "reference": facts_reference_list,
+                    "statement": facts_statement,
+                    "ref": facts_ref,
+                },
+                schema={
+                    "compound": pl.UInt32,
+                    "taxon": pl.UInt32,
+                    "reference": pl.UInt32,
+                    "statement": pl.Utf8,
+                    "ref": pl.Utf8,
+                },
+            )
+
+            # Clear fact lists to free memory
+            del facts_compound_list, facts_taxon_list, facts_reference_list
+            del facts_statement, facts_ref
+
+            # Build compound metadata DataFrame
+            compound_ids = list(compound_meta.keys())
+            compound_data = list(compound_meta.values())
+            compound_meta_df = pl.LazyFrame(
+                {
+                    "compound": compound_ids,
+                    "name": [c[0] for c in compound_data],
+                    "inchikey": [c[1] for c in compound_data],
+                    "smiles": [c[2] for c in compound_data],
+                    "mass": [c[3] for c in compound_data],
+                    "mf": [c[4] for c in compound_data],
+                },
+                schema={
+                    "compound": pl.UInt32,
+                    "name": pl.Utf8,
+                    "inchikey": pl.Utf8,
+                    "smiles": pl.Utf8,
+                    "mass": pl.Float32,
+                    "mf": pl.Utf8,
+                },
+            )
+            del compound_meta, compound_ids, compound_data
+
+            # Build taxon metadata DataFrame
+            taxon_ids = list(taxon_meta.keys())
+            taxon_names = list(taxon_meta.values())
+            taxon_meta_df = pl.LazyFrame(
+                {
+                    "taxon": taxon_ids,
+                    "taxon_name": taxon_names,
+                },
+                schema={
+                    "taxon": pl.UInt32,
+                    "taxon_name": pl.Utf8,
+                },
+            )
+            del taxon_meta, taxon_ids, taxon_names
+
+            # Build reference metadata DataFrame
+            ref_ids = list(ref_meta.keys())
+            ref_data = list(ref_meta.values())
+            ref_meta_df = pl.LazyFrame(
+                {
+                    "reference": ref_ids,
+                    "ref_title": [r[0] for r in ref_data],
+                    "ref_doi": [r[1] for r in ref_data],
+                    "pub_date": [r[2] for r in ref_data],
+                },
+                schema={
+                    "reference": pl.UInt32,
+                    "ref_title": pl.Utf8,
+                    "ref_doi": pl.Utf8,
+                    "pub_date": pl.Date,
+                },
+            )
+            del ref_meta, ref_ids, ref_data
+
+            # Trigger garbage collection if in WASM
+            if IS_PYODIDE:
+                gc.collect()
+
+            return cls(
+                facts=facts_df,
+                compound_meta=compound_meta_df,
+                taxon_meta=taxon_meta_df,
+                ref_meta=ref_meta_df,
+            )
+
+    # ========================================================================
     # SERVICES
     # ========================================================================
 
     class WikidataQueryService:
-        def __init__(self, endpoint: str):
+        def __init__(self, endpoint: str, use_normalized: bool = False):
             self.endpoint = endpoint
+            self.use_normalized = use_normalized
 
         def fetch_compounds(
             self,
@@ -229,32 +541,49 @@ with app.setup:
             smiles_search_type: str = "substructure",
             smiles_threshold: float = 0.8,
         ) -> pl.LazyFrame:
+            """
+            Fetch compounds from Wikidata.
+
+            In WASM mode with use_normalized=True, this uses the memory-efficient
+            normalized storage that parses CSV streaming and deduplicates metadata.
+            """
             query = self._build_query(qid, smiles, smiles_search_type, smiles_threshold)
             csv_bytes = execute_with_retry(query, self.endpoint)
 
-            if not csv_bytes or csv_bytes.strip() == b"":
+            # Quick empty check without creating a copy via strip()
+            if not csv_bytes or len(csv_bytes) < 10:
                 return pl.LazyFrame()
 
-            return pl.scan_csv(
-                io.BytesIO(csv_bytes),
-                low_memory=True,
-                rechunk=False,
-                schema_overrides={
-                    "compound": pl.UInt32,
-                    "taxon": pl.UInt32,
-                    "reference": pl.UInt32,
-                    "compound_mass": pl.Float32,
-                    "name": pl.Utf8,
-                    "inchikey": pl.Utf8,
-                    "smiles": pl.Utf8,
-                    "taxon_name": pl.Utf8,
-                    "ref_title": pl.Utf8,
-                    "ref_doi": pl.Utf8,
-                    "mf": pl.Utf8,
-                    "statement": pl.Utf8,
-                    "ref": pl.Utf8,
-                },
-            )
+            if self.use_normalized:
+                # Use memory-efficient normalized parsing
+                dataset = NormalizedDataset.from_csv_bytes(csv_bytes)
+                # Clear the original bytes to free memory immediately
+                del csv_bytes
+                if IS_PYODIDE:
+                    gc.collect()
+                return dataset.to_denormalized()
+            else:
+                # Use standard polars scan_csv
+                return pl.scan_csv(
+                    io.BytesIO(csv_bytes),
+                    low_memory=True,
+                    rechunk=False,
+                    schema_overrides={
+                        "compound": pl.UInt32,
+                        "taxon": pl.UInt32,
+                        "reference": pl.UInt32,
+                        "compound_mass": pl.Float32,
+                        "name": pl.Utf8,
+                        "inchikey": pl.Utf8,
+                        "smiles": pl.Utf8,
+                        "taxon_name": pl.Utf8,
+                        "ref_title": pl.Utf8,
+                        "ref_doi": pl.Utf8,
+                        "mf": pl.Utf8,
+                        "statement": pl.Utf8,
+                        "ref": pl.Utf8,
+                    },
+                )
 
         def _build_query(
             self,
@@ -284,15 +613,33 @@ with app.setup:
 
     class DataTransformService:
         @staticmethod
-        def apply_standard_transforms(df: pl.LazyFrame) -> pl.LazyFrame:
-            df = DataTransformService.rename_columns(df)
-            df = DataTransformService.combine_smiles(df)
-            df = DataTransformService.extract_doi(df)
-            df = DataTransformService.parse_dates(df)
-            df = DataTransformService.cast_types(df)
-            df = DataTransformService.drop_old_columns(df)
-            df = DataTransformService.add_missing_columns(df)
-            df = DataTransformService.deduplicate(df)
+        def apply_standard_transforms(
+            df: pl.LazyFrame,
+            from_normalized: bool = False,
+        ) -> pl.LazyFrame:
+            """
+            Apply standard transformations to the data.
+
+            Args:
+                df: Input LazyFrame
+                from_normalized: If True, the data comes from NormalizedDataset
+                    and some transformations are already applied (dates parsed,
+                    DOI extracted, SMILES combined).
+            """
+            if from_normalized:
+                # Normalized data already has correct column names and types
+                df = DataTransformService.add_missing_columns(df)
+                df = DataTransformService.deduplicate(df)
+            else:
+                # Full transformation pipeline for raw CSV data
+                df = DataTransformService.rename_columns(df)
+                df = DataTransformService.combine_smiles(df)
+                df = DataTransformService.extract_doi(df)
+                df = DataTransformService.parse_dates(df)
+                df = DataTransformService.cast_types(df)
+                df = DataTransformService.drop_old_columns(df)
+                df = DataTransformService.add_missing_columns(df)
+                df = DataTransformService.deduplicate(df)
             return df
 
         @staticmethod
@@ -878,8 +1225,13 @@ with app.setup:
     class LOTUSExplorer:
         def __init__(self, config: dict, is_wasm: bool = False):
             self.config = config
+            self.is_wasm = is_wasm
             self.memory = MemoryManager(is_wasm)
-            self.query_service = WikidataQueryService(config["qlever_endpoint"])
+            # Use normalized mode in WASM for memory efficiency
+            self.query_service = WikidataQueryService(
+                config["qlever_endpoint"],
+                use_normalized=is_wasm,
+            )
             self.transform_service = DataTransformService()
             self.filter_service = FilterService()
             self.taxon_service = TaxonResolutionService(config["qlever_endpoint"])
@@ -903,6 +1255,7 @@ with app.setup:
             )
             transformed_data = self.transform_service.apply_standard_transforms(
                 raw_data,
+                from_normalized=self.is_wasm,  # Skip redundant transforms in WASM mode
             )
             filtered_data = self.filter_service.apply_filters(
                 transformed_data,
