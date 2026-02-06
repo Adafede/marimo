@@ -52,7 +52,7 @@ with app.setup:
     from rdflib import Graph, Literal, URIRef, BNode
     from rdflib.namespace import RDF, RDFS, XSD, DCTERMS
 
-    _USE_LOCAL = True
+    _USE_LOCAL = False
     if _USE_LOCAL:
         sys.path.insert(0, ".")
 
