@@ -52,7 +52,7 @@ with app.setup:
     from rdflib import Graph, Literal, URIRef, BNode
     from rdflib.namespace import RDF, RDFS, XSD, DCTERMS
 
-    _USE_LOCAL = False
+    _USE_LOCAL = True
     if _USE_LOCAL:
         sys.path.insert(0, ".")
 
@@ -825,6 +825,12 @@ with app.setup:
             if taxon_input.upper().startswith("Q") and taxon_input[1:].isdigit():
                 return taxon_input.upper(), None
 
+            # Sanitize multi-part taxon names
+            original_input = taxon_input
+            if " " in taxon_input or "_" in taxon_input:
+                parts = taxon_input.replace("_", " ").split()
+                taxon_input = parts[0].capitalize() + " " + " ".join(parts[1:])
+
             try:
                 query = query_taxon_search(taxon_input)
                 csv_bytes = execute_with_retry(
@@ -855,23 +861,60 @@ with app.setup:
                 ]
 
                 if len(exact_matches) == 1:
+                    # Single exact match - show sanitization notice if input was modified
+                    if original_input != taxon_input:
+                        notice_html = self._create_sanitization_notice(
+                            original_input, taxon_input
+                        )
+                        return exact_matches[0][0], notice_html
                     return exact_matches[0][0], None
 
                 if len(exact_matches) > 1:
-                    return self._resolve_ambiguous(exact_matches, is_exact=True)
+                    return self._resolve_ambiguous(
+                        exact_matches,
+                        is_exact=True,
+                        original_input=original_input,
+                        sanitized_input=taxon_input,
+                    )
 
                 if len(matches) > 1:
-                    return self._resolve_ambiguous(matches, is_exact=False)
+                    return self._resolve_ambiguous(
+                        matches,
+                        is_exact=False,
+                        original_input=original_input,
+                        sanitized_input=taxon_input,
+                    )
 
+                # Single non-exact match - show sanitization notice if input was modified
+                if original_input != taxon_input:
+                    notice_html = self._create_sanitization_notice(
+                        original_input, taxon_input
+                    )
+                    return matches[0][0], notice_html
                 return matches[0][0], None
 
             except Exception:
                 return None, None
 
+        def _create_sanitization_notice(
+            self,
+            original_input: str,
+            sanitized_input: str,
+        ) -> mo.Html:
+            """Create HTML notice for sanitized input."""
+            html = f"""
+            <div style="line-height: 1.6; color: {CONFIG["color_hyperlink"]};">
+                Input standardized from "<strong>{original_input}</strong>" to "<strong>{sanitized_input}</strong>"
+            </div>
+            """
+            return mo.Html(html)
+
         def _resolve_ambiguous(
             self,
             matches: list[tuple[str, str]],
             is_exact: bool,
+            original_input: str = "",
+            sanitized_input: str = "",
         ) -> tuple[str, mo.Html]:
             """Resolve ambiguous taxon matches."""
             qids = tuple(qid for qid, _ in matches)
@@ -918,6 +961,8 @@ with app.setup:
                 matches_with_details,
                 selected_qid,
                 is_exact,
+                original_input,
+                sanitized_input,
             )
 
         def _create_taxon_warning_html(
@@ -925,6 +970,8 @@ with app.setup:
             matches: list,
             selected_qid: str,
             is_exact: bool,
+            original_input: str = "",
+            sanitized_input: str = "",
         ) -> mo.Html:
             """Create HTML warning for ambiguous taxon."""
             match_type = "exact matches" if is_exact else "similar taxa"
@@ -933,6 +980,11 @@ with app.setup:
                 if is_exact
                 else "No exact match. Similar taxa found:"
             )
+
+            # Add sanitization notice if input was modified
+            sanitization_notice = ""
+            if original_input and sanitized_input and original_input != sanitized_input:
+                sanitization_notice = f'<div style="margin-bottom: 0.5em; color: {CONFIG["color_hyperlink"]};">Input standardized from "<strong>{original_input}</strong>" to "<strong>{sanitized_input}</strong>"</div>'
 
             items = []
             for match_data in matches:
@@ -962,6 +1014,7 @@ with app.setup:
 
             html = f"""
             <div style="line-height: 1.6;">
+                {sanitization_notice}
                 {intro}
                 <ul style="margin: 0.5em 0; padding-left: 1.5em;">
                     {items_html}
