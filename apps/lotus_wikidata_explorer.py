@@ -2428,7 +2428,6 @@ def main():
                     result_hash,
                 )
                 print(json.dumps(metadata, indent=2))
-                sys.exit(0)
 
             if args.format in ["csv", "json"]:
                 export_df = lotus.prepare_export_dataframe(
