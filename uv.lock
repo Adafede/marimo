@@ -38,7 +38,7 @@ requires-dist = [
     { name = "cmcrameri", specifier = ">=1.9" },
     { name = "epam-indigo", specifier = ">=1.36.1" },
     { name = "fsspec", specifier = ">=2026.2.0" },
-    { name = "marimo", specifier = ">=0.19.9" },
+    { name = "marimo", specifier = ">=0.19.10" },
     { name = "numpy", specifier = ">=2.4.2" },
     { name = "polars", specifier = ">=1.38.1" },
     { name = "pyarrow", specifier = ">=23.0.0" },
@@ -296,30 +296,30 @@ wheels = [
 
 [[package]]
 name = "boto3"
-version = "1.42.46"
+version = "1.42.47"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "botocore" },
     { name = "jmespath" },
     { name = "s3transfer" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d9/87/1ccd436a6815c18107aa74aa2b7b2745dc5a1db83cf58afc591df2755775/boto3-1.42.46.tar.gz", hash = "sha256:c8c82ab34dd8d2d4d93a562d0e75fca164efa644651d3ccddb0f4aa88a481b38", size = 112795 }
+sdist = { url = "https://files.pythonhosted.org/packages/eb/fe/3363024b6dda5968401f45d8b345ed95ce4fd536d58f799988b4b28184ad/boto3-1.42.47.tar.gz", hash = "sha256:74812a2e29de7c2bd19e446d765cb887394f20f1517388484b51891a410f33b2", size = 112884 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ce/41/978d749a6604bf93e05e8be56db07eb1402ffe576e1bb9b65aa391ebcb73/boto3-1.42.46-py3-none-any.whl", hash = "sha256:679cf4930e559621653bbd1439cf6e93b138cbaf46e36e5d7d95319999b7a356", size = 140606 },
+    { url = "https://files.pythonhosted.org/packages/47/7b/884e30adab2339ce5cce7b800f5fa619254d36e89e50a8cf39a5524edc35/boto3-1.42.47-py3-none-any.whl", hash = "sha256:ed881ed246027028af566acbb80f008aa619be4d3fdbcc4ad3c75dbe8c34bfaf", size = 140608 },
 ]
 
 [[package]]
 name = "botocore"
-version = "1.42.46"
+version = "1.42.47"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jmespath" },
     { name = "python-dateutil" },
     { name = "urllib3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/86/2d/6f6101f567a69c3b2ebe3f1f81bfd56eda9d5f6f466d0d919293499ab050/botocore-1.42.46.tar.gz", hash = "sha256:fc290b33aba6e271f627c4f46b8bcebfa1a94e19157d396732da417404158c01", size = 14948751 }
+sdist = { url = "https://files.pythonhosted.org/packages/ed/a6/d15f5dfe990abd76dbdb2105a7697e0d948e04c41dfd97c058bc76c7cebd/botocore-1.42.47.tar.gz", hash = "sha256:c26e190c1b4d863ba7b44dc68cc574d8eb862ddae5f0fe3472801daee12a0378", size = 14952255 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a0/88/5c2f4e65fe8dba7709a219b768e5ac89a112c6dde9527a5009cb82ee9124/botocore-1.42.46-py3-none-any.whl", hash = "sha256:f7459fcf586f38a3b0a242a172d3332141c770a3f5767bbb21e79d810db95d75", size = 14622519 },
+    { url = "https://files.pythonhosted.org/packages/54/5e/50e3a59b243894088eeb949a654fb21d9ab7d0d703034470de016828d85a/botocore-1.42.47-py3-none-any.whl", hash = "sha256:c60f5feaf189423e17755aca3f1d672b7466620dd2032440b32aaac64ae8cac8", size = 14625351 },
 ]
 
 [[package]]
@@ -952,15 +952,15 @@ wheels = [
 
 [[package]]
 name = "genai-prices"
-version = "0.0.52"
+version = "0.0.53"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/8e/87/bdc11c1671e3a3fe701c3c4aaae4aa2bb7a84a6bb1812dfb5693c87d3872/genai_prices-0.0.52.tar.gz", hash = "sha256:0df7420b555fa3a48d09e5c7802ba35b5dfa9fd49b0c3bb2c150c59060d83f52", size = 58364 }
+sdist = { url = "https://files.pythonhosted.org/packages/a6/95/f7d61df3b0c42dcad3e3ab9327aa466c556a2b24f9aea6b48e4fe4ab19ca/genai_prices-0.0.53.tar.gz", hash = "sha256:0afe7595d77dbcd80473ad168385c7500c7fbc6c2b370840ffdbfea9e0902544", size = 59235 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/35/33/6316b4907a0bffc1bcc99074c7e2d01184fdfeee401c864146a40d55ad10/genai_prices-0.0.52-py3-none-any.whl", hash = "sha256:639e7a2ae7eddf5710febb9779b9c9e31ff5acf464b4eb1f6018798ea642e6d3", size = 60937 },
+    { url = "https://files.pythonhosted.org/packages/ae/1c/d544657381270fe21afc2a4dc560e1607e28d7115555cef148271cb25522/genai_prices-0.0.53-py3-none-any.whl", hash = "sha256:5a5dfd92089e9e8a174f7097a1521e36f4e75c74cfbdfb1ec56283bae3c0c96e", size = 61850 },
 ]
 
 [[package]]
@@ -984,7 +984,7 @@ requests = [
 
 [[package]]
 name = "google-genai"
-version = "1.62.0"
+version = "1.63.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -998,9 +998,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/94/4c/71b32b5c8db420cf2fd0d5ef8a672adbde97d85e5d44a0b4fca712264ef1/google_genai-1.62.0.tar.gz", hash = "sha256:709468a14c739a080bc240a4f3191df597bf64485b1ca3728e0fb67517774c18", size = 490888 }
+sdist = { url = "https://files.pythonhosted.org/packages/46/d7/07ec5dadd0741f09e89f3ff5f0ce051ce2aa3a76797699d661dc88def077/google_genai-1.63.0.tar.gz", hash = "sha256:dc76cab810932df33cbec6c7ef3ce1538db5bef27aaf78df62ac38666c476294", size = 491970 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/09/5f/4645d8a28c6e431d0dd6011003a852563f3da7037d36af53154925b099fd/google_genai-1.62.0-py3-none-any.whl", hash = "sha256:4c3daeff3d05fafee4b9a1a31f9c07f01bc22051081aa58b4d61f58d16d1bcc0", size = 724166 },
+    { url = "https://files.pythonhosted.org/packages/82/c8/ba32159e553fab787708c612cf0c3a899dafe7aca81115d841766e3bfe69/google_genai-1.63.0-py3-none-any.whl", hash = "sha256:6206c13fc20f332703ca7375bea7c191c82f95d6781c29936c6982d86599b359", size = 724747 },
 ]
 
 [[package]]
@@ -1622,18 +1622,17 @@ wheels = [
 
 [[package]]
 name = "marimo"
-version = "0.19.9"
+version = "0.19.10"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
     { name = "docutils" },
     { name = "itsdangerous" },
     { name = "jedi" },
-    { name = "loro", marker = "python_full_version < '3.14'" },
+    { name = "loro" },
     { name = "markdown" },
     { name = "msgspec" },
     { name = "narwhals" },
-    { name = "openai" },
     { name = "packaging" },
     { name = "psutil" },
     { name = "pygments" },
@@ -1644,9 +1643,9 @@ dependencies = [
     { name = "uvicorn" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/05/ba/c642e80a69d1855561383ee797b377864ded409b3821ff515cbed5e0b9fe/marimo-0.19.9.tar.gz", hash = "sha256:00df9580c25435b14c63cf4bf11da409fa826c1303352efd03adb6823f872b75", size = 38144862 }
+sdist = { url = "https://files.pythonhosted.org/packages/2b/1f/da120728d93960e7db35840800af9216cd300ef02fa2831b085186614c82/marimo-0.19.10.tar.gz", hash = "sha256:a4fad325b8c5e7aef77c21d62764c20899c352dfa1afbc44c30760ae081d2b27", size = 38202668 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f6/43/afe18797d5e1ca78a39c1a3610d45d8144d73fdb583fae0e421320077d5f/marimo-0.19.9-py3-none-any.whl", hash = "sha256:677c91154ba2bcee46152851fb4e7c8bffe51f3bf366562513882f348a458da6", size = 38556268 },
+    { url = "https://files.pythonhosted.org/packages/f5/cd/b1c382afc8f00c05bb52202fdfdd8db2ffbd0c13a96e6d1eb93fd5d72516/marimo-0.19.10-py3-none-any.whl", hash = "sha256:c87541222cbf34ab864e91c88d72d6a8abf3a6db8a9bc93968e21bd58390a944", size = 38608642 },
 ]
 
 [[package]]
@@ -2779,7 +2778,7 @@ wheels = [
 
 [[package]]
 name = "pydocket"
-version = "0.17.6"
+version = "0.17.7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cloudpickle" },
@@ -2794,9 +2793,9 @@ dependencies = [
     { name = "typer" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c3/55/bd31814996c908e21a8cd11903b1244cdb6af8d5b6ce92e9508952339675/pydocket-0.17.6.tar.gz", hash = "sha256:dbc37a78a2cc747262c71da5e2bc1d39e5833d319d65d5b22f8727fb25e50d8e", size = 345519 }
+sdist = { url = "https://files.pythonhosted.org/packages/cd/b2/5e12dbe2acf59e4499285e8eee66e8e81b6ba2f553696d2f4ccca0a7978c/pydocket-0.17.7.tar.gz", hash = "sha256:5c77ec6731a167cdcb44174abf793fe63e7b6c1c1c8a799cc6ec7502b361ee77", size = 347071 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6f/0b/03effa7a24d2030374b3176f93974fcc08a581bb1283c93c72a4649e03e5/pydocket-0.17.6-py3-none-any.whl", hash = "sha256:b7285fc7027fed5439202e3dbdfa3e2d5dec02a45902ba002bc088df893235b8", size = 94173 },
+    { url = "https://files.pythonhosted.org/packages/c9/c7/68f2553819965326f968375f02597d49efe71b309ba9d8fef539aeb51c48/pydocket-0.17.7-py3-none-any.whl", hash = "sha256:d1e0921ac02026c4a0140fc72a3848545f3e91e6e74c6e32c588489017c130b2", size = 94608 },
 ]
 
 [[package]]
