@@ -864,7 +864,8 @@ with app.setup:
                     # Single exact match - show sanitization notice if input was modified
                     if original_input != taxon_input:
                         notice_html = self._create_sanitization_notice(
-                            original_input, taxon_input
+                            original_input,
+                            taxon_input,
                         )
                         return exact_matches[0][0], notice_html
                     return exact_matches[0][0], None
@@ -888,7 +889,8 @@ with app.setup:
                 # Single non-exact match - show sanitization notice if input was modified
                 if original_input != taxon_input:
                     notice_html = self._create_sanitization_notice(
-                        original_input, taxon_input
+                        original_input,
+                        taxon_input,
                     )
                     return matches[0][0], notice_html
                 return matches[0][0], None
