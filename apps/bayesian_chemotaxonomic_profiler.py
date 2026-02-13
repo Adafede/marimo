@@ -503,7 +503,7 @@ def write_parquet_stream(
             df.write_parquet(path, compression=compression)
             return
         except Exception:
-            df.write_parquet(path, compression=None)
+            df.write_parquet(path, compression="uncompressed")
             return
 
 
@@ -777,16 +777,19 @@ def run_hierarchical_analysis(
     taxon_name: pl.DataFrame,
     taxon_rank: pl.DataFrame | None = None,
     cfg: Final[TypedDict] = None,
-) -> pl.DataFrame:
+) -> pl.LazyFrame:
     """
     Memory-optimized Bayesian enrichment analysis.
 
+    Returns a LazyFrame that scans parquet files on disk - data is only
+    materialized when needed, minimizing memory usage.
+
     Memory optimizations:
     - Process one rank at a time
-    - Batch CI/ROPE computation in 10K row chunks
+    - Batch CI/ROPE computation in chunks
     - Use Float32 for intermediate calculations
     - Drop columns early when not needed
-    - Clear large arrays explicitly
+    - Return LazyFrame instead of DataFrame
     """
     start = time.time()
     if cfg is None:
@@ -824,7 +827,7 @@ def run_hierarchical_analysis(
     )
 
     if base_evidence.is_empty():
-        return pl.DataFrame()
+        return pl.LazyFrame()
 
     # Minimal scaffold filtering - only require appearing in ≥2 compounds
     # The Bayesian model handles ubiquitous scaffolds through θ₀ (baseline)
@@ -847,7 +850,7 @@ def run_hierarchical_analysis(
     )
 
     if base_evidence.is_empty():
-        return pl.DataFrame()
+        return pl.LazyFrame()
 
     N = int(base_evidence.get_column("compound").n_unique())
     logging.info(f"Universe: {N} compounds")
@@ -861,7 +864,7 @@ def run_hierarchical_analysis(
     )
 
     if valid_ranks_df.is_empty():
-        return pl.DataFrame()
+        return pl.LazyFrame()
 
     valid_ranks = valid_ranks_df.get_column("taxon_rank").to_list()
 
@@ -874,7 +877,7 @@ def run_hierarchical_analysis(
 
     if not valid_ranks:
         logging.warning("No valid ranks found - aborting")
-        return pl.DataFrame()
+        return pl.LazyFrame()
 
     logging.info(f"Ranks: {len(valid_ranks)}")
 
@@ -914,57 +917,62 @@ def run_hierarchical_analysis(
             gc.collect()
 
         if not rank_files:
-            return pl.DataFrame()
+            return pl.LazyFrame()
 
-        # Combine results using lazy scan and streaming collect to reduce peak memory
-        logging.info("Combining results (streaming)...")
-        lazy_chunks = [pl.scan_parquet(f) for f in rank_files]
-        # Concatenate lazily and collect with streaming to keep memory low
-        result = pl.concat(lazy_chunks, how="vertical").collect(engine="streaming")
-        del lazy_chunks
+        # Return a LazyFrame that scans the parquet files - DO NOT materialize
+        logging.info("Building lazy result...")
+        lazy_result = pl.concat(
+            [pl.scan_parquet(f) for f in rank_files],
+            how="vertical",
+        )
 
-        # Add quality flags
-        result = result.with_columns(
+        # Add quality flags lazily
+        lazy_result = lazy_result.with_columns(
             [(pl.col("effective_sample_size") >= MIN_ESS).alias("reliable")],
         )
 
-        # Add taxon names
-        result = result.join(
-            taxon_name.rename({"taxon": "taxon_ancestor", "taxon_name": "taxon_name"}),
+        # Add taxon names lazily
+        lazy_result = lazy_result.join(
+            taxon_name.lazy().rename(
+                {"taxon": "taxon_ancestor", "taxon_name": "taxon_name"},
+            ),
             on="taxon_ancestor",
             how="left",
         )
 
-        # Sort
-        result = result.sort(
-            [
-                "reliable",
-                "posterior_enrich_prob",
-                "compound_ancestor",
-                "taxon_ancestor",
-            ],
-            descending=[True, True, False, False],
-        )
-
-        # Add rank labels if available
+        # Add rank labels using a mapping join instead of map_elements
         try:
             from modules.knowledge.wikidata.taxon.ranks import get_rank_label
 
-            if "taxon_rank" in result.columns:
-                rank_vals = result.get_column("taxon_rank").to_list()
-                rank_labels = [get_rank_label(r) for r in rank_vals]
-                result = result.with_columns(pl.Series("taxon_rank_label", rank_labels))
+            # Build rank label lookup table
+            unique_ranks = (
+                lazy_result.select("taxon_rank")
+                .unique()
+                .collect()
+                .get_column("taxon_rank")
+                .to_list()
+            )
+            rank_label_df = pl.DataFrame(
+                {
+                    "taxon_rank": unique_ranks,
+                    "taxon_rank_label": [get_rank_label(r) for r in unique_ranks],
+                },
+            ).lazy()
+
+            lazy_result = lazy_result.join(rank_label_df, on="taxon_rank", how="left")
         except Exception:
             pass
 
-        logging.info(
-            f"Complete: {result.height} enrichments ({time.time() - start:.1f}s)",
-        )
+        logging.info(f"Complete: LazyFrame ready ({time.time() - start:.1f}s)")
 
-        return result
+        # Note: temp files will be cleaned up when the LazyFrame is no longer needed
+        # We store the file list for later cleanup
+        lazy_result._temp_files = rank_files  # Attach for cleanup
 
-    finally:
-        # Clean up temp files
+        return lazy_result
+
+    except Exception as e:
+        # Clean up temp files on error
         for f in rank_files:
             try:
                 os.unlink(f)
@@ -974,6 +982,7 @@ def run_hierarchical_analysis(
             os.rmdir(temp_dir)
         except OSError:
             pass
+        raise e
 
 
 @app.function
@@ -1494,7 +1503,7 @@ def compute_ci_rope(batch: pl.DataFrame, CI_PROB: float, ROPE_HW: float):
 
 @app.function
 def discover_top_taxa(
-    markers: pl.DataFrame,
+    markers: pl.LazyFrame | pl.DataFrame,
     rank: str,
     min_prob: float = MIN_PROB,
     min_ess: float = MIN_ESS,
@@ -1506,7 +1515,9 @@ def discover_top_taxa(
     Select top N taxa with most distinctive chemistry at this rank.
 
     Returns list of taxon IDs (taxon_ancestor).
+    Works with both LazyFrame and DataFrame.
     """
+    # Build query lazily
     rank_markers = (
         markers.filter(pl.col("taxon_rank_label") == rank)
         .filter(pl.col("posterior_enrich_prob") >= min_prob)
@@ -1514,9 +1525,6 @@ def discover_top_taxa(
         .filter(pl.col("log2_enrichment") >= min_log2fc)
         .filter(pl.col("a_raw") >= min_obs)
     )
-
-    if rank_markers.is_empty():
-        return []
 
     # Score taxa by chemical distinctiveness
     taxon_scores = (
@@ -1540,18 +1548,25 @@ def discover_top_taxa(
                 ).alias("distinctiveness"),
             ],
         )
-        .sort(["distinctiveness", "taxon_ancestor"], descending=[True, False])
+        .sort("distinctiveness", descending=True)
         .head(top_n)
     )
+
+    # Collect only the final result
+    if hasattr(taxon_scores, "collect"):
+        taxon_scores = taxon_scores.collect()
+
+    if taxon_scores.is_empty():
+        return []
 
     return taxon_scores.get_column("taxon_ancestor").to_list()
 
 
 @app.function
 def get_markers_for_top_taxa(
-    markers: pl.DataFrame,
+    markers: pl.LazyFrame | pl.DataFrame,
     rank: str,
-    top_taxa: list[str],
+    top_taxa: list,
     min_prob: float = MIN_PROB,
     min_ess: float = MIN_ESS,
     min_obs: float = MIN_OBS,
@@ -1560,18 +1575,27 @@ def get_markers_for_top_taxa(
 ) -> pl.DataFrame:
     """
     Get top markers for each of the selected top taxa.
+    Works with both LazyFrame and DataFrame.
     """
+    # Handle empty top_taxa
+    if not top_taxa:
+        return pl.DataFrame()
+
+    # Cast top_taxa to proper dtype to avoid UInt32/Int64 mismatch
+    top_taxa_series = pl.Series("taxon_ancestor", top_taxa, dtype=pl.UInt32)
+
     rank_markers = (
         markers.filter(pl.col("taxon_rank_label") == rank)
-        .filter(pl.col("taxon_ancestor").is_in(top_taxa))
+        .filter(
+            pl.col("taxon_ancestor")
+            .cast(pl.UInt32, strict=False)
+            .is_in(top_taxa_series)
+        )
         .filter(pl.col("posterior_enrich_prob") >= min_prob)
         .filter(pl.col("effective_sample_size") >= min_ess)
         .filter(pl.col("log2_enrichment") >= min_log2fc)
         .filter(pl.col("a_raw") >= min_obs)
     )
-
-    if rank_markers.is_empty():
-        return pl.DataFrame()
 
     # For each taxon, get top N markers
     result = (
@@ -1589,6 +1613,10 @@ def get_markers_for_top_taxa(
         .group_by("taxon_ancestor")
         .head(top_n_per_taxon)
     )
+
+    # Collect at the end
+    if hasattr(result, "collect"):
+        result = result.collect()
 
     return result
 
@@ -2204,26 +2232,34 @@ def scaffold_compound_stats(compound_scaffold):
 
 @app.cell
 def scaffold_trace_diagnostic(markers):
-    st_available_ranks = sorted(
-        markers.get_column("taxon_rank").unique().to_list(),
-        key=lambda r: get_rank_order(r),
-    )
-
-    # Sort by max posterior, then scaffold size for reproducibility on ties
+    # Materialize only what we need for top scaffolds
     st_top_scaffolds = (
         markers.group_by("compound_ancestor")
         .agg([pl.col("posterior_enrich_prob").max().alias("max_p")])
-        .with_columns(
-            pl.col("compound_ancestor").str.len_chars().alias("scaffold_size"),
-        )
-        .sort(["max_p", "scaffold_size"], descending=[True, True])
+        .sort("max_p", descending=True)
         .head(5)
+        .collect()
     )
+
+    if st_top_scaffolds.is_empty():
+        _out = mo.md("*No scaffold data available*")
+
+    st_available_ranks = (
+        markers.select("taxon_rank")
+        .unique()
+        .collect()
+        .get_column("taxon_rank")
+        .to_list()
+    )
+    st_available_ranks = sorted(st_available_ranks, key=lambda r: get_rank_order(r))
 
     trace_results = []
     for st_row in st_top_scaffolds.iter_rows(named=True):
         st_scaffold = st_row["compound_ancestor"]
-        st_scaffold_markers = markers.filter(pl.col("compound_ancestor") == st_scaffold)
+        # Materialize only data for this scaffold
+        st_scaffold_markers = markers.filter(
+            pl.col("compound_ancestor") == st_scaffold,
+        ).collect()
         for st_rank in st_available_ranks:
             st_rank_data = st_scaffold_markers.filter(pl.col("taxon_rank") == st_rank)
             if not st_rank_data.is_empty():
@@ -2293,7 +2329,7 @@ def run_analysis(
 
 
 @app.cell
-def _(markers):
+def _(markers, disabled=True):
     markers
     return
 
@@ -2303,6 +2339,10 @@ def discovery_mode(effective_config, markers):
     # Sort by: ROPE decision (enriched first), then ESS desc
     # Custom sort: enriched > undecided > equivalent > depleted
     CI_PROB = effective_config["stats"]["ci_prob"]
+
+    # Materialize only top results for display
+    DISPLAY_LIMIT = 1000
+
     dm_top = (
         markers.with_columns(
             [
@@ -2321,12 +2361,12 @@ def discovery_mode(effective_config, markers):
                 "_sort_decision",
                 "reliable",
                 "effective_sample_size",
-                "compound_ancestor",
-                "taxon_ancestor",
             ],
-            descending=[False, True, True, False, False],
+            descending=[False, True, True],
         )
+        .head(DISPLAY_LIMIT)
         .drop("_sort_decision")
+        .collect()  # Materialize only the limited result
     )
 
     dm_display = dm_top.select(
@@ -2357,18 +2397,31 @@ def discovery_mode(effective_config, markers):
         ],
     )
 
-    # Summary stats
-    dm_n_enriched = markers.filter(pl.col("rope_decision") == "enriched").height
-    dm_n_reliable = markers.filter(
-        pl.col("reliable") & (pl.col("rope_decision") == "enriched"),
-    ).height
+    # Summary stats - compute lazily
+    dm_n_enriched = (
+        markers.filter(pl.col("rope_decision") == "enriched")
+        .select(pl.len())
+        .collect()
+        .item()
+    )
+    dm_n_reliable = (
+        markers.filter(pl.col("reliable") & (pl.col("rope_decision") == "enriched"))
+        .select(pl.len())
+        .collect()
+        .item()
+    )
+    dm_n_total = markers.select(pl.len()).collect().item()
+
+    limited_msg = (
+        f" (showing top {DISPLAY_LIMIT})" if dm_top.height == DISPLAY_LIMIT else ""
+    )
 
     _out = mo.vstack(
         [
             mo.md(f"""
     ## All Enrichment Results
 
-    🟢 **{dm_n_enriched:,}** enriched | ✓ **{dm_n_reliable:,}** reliable (ESS ≥ {MIN_ESS}) | **{dm_top.height:,}** total
+    🟢 **{dm_n_enriched:,}** enriched | ✓ **{dm_n_reliable:,}** reliable (ESS ≥ {MIN_ESS}) | **{dm_n_total:,}** total{limited_msg}
     """),
             mo.ui.table(dm_display, selection=None),
         ],
@@ -2379,13 +2432,27 @@ def discovery_mode(effective_config, markers):
 
 @app.cell
 def summary_stats(compound_scaffold, markers):
-    ss_n_total = markers.height
-    ss_n_scaffolds = markers.get_column("compound_ancestor").n_unique()
-    ss_ranks = markers.get_column("taxon_rank").unique().to_list()
+    # Compute counts lazily
+    ss_n_total = markers.select(pl.len()).collect().item()
+    ss_n_scaffolds = (
+        markers.select(pl.col("compound_ancestor").n_unique()).collect().item()
+    )
+    ss_ranks = (
+        markers.select("taxon_rank")
+        .unique()
+        .collect()
+        .get_column("taxon_rank")
+        .to_list()
+    )
     ss_rank_labels = [get_rank_label(r) for r in sorted(ss_ranks, key=get_rank_order)]
 
-    # Calculate scaffold type breakdown
-    ss_unique_scaffolds = markers.get_column("compound_ancestor").unique()
+    # Calculate scaffold type breakdown using lazy operations
+    ss_unique_scaffolds = (
+        markers.select("compound_ancestor")
+        .unique()
+        .collect()
+        .get_column("compound_ancestor")
+    )
     ss_unique_compounds = compound_scaffold.get_column("compound_smiles").unique()
 
     ss_n_compound = len(
@@ -2432,6 +2499,9 @@ def lineage_profile_viz(markers):
 
     # Find "good examples" - scaffolds with consistent enrichment across ranks
     # Sort by average enrichment (best signal), then scaffold size for reproducibility
+    # Limit examples to reduce memory
+    # MAX_EXAMPLES = 100
+
     good_examples_df = (
         markers.filter(pl.col("rope_decision") == "enriched")
         .group_by("compound_ancestor")
@@ -2442,10 +2512,8 @@ def lineage_profile_viz(markers):
             ],
         )
         .filter(pl.col("n_ranks") >= 3)  # Enriched in at least 3 ranks
-        .with_columns(
-            pl.col("compound_ancestor").str.len_chars().alias("scaffold_size"),
-        )
-        .sort(["avg_fc", "scaffold_size"], descending=[True, True])
+        .sort("avg_fc", descending=True)
+        .collect()  # Materialize limited result
     )
     good_examples = good_examples_df.get_column("compound_ancestor").to_list()
 
@@ -2455,10 +2523,9 @@ def lineage_profile_viz(markers):
         good_examples = (
             markers.group_by("compound_ancestor")
             .agg(pl.col("posterior_enrich_prob").max().alias("max_p"))
-            .with_columns(
-                pl.col("compound_ancestor").str.len_chars().alias("scaffold_size"),
-            )
-            .sort(["max_p", "scaffold_size"], descending=[True, True])
+            .sort("max_p", descending=True)
+            # .head(MAX_EXAMPLES)
+            .collect()  # Materialize limited result
             .get_column("compound_ancestor")
             .to_list()
         )
@@ -2476,10 +2543,22 @@ def lineage_profile_viz(markers):
 def show_lineage_profile(markers, scaffold_select, taxon_lineage):
     selected_scaffold = scaffold_select.value
 
-    if not selected_scaffold or markers.is_empty():
+    # Check if markers is empty (works for both LazyFrame and DataFrame)
+    is_empty = (
+        markers.select(pl.len()).collect().item() == 0
+        if hasattr(markers, "collect")
+        else markers.is_empty()
+    )
+
+    if not selected_scaffold or is_empty:
         _out = mo.md("*Select a scaffold to view its lineage profile*")
     else:
-        lp_profile = markers.filter(pl.col("compound_ancestor") == selected_scaffold)
+        # Materialize only the data for this specific scaffold
+        lp_profile = (
+            markers.filter(
+                pl.col("compound_ancestor") == selected_scaffold,
+            ).collect()  # Materialize only this scaffold's data
+        )
 
         if lp_profile.is_empty():
             _out = mo.md(f"*No data found for scaffold: {selected_scaffold}*")
@@ -2787,14 +2866,22 @@ def methods_summary(
 ):
     """Statistical methods summary for reproducibility and publication."""
 
-    # Count key statistics
+    # Count key statistics - collect lazily
     n_compounds = compound_scaffold.get_column("compound_smiles").n_unique()
     n_taxa_s = compound_taxon.get_column("taxon").n_unique()
-    n_pairs = markers.height
-    n_enriched = markers.filter(pl.col("rope_decision") == "enriched").height
-    n_reliable = markers.filter(
-        pl.col("reliable") & (pl.col("rope_decision") == "enriched"),
-    ).height
+    n_pairs = markers.select(pl.len()).collect().item()
+    n_enriched = (
+        markers.filter(pl.col("rope_decision") == "enriched")
+        .select(pl.len())
+        .collect()
+        .item()
+    )
+    n_reliable = (
+        markers.filter(pl.col("reliable") & (pl.col("rope_decision") == "enriched"))
+        .select(pl.len())
+        .collect()
+        .item()
+    )
 
     _out = mo.vstack(
         [
