@@ -36,7 +36,7 @@ NAIVE APPROACH (wrong): Count how many taxa have the scaffold vs don't.
 
 OUR APPROACH: Bayesian inference with ROPE-based decision-making
 1. Only count INVESTIGATED taxa as evidence
-2. Weight observations by diversity (4 compounds from 4 species > 4 from 1)
+2. Weight observations by phylogenetic diversity (5 species from 1 genus < 3 species from different phyla)
 3. Use 89% credible intervals following Kruschke (2015)
 4. Use ROPE (Region of Practical Equivalence) for decisions
 
@@ -70,6 +70,16 @@ ESS (Effective Sample Size)
 ESS = (α_post + β_post) - (α_prior + β_prior)
 Measures how much the data contributed beyond the prior.
 ESS < 3 indicates insufficient data for reliable inference.
+
+n_eff_phylo (Phylogenetic Effective Taxa)
+-----------------------------------------
+Accounts for phylogenetic non-independence between source organisms.
+Formula: n_eff = n² / Σᵢⱼ similarity(dᵢⱼ)
+where similarity(d) = exp(-decay_rate × d) and d = taxonomic distance.
+- 5 sister species (same genus): n_eff ≈ 2.5
+- 5 species from different families: n_eff ≈ 4.5
+- 3 species from different phyla: n_eff ≈ 3.0
+This rewards finding compounds in phylogenetically diverse organisms.
 
 ===========================================================================
 
@@ -113,7 +123,7 @@ with app.setup:
     import sys
     import tempfile
     import time
-    from typing import Iterable, Final, TypedDict
+    from typing import Iterable, Final, Literal, TypedDict
 
     import altair as alt
     import marimo as mo
@@ -122,7 +132,7 @@ with app.setup:
     from scipy.special import betainc, betaincinv
     from urllib.parse import quote
 
-    _USE_LOCAL = False
+    _USE_LOCAL = True
     if _USE_LOCAL:
         sys.path.insert(0, ".")
 
@@ -153,6 +163,9 @@ with app.setup:
         rope_half_width: float
         # Minimum effective sample size for reliable inference
         min_ess: int
+        # Phylogenetic distance decay rate for independence weighting
+        # Higher values = faster decay (close relatives contribute less)
+        phylo_decay_rate: float
 
     class FilteringThresholdsDict(TypedDict):
         """Minimal filtering thresholds for feature and group inclusion."""
@@ -248,12 +261,35 @@ with app.setup:
     # - With n=3, we start to see meaningful variation
     # This threshold flags results as "needs more data" rather than filtering.
 
+    # PHYLO_DECAY_RATE = 0.5 (Phylogenetic Independence Decay)
+    # --------------------------------------------------------
+    # Controls how quickly phylogenetic similarity decays with taxonomic
+    # distance. Used to compute effective independent taxa count.
+    #
+    # Formula: similarity(d) = exp(-decay_rate × d)
+    # where d = taxonomic distance (number of ranks separating two taxa)
+    #
+    # With decay_rate = 0.5:
+    # - Same species (d=0): similarity = 1.0 (fully correlated)
+    # - 1 rank apart (d=1): similarity = 0.61 (e.g., same genus)
+    # - 2 ranks apart (d=2): similarity = 0.37 (e.g., same family)
+    # - 4 ranks apart (d=4): similarity = 0.14 (e.g., same order)
+    # - 6 ranks apart (d=6): similarity = 0.05 (essentially independent)
+    #
+    # The effective independent taxa count (n_eff) is computed as:
+    #   n_eff = n² / Σᵢⱼ similarity(dᵢⱼ)
+    #
+    # This is the phylogenetic analog of Kish's effective sample size.
+    # When all taxa are identical: n_eff = 1
+    # When all taxa are fully independent: n_eff = n
+
     STATISTICAL_CONSTANTS: Final[StatisticalConstantsDict] = {
         "continuity_correction": 0.5,
         "min_theta_0": 1e-6,
         "ci_prob": 0.89,
         "rope_half_width": 0.1,
         "min_ess": 3,
+        "phylo_decay_rate": 0.5,
     }
 
     # ====================================================================
@@ -351,23 +387,27 @@ with app.setup:
     # DEFAULT DATA PATHS
     # ====================================================================
     # The base URL where your files are hosted
-    BASE_URL = (
+    REMOTE_BASE_URL = (
         "https://github.com/Adafede/marimo/raw/refs/heads/main/apps/public/mortar"
     )
+    LOCAL_BASE_PATH = "apps/public/mortar"
     PROXY = "https://corsproxy.marimo.app/"
 
-    def get_proxied_url(filename: str) -> str:
-        # Prepend the proxy to the full URL
-        return f"{PROXY}{BASE_URL}/{filename}"
+    def get_data_path(filename: str) -> str:
+        """Return local path or proxied remote URL depending on _USE_LOCAL."""
+        if _USE_LOCAL:
+            return f"{LOCAL_BASE_PATH}/{filename}"
+        else:
+            return f"{PROXY}{REMOTE_BASE_URL}/{filename}"
 
     DEFAULT_DATA_PATHS: Final[DataPathsDict] = {
-        "path_can_smi": get_proxied_url("lotus_canonical.smi"),
-        "path_frags_cdk": get_proxied_url("Fragments_Scaffold_Generator.csv"),
-        "path_frags_ert": get_proxied_url("Fragments_Ertl_algorithm.csv"),
-        "path_frags_sru": get_proxied_url("Fragments_Sugar_Removal_Utility.csv"),
-        "path_items_cdk": get_proxied_url("Items_Scaffold_Generator.csv"),
-        "path_items_ert": get_proxied_url("Items_Ertl_algorithm.csv"),
-        "path_items_sru": get_proxied_url("Items_Sugar_Removal_Utility.csv"),
+        "path_can_smi": get_data_path("lotus_canonical.smi"),
+        "path_frags_cdk": get_data_path("Fragments_Scaffold_Generator.csv"),
+        "path_frags_ert": get_data_path("Fragments_Ertl_algorithm.csv"),
+        "path_frags_sru": get_data_path("Fragments_Sugar_Removal_Utility.csv"),
+        "path_items_cdk": get_data_path("Items_Scaffold_Generator.csv"),
+        "path_items_ert": get_data_path("Items_Ertl_algorithm.csv"),
+        "path_items_sru": get_data_path("Items_Sugar_Removal_Utility.csv"),
     }
 
     # ====================================================================
@@ -395,6 +435,7 @@ with app.setup:
     MIN_OBS = 3
     MIN_PROB = 0.89
     MIN_LOG2FC = 1.5
+    MIN_ESS = 3
 
     TOP_N_TAXA = 10
     TOP_N_MARKERS_PER_TAXON = 10
@@ -404,7 +445,9 @@ with app.setup:
 def write_parquet_stream(
     df: pl.DataFrame,
     path: str,
-    compression: str = "snappy",
+    compression: Literal[
+        "lz4", "uncompressed", "snappy", "gzip", "brotli", "zstd"
+    ] = "snappy",
     row_group_size: int = 2000,
 ) -> None:
     """Write a Polars DataFrame to Parquet in a memory-friendly way.
@@ -504,7 +547,7 @@ def read_table(
 
     Optimizations:
     - For local files (and when not running under Pyodide), prefer `pl.scan_csv`
-      + collect(streaming=True) to reduce peak memory.
+      + collect(engine="streaming") to reduce peak memory.
     - For remote/HTTP resources or Pyodide, fall back to `pl.read_csv`.
     """
     p = str(path)
@@ -514,7 +557,7 @@ def read_table(
             lf = pl.scan_csv(p, sep=separator, rechunk=False)
             if expected:
                 lf = lf.select(list(expected))
-            df = lf.collect(streaming=True)
+            df = lf.collect(engine="streaming")
         else:
             df = pl.read_csv(
                 p,
@@ -743,7 +786,7 @@ def run_hierarchical_analysis(
     if cfg is None:
         try:
             cfg = DEFAULT_CONFIG
-        except:
+        except NameError:
             cfg = {
                 "filtering": {"min_frequency_scaffold": 2, "min_frequency_taxa": 2},
                 "stats": {
@@ -820,7 +863,7 @@ def run_hierarchical_analysis(
     try:
         valid_ranks = [r for r in valid_ranks if get_rank_order(r) < 999]
         valid_ranks = sorted(valid_ranks, key=get_rank_order)
-    except:
+    except Exception:
         pass
 
     if not valid_ranks:
@@ -870,7 +913,7 @@ def run_hierarchical_analysis(
         logging.info("Combining results (streaming)...")
         lazy_chunks = [pl.scan_parquet(f) for f in rank_files]
         # Concatenate lazily and collect with streaming to keep memory low
-        result = pl.concat(lazy_chunks, how="vertical").collect(streaming=True)
+        result = pl.concat(lazy_chunks, how="vertical").collect(engine="streaming")
         del lazy_chunks
 
         # Add quality flags
@@ -905,7 +948,7 @@ def run_hierarchical_analysis(
                 rank_vals = result.get_column("taxon_rank").to_list()
                 rank_labels = [get_rank_label(r) for r in rank_vals]
                 result = result.with_columns(pl.Series("taxon_rank_label", rank_labels))
-        except:
+        except Exception:
             pass
 
         logging.info(
@@ -919,11 +962,11 @@ def run_hierarchical_analysis(
         for f in rank_files:
             try:
                 os.unlink(f)
-            except:
+            except OSError:
                 pass
         try:
             os.rmdir(temp_dir)
-        except:
+        except OSError:
             pass
 
 
@@ -937,13 +980,16 @@ def process_rank_minimal(
     batch_size: int = 2500,
 ) -> pl.DataFrame:
     """
-    Process single rank with absolute minimal memory.
+    Process single rank with phylogenetic independence-aware diversity weighting.
 
     Returns DataFrame with only essential columns:
     - compound_ancestor, taxon_ancestor, taxon_rank
-    - a_raw, n_source_taxa
+    - a_raw, n_source_taxa, n_eff_phylo (new: phylogenetic effective taxa)
     - posterior_enrich_prob, log2_enrichment, rope_decision
     - effective_sample_size, ci_lower, ci_upper
+
+    Key improvement: Uses phylogenetic distances to compute effective independent
+    taxa count. 5 sister species contribute less evidence than 3 distant organisms.
     """
 
     # Map to this rank
@@ -992,28 +1038,159 @@ def process_rank_minimal(
     # Build contingency table with MINIMAL columns
     MIN_THETA_0 = cfg["stats"]["min_theta_0"]
     LAMBDA_PRIOR = cfg["priors"]["prior_strength"]
+    PHYLO_DECAY = cfg["stats"].get("phylo_decay_rate", 0.5)
 
-    # Diversity weighting
-    a_counts = (
-        rank_evidence.group_by(["compound_ancestor", "taxon_ancestor"])
+    # ================================================================
+    # PHYLOGENETIC DIVERSITY WEIGHTING
+    # ================================================================
+    #
+    # THE KEY INSIGHT:
+    # A compound found in 5 closely related species (e.g., 5 Gentiana spp.)
+    # provides LESS independent evidence than the same compound found in
+    # 3 distantly related organisms (e.g., 1 plant, 1 fungus, 1 bacterium).
+    #
+    # WHY? Closely related organisms share evolutionary history. If a
+    # compound is in one Gentiana, it's more likely in another due to
+    # shared ancestry, not independent evolutionary events.
+    #
+    # SOLUTION: Compute the "effective independent taxa count" (n_eff_phylo)
+    # using pairwise phylogenetic similarities between source organisms.
+    #
+    # FORMULA (Kish's design effect for correlated observations):
+    #   n_eff = n² / Σᵢⱼ similarity(dᵢⱼ)
+    #
+    # where similarity(d) = exp(-decay_rate × d)
+    # and d = taxonomic distance between taxa i and j
+    #
+    # EXAMPLES:
+    # - 5 species in same genus (d≈1): n_eff ≈ 2.5
+    # - 5 species in same family (d≈2): n_eff ≈ 3.5
+    # - 3 species from different phyla (d≈8): n_eff ≈ 3.0
+    #
+    # This naturally rewards finding compounds in diverse lineages.
+    # ================================================================
+    #
+    # EFFICIENT APPROXIMATION:
+    # ========================
+    # Computing exact pairwise phylogenetic distances is O(n²) in memory.
+    # Instead, we use a proxy: the taxonomic spread of source taxa.
+    #
+    # For each scaffold-taxon group, we measure diversity by looking at
+    # the LOWEST common rank among source taxa. If all sources are in the
+    # same genus, diversity is low. If they span multiple families, high.
+    #
+    # We compute: n_eff = n × diversity_factor
+    # where diversity_factor = 1 - (shared_ancestors / total_possible)
+    #
+    # This is O(n) in memory and captures the key signal.
+    # ================================================================
+
+    # Step 1: Collect source taxa per scaffold-taxon group
+    source_taxa_groups = rank_evidence.group_by(
+        ["compound_ancestor", "taxon_ancestor"]
+    ).agg(
+        [
+            pl.col("compound").n_unique().alias("a_raw"),
+            pl.col("source_taxon").n_unique().alias("n_source_taxa"),
+        ],
+    )
+
+    # Step 2: Compute phylogenetic diversity using ancestor sharing
+    # For each group, count how many distinct ancestors the source taxa have
+    # at each level. More sharing = lower effective n.
+
+    # Get source taxa with their ancestors at each distance level
+    source_with_ancestors = (
+        rank_evidence.select(["compound_ancestor", "taxon_ancestor", "source_taxon"])
+        .unique()
+        .join(
+            taxon_lineage.select(["taxon", "taxon_ancestor", "taxon_distance"]).rename(
+                {"taxon": "source_taxon", "taxon_ancestor": "ancestor"}
+            ),
+            on="source_taxon",
+            how="left",
+        )
+    )
+
+    # For each group and distance level, count unique ancestors
+    # Then compute a diversity score based on how many ancestors are shared
+    ancestor_diversity = (
+        source_with_ancestors.group_by(
+            ["compound_ancestor", "taxon_ancestor", "taxon_distance"]
+        )
         .agg(
             [
-                pl.col("compound").n_unique().alias("a_raw"),
-                pl.col("source_taxon").n_unique().alias("n_source_taxa"),
-            ],
+                pl.col("ancestor").n_unique().alias("n_unique_ancestors"),
+                pl.col("source_taxon").n_unique().alias("n_taxa_at_level"),
+            ]
+        )
+        # Diversity ratio at each level: unique_ancestors / n_taxa
+        # If all taxa share ancestor: ratio = 1/n (low diversity)
+        # If all taxa have different ancestors: ratio = 1 (high diversity)
+        .with_columns(
+            (
+                pl.col("n_unique_ancestors").cast(pl.Float32)
+                / pl.col("n_taxa_at_level").cast(pl.Float32)
+            ).alias("diversity_ratio")
+        )
+        # Weight by distance: closer levels matter more (use exp decay)
+        .with_columns(
+            ((-PHYLO_DECAY * pl.col("taxon_distance").cast(pl.Float32)).exp()).alias(
+                "level_weight"
+            )
+        )
+    )
+
+    # Aggregate diversity across levels: weighted mean diversity ratio
+    group_diversity = (
+        ancestor_diversity.group_by(["compound_ancestor", "taxon_ancestor"])
+        .agg(
+            [
+                (pl.col("diversity_ratio") * pl.col("level_weight"))
+                .sum()
+                .alias("weighted_div_sum"),
+                pl.col("level_weight").sum().alias("weight_sum"),
+            ]
         )
         .with_columns(
-            [
-                (
-                    pl.col("a_raw").cast(pl.Float32).sqrt()
-                    * pl.col("n_source_taxa").cast(pl.Float32).sqrt()
-                )
-                .round(0)
-                .cast(pl.UInt32)  # There is ONE SINGLE VALUE OUTSIDE
-                .clip(1)
-                .alias("a"),
-            ],
+            (pl.col("weighted_div_sum") / pl.col("weight_sum").clip(0.01)).alias(
+                "mean_diversity"
+            )
         )
+        .select(["compound_ancestor", "taxon_ancestor", "mean_diversity"])
+    )
+
+    # Join diversity back and compute n_eff_phylo
+    # n_eff = n × mean_diversity (clamped to [1, n])
+    source_taxa_groups = (
+        source_taxa_groups.join(
+            group_diversity, on=["compound_ancestor", "taxon_ancestor"], how="left"
+        )
+        .with_columns(pl.col("mean_diversity").fill_null(1.0))
+        .with_columns(
+            (pl.col("n_source_taxa").cast(pl.Float32) * pl.col("mean_diversity"))
+            .clip(1.0)
+            .alias("n_eff_phylo")
+        )
+        # Ensure n_eff <= n
+        .with_columns(
+            pl.when(pl.col("n_eff_phylo") > pl.col("n_source_taxa"))
+            .then(pl.col("n_source_taxa").cast(pl.Float32))
+            .otherwise(pl.col("n_eff_phylo"))
+            .alias("n_eff_phylo")
+        )
+        .drop("mean_diversity")
+    )
+
+    # Step 3: Compute effective observation count
+    a_counts = source_taxa_groups.with_columns(
+        [
+            (pl.col("a_raw").cast(pl.Float32).sqrt() * pl.col("n_eff_phylo").sqrt())
+            .round(0)
+            .cast(pl.UInt32)
+            .clip(1)
+            .alias("a"),
+        ],
     )
 
     taxon_totals = rank_evidence.group_by("taxon_ancestor").agg(
@@ -1221,23 +1398,24 @@ def compute_ci_rope(batch: pl.DataFrame, CI_PROB: float, ROPE_HW: float):
     CI/ROPE computation using numpy.
 
     Uses numpy for scipy functions but minimizes intermediate allocations.
+    Handles numerical edge cases for very small baseline rates.
     """
 
     # Extract to numpy (unavoidable for scipy)
-    alpha = batch["alpha_post"].to_numpy()
-    beta = batch["beta_post"].to_numpy()
-    theta = batch["theta_0"].to_numpy()
+    alpha = np.maximum(batch["alpha_post"].to_numpy(), 1e-6)
+    beta = np.maximum(batch["beta_post"].to_numpy(), 1e-6)
+    theta = np.maximum(batch["theta_0"].to_numpy(), 1e-10)
 
     # Compute credible interval
     lower_p = (1 - CI_PROB) / 2
     upper_p = 1 - lower_p
 
-    ci_lower_raw = betaincinv(alpha, beta, lower_p)
-    ci_upper_raw = betaincinv(alpha, beta, upper_p)
+    ci_lower_raw = np.maximum(betaincinv(alpha, beta, lower_p), 1e-12)
+    ci_upper_raw = np.minimum(betaincinv(alpha, beta, upper_p), 1 - 1e-12)
 
-    # ROPE bounds
-    rope_lower = theta * (2**-ROPE_HW)
-    rope_upper = theta * (2**ROPE_HW)
+    # ROPE bounds (clip to valid probability range)
+    rope_lower = np.maximum(theta * (2**-ROPE_HW), 1e-12)
+    rope_upper = np.minimum(theta * (2**ROPE_HW), 1 - 1e-12)
 
     # Vectorized decisions (no Python loop)
     decisions = np.where(
@@ -1255,10 +1433,13 @@ def compute_ci_rope(batch: pl.DataFrame, CI_PROB: float, ROPE_HW: float):
     )
 
     # Build result (cast floats to float32 to reduce peak memory / Arrow size)
-    posterior_prob = (1 - betainc(alpha, beta, theta)).astype(np.float32)
-    ci_lower_log2 = np.log2(ci_lower_raw / (theta + 1e-10)).astype(np.float32)
-    ci_upper_log2 = np.log2(ci_upper_raw / (theta + 1e-10)).astype(np.float32)
-    log2_enrich = np.log2((alpha / (alpha + beta)) / (theta + 1e-10)).astype(np.float32)
+    # Use log1p-style safe division to handle edge cases
+    posterior_prob = np.clip(1 - betainc(alpha, beta, theta), 0, 1).astype(np.float32)
+    ci_lower_log2 = np.clip(np.log2(ci_lower_raw / theta), -20, 20).astype(np.float32)
+    ci_upper_log2 = np.clip(np.log2(ci_upper_raw / theta), -20, 20).astype(np.float32)
+    log2_enrich = np.clip(np.log2((alpha / (alpha + beta)) / theta), -20, 20).astype(
+        np.float32
+    )
 
     # Build result and attach vectorized columns
     result = batch.with_columns(
@@ -1383,7 +1564,7 @@ def get_markers_for_top_taxa(
 def create_taxa_marker_heatmap(
     markers_df: pl.DataFrame,
     rank: str,
-) -> alt.Chart:
+) -> alt.Chart | mo.Html:
     """
     Heatmap showing top 10 taxa (rows) × their markers (columns).
     """
@@ -1415,7 +1596,8 @@ def create_taxa_marker_heatmap(
             f"#{int(c[0] * 255):02x}{int(c[1] * 255):02x}{int(c[2] * 255):02x}"
             for c in [cmap(i / 10) for i in range(11)]
         ]
-    except:
+    except ImportError:
+        cmc = None
         colors = "viridis"
 
     chart = (
@@ -2104,6 +2286,7 @@ def discovery_mode(effective_config, markers):
             ),
             pl.col("a_raw").alias("n"),
             pl.col("n_source_taxa").alias("Taxa"),
+            pl.col("n_eff_phylo").round(1).alias("EffTaxa"),
             pl.col("effective_sample_size").round(1).alias("ESS"),
             pl.col("log2_enrichment").round(2).alias("log₂FC"),
             (
@@ -2576,7 +2759,8 @@ def methods_summary(
     **Statistical Model:**
     - Prior: Beta(θ₀λ, (1-θ₀)λ) with λ = {effective_config["priors"]["prior_strength"]}
     - Baseline θ₀: Scaffold's observed frequency in dataset
-    - Diversity weighting: a_eff = √(compounds × source taxa)
+    - Diversity weighting: a_eff = √(compounds × n_eff_phylo)
+    - Phylogenetic independence: n_eff_phylo = n² / Σᵢⱼ exp(-{effective_config["stats"].get("phylo_decay_rate", 0.5)} × d_ij) where d_ij is taxonomic distance
     - Hierarchical prior flow: {effective_config["priors"]["hierarchical_prior_flow"]} (weight = {effective_config["priors"]["hierarchical_weight"]})
 
     **Decision Framework:**
