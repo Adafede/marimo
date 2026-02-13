@@ -114,10 +114,11 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import marimo
 
-__generated_with = "0.19.6"
+__generated_with = "0.19.10"
 app = marimo.App(width="medium", app_title="Bayesian Chemotaxonomic Markers")
 
 with app.setup:
+    import gc
     import logging
     import os
     import sys
@@ -132,7 +133,7 @@ with app.setup:
     from scipy.special import betainc, betaincinv
     from urllib.parse import quote
 
-    _USE_LOCAL = True
+    _USE_LOCAL = False
     if _USE_LOCAL:
         sys.path.insert(0, ".")
 
@@ -446,7 +447,12 @@ def write_parquet_stream(
     df: pl.DataFrame,
     path: str,
     compression: Literal[
-        "lz4", "uncompressed", "snappy", "gzip", "brotli", "zstd"
+        "lz4",
+        "uncompressed",
+        "snappy",
+        "gzip",
+        "brotli",
+        "zstd",
     ] = "snappy",
     row_group_size: int = 2000,
 ) -> None:
@@ -807,8 +813,8 @@ def run_hierarchical_analysis(
     logging.info("BAYESIAN ANALYSIS")
     logging.info("=" * 55)
 
-    # WASM-specific settings
-    BATCH_SIZE = 2500  # 4x smaller than standard
+    # Environment-specific settings - smaller batches for WASM
+    BATCH_SIZE = 1000 if IS_PYODIDE else 5000
 
     # Build base evidence with MINIMAL columns
     base_evidence = (
@@ -905,6 +911,7 @@ def run_hierarchical_analysis(
 
             # Free memory ASAP
             del rank_data
+            gc.collect()
 
         if not rank_files:
             return pl.DataFrame()
@@ -917,7 +924,6 @@ def run_hierarchical_analysis(
         del lazy_chunks
 
         # Add quality flags
-        MIN_ESS = cfg["stats"]["min_ess"]
         result = result.with_columns(
             [(pl.col("effective_sample_size") >= MIN_ESS).alias("reliable")],
         )
@@ -1013,6 +1019,9 @@ def process_rank_minimal(
         .unique()
     )
 
+    # Free rank_map immediately
+    del rank_map
+
     if rank_evidence.is_empty():
         return pl.DataFrame()
 
@@ -1031,6 +1040,9 @@ def process_rank_minimal(
     ).select("taxon_ancestor")
 
     rank_evidence = rank_evidence.join(keep_taxa, on="taxon_ancestor", how="inner")
+
+    # Free intermediate filter dataframes
+    del taxon_freq, keep_taxa
 
     if rank_evidence.is_empty():
         return pl.DataFrame()
@@ -1087,11 +1099,11 @@ def process_rank_minimal(
 
     # Step 1: Collect source taxa per scaffold-taxon group
     source_taxa_groups = rank_evidence.group_by(
-        ["compound_ancestor", "taxon_ancestor"]
+        ["compound_ancestor", "taxon_ancestor"],
     ).agg(
         [
-            pl.col("compound").n_unique().alias("a_raw"),
-            pl.col("source_taxon").n_unique().alias("n_source_taxa"),
+            pl.col("compound").n_unique().cast(pl.UInt32).alias("a_raw"),
+            pl.col("source_taxon").n_unique().cast(pl.UInt16).alias("n_source_taxa"),
         ],
     )
 
@@ -1105,7 +1117,7 @@ def process_rank_minimal(
         .unique()
         .join(
             taxon_lineage.select(["taxon", "taxon_ancestor", "taxon_distance"]).rename(
-                {"taxon": "source_taxon", "taxon_ancestor": "ancestor"}
+                {"taxon": "source_taxon", "taxon_ancestor": "ancestor"},
             ),
             on="source_taxon",
             how="left",
@@ -1116,13 +1128,13 @@ def process_rank_minimal(
     # Then compute a diversity score based on how many ancestors are shared
     ancestor_diversity = (
         source_with_ancestors.group_by(
-            ["compound_ancestor", "taxon_ancestor", "taxon_distance"]
+            ["compound_ancestor", "taxon_ancestor", "taxon_distance"],
         )
         .agg(
             [
                 pl.col("ancestor").n_unique().alias("n_unique_ancestors"),
                 pl.col("source_taxon").n_unique().alias("n_taxa_at_level"),
-            ]
+            ],
         )
         # Diversity ratio at each level: unique_ancestors / n_taxa
         # If all taxa share ancestor: ratio = 1/n (low diversity)
@@ -1131,13 +1143,13 @@ def process_rank_minimal(
             (
                 pl.col("n_unique_ancestors").cast(pl.Float32)
                 / pl.col("n_taxa_at_level").cast(pl.Float32)
-            ).alias("diversity_ratio")
+            ).alias("diversity_ratio"),
         )
         # Weight by distance: closer levels matter more (use exp decay)
         .with_columns(
             ((-PHYLO_DECAY * pl.col("taxon_distance").cast(pl.Float32)).exp()).alias(
-                "level_weight"
-            )
+                "level_weight",
+            ),
         )
     )
 
@@ -1150,12 +1162,12 @@ def process_rank_minimal(
                 .sum()
                 .alias("weighted_div_sum"),
                 pl.col("level_weight").sum().alias("weight_sum"),
-            ]
+            ],
         )
         .with_columns(
             (pl.col("weighted_div_sum") / pl.col("weight_sum").clip(0.01)).alias(
-                "mean_diversity"
-            )
+                "mean_diversity",
+            ),
         )
         .select(["compound_ancestor", "taxon_ancestor", "mean_diversity"])
     )
@@ -1164,23 +1176,29 @@ def process_rank_minimal(
     # n_eff = n × mean_diversity (clamped to [1, n])
     source_taxa_groups = (
         source_taxa_groups.join(
-            group_diversity, on=["compound_ancestor", "taxon_ancestor"], how="left"
+            group_diversity,
+            on=["compound_ancestor", "taxon_ancestor"],
+            how="left",
         )
         .with_columns(pl.col("mean_diversity").fill_null(1.0))
         .with_columns(
             (pl.col("n_source_taxa").cast(pl.Float32) * pl.col("mean_diversity"))
             .clip(1.0)
-            .alias("n_eff_phylo")
+            .alias("n_eff_phylo"),
         )
         # Ensure n_eff <= n
         .with_columns(
             pl.when(pl.col("n_eff_phylo") > pl.col("n_source_taxa"))
             .then(pl.col("n_source_taxa").cast(pl.Float32))
             .otherwise(pl.col("n_eff_phylo"))
-            .alias("n_eff_phylo")
+            .alias("n_eff_phylo"),
         )
         .drop("mean_diversity")
     )
+
+    # Free intermediate dataframes
+    del source_with_ancestors, ancestor_diversity, group_diversity
+    gc.collect()
 
     # Step 3: Compute effective observation count
     a_counts = source_taxa_groups.with_columns(
@@ -1193,9 +1211,16 @@ def process_rank_minimal(
         ],
     )
 
+    # Free source_taxa_groups
+    del source_taxa_groups
+
     taxon_totals = rank_evidence.group_by("taxon_ancestor").agg(
         pl.col("compound").n_unique().alias("taxon_total"),
     )
+
+    # Free rank_evidence after extracting totals
+    del rank_evidence
+    gc.collect()
 
     # Build minimal rank_data (keep only what's needed)
     rank_data = (
@@ -1231,6 +1256,9 @@ def process_rank_minimal(
         )
         .drop(["scaffold_total", "taxon_total"])
     )
+
+    # Free remaining intermediate dataframes
+    del a_counts, scaffold_totals, taxon_totals
 
     # ================================================================
     # BASELINE θ₀: First Principles
@@ -1385,9 +1413,13 @@ def process_rank_minimal(
         batched_results.append(batch_result)
 
         del batch
+        # Free memory periodically in WASM
+        if start_idx % (batch_size * 4) == 0:
+            gc.collect()
 
     result = pl.concat(batched_results, how="vertical")
     del batched_results
+    gc.collect()
 
     return result
 
@@ -1438,7 +1470,7 @@ def compute_ci_rope(batch: pl.DataFrame, CI_PROB: float, ROPE_HW: float):
     ci_lower_log2 = np.clip(np.log2(ci_lower_raw / theta), -20, 20).astype(np.float32)
     ci_upper_log2 = np.clip(np.log2(ci_upper_raw / theta), -20, 20).astype(np.float32)
     log2_enrich = np.clip(np.log2((alpha / (alpha + beta)) / theta), -20, 20).astype(
-        np.float32
+        np.float32,
     )
 
     # Build result and attach vectorized columns
@@ -1452,9 +1484,10 @@ def compute_ci_rope(batch: pl.DataFrame, CI_PROB: float, ROPE_HW: float):
         ],
     )
 
-    # Clean up
+    # Clean up all numpy arrays
     del alpha, beta, theta, ci_lower_raw, ci_upper_raw
     del rope_lower, rope_upper, decisions
+    del posterior_prob, ci_lower_log2, ci_upper_log2, log2_enrich
 
     return result
 
@@ -1923,6 +1956,10 @@ def load_data_wd(effective_config):
         logging.info(f"✓ Taxon ranks: {taxon_rank.height:,}")
         logging.info(f"✓ Compound-taxon annotations: {compound_taxon.height:,}")
         logging.info("=" * 55)
+
+        # Free intermediate data
+        del _to_keep, focus_taxa
+        gc.collect()
     return compound_smiles, compound_taxon, lineage, taxon_name, taxon_rank
 
 
@@ -1987,6 +2024,17 @@ def load_data_mortar(compound_smiles, effective_config):
         how="inner",
     )
     logging.info(f"✓ Total compound-scaffold pairs: {compound_scaffold.height:,}")
+
+    # Free intermediate data
+    del (
+        compound_can_smiles,
+        compound_mappings,
+        frag_tables,
+        scaffold_fragments,
+        scaffolds_base,
+    )
+    gc.collect()
+
     _out = mo.md(
         """
         For now, scaffolds and fragments come from [MORTAR](https://github.com/FelixBaensch/MORTAR) (which requires a local installation and local files), but the long-term goal is to pull everything directly from Wikidata.
@@ -2245,11 +2293,16 @@ def run_analysis(
 
 
 @app.cell
+def _(markers):
+    markers
+    return
+
+
+@app.cell
 def discovery_mode(effective_config, markers):
     # Sort by: ROPE decision (enriched first), then ESS desc
     # Custom sort: enriched > undecided > equivalent > depleted
     CI_PROB = effective_config["stats"]["ci_prob"]
-    MIN_ESS = effective_config["stats"]["min_ess"]
     dm_top = (
         markers.with_columns(
             [
@@ -2321,7 +2374,7 @@ def discovery_mode(effective_config, markers):
         ],
     )
     _out
-    return (MIN_ESS,)
+    return
 
 
 @app.cell
@@ -2648,9 +2701,7 @@ def show_lineage_profile(markers, scaffold_select, taxon_lineage):
 
 
 @app.cell
-def markers_kin(
-    markers,
-):
+def markers_kin(markers):
     kingdom_top_taxa = discover_top_taxa(markers, "Kingdom")
     kingdom_markers = get_markers_for_top_taxa(markers, "Kingdom", kingdom_top_taxa)
     kingdom_summary = create_taxa_summary_table(kingdom_markers, "Kingdom")
@@ -2676,9 +2727,7 @@ def markers_kin(
 
 
 @app.cell
-def markers_fam(
-    markers,
-):
+def markers_fam(markers):
     family_top_taxa = discover_top_taxa(markers, "Family")
     family_markers = get_markers_for_top_taxa(markers, "Family", family_top_taxa)
     family_summary = create_taxa_summary_table(family_markers, "Family")
@@ -2704,9 +2753,7 @@ def markers_fam(
 
 
 @app.cell
-def markers_gen(
-    markers,
-):
+def markers_gen(markers):
     genus_top_taxa = discover_top_taxa(markers, "Genus")
     genus_markers = get_markers_for_top_taxa(markers, "Genus", genus_top_taxa)
     genus_summary = create_taxa_summary_table(genus_markers, "Genus")
