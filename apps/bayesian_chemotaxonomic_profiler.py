@@ -1589,7 +1589,7 @@ def get_markers_for_top_taxa(
         .filter(
             pl.col("taxon_ancestor")
             .cast(pl.UInt32, strict=False)
-            .is_in(top_taxa_series)
+            .is_in(top_taxa_series),
         )
         .filter(pl.col("posterior_enrich_prob") >= min_prob)
         .filter(pl.col("effective_sample_size") >= min_ess)
