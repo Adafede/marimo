@@ -1,12 +1,8 @@
-name: Deploy to Codeberg Pages
-
+---
 on:
   push:
     branches: ['main']
   workflow_dispatch:
-
-env:
-  UV_SYSTEM_PYTHON: 1
 
 jobs:
   publish:
