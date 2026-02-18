@@ -16,8 +16,11 @@ jobs:
         run: |
           uv run .github/scripts/build.py
 
-      - name: Show site contents
-        run: ls -lh _site/
+      # This is only done on Codeberg but we still need the GitHub hosted files (128MB limit)
+      - name: Cleanup
+        run: |
+          rm -f _site/apps/public/mortar/*.csv
+          rm -f _site/apps/public/mortar/*.smi
 
       - uses: actions/git-pages@v2
         with:
