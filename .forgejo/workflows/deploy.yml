@@ -21,7 +21,7 @@ jobs:
           uv run .github/scripts/build.py
 
       - uses: actions/git-pages@v2
-          with:
-            site: https://adafede.codeberg.page/marimo
-            token: ${{ forge.token }}
-            source: _site/
+        with:
+          site: https://adafede.codeberg.page/marimo
+          token: ${{ forge.token }}
+          source: _site/
