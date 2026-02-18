@@ -16,6 +16,9 @@ jobs:
         run: |
           uv run .github/scripts/build.py
 
+      - name: Show site contents
+        run: ls -lh _site/
+
       - uses: actions/git-pages@v2
         with:
           site: https://adafede.codeberg.page/marimo
