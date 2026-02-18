@@ -8,7 +8,7 @@ jobs:
   publish:
     runs-on: codeberg-small
     container:
-      image: ghcr.io/astral-sh/uv:latest
+      image: ghcr.io/astral-sh/uv:trixie
     steps:
       - uses: actions/checkout@v6
 
