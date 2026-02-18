@@ -1,0 +1,27 @@
+name: Deploy to Codeberg Pages
+
+on:
+  push:
+    branches: ['main']
+  workflow_dispatch:
+
+env:
+  UV_SYSTEM_PYTHON: 1
+
+jobs:
+  publish:
+    runs-on: codeberg-small
+    container:
+      image: ghcr.io/astral-sh/uv:latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Buil
+        run: |
+          uv run .github/scripts/build.py
+
+      - uses: actions/git-pages@v2
+          with:
+            site: https://adafede.codeberg.page/marimo
+            token: ${{ forge.token }}
+            source: _site/
