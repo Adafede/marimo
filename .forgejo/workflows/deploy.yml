@@ -16,7 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Buil
+      - name: Build
         run: |
           uv run .github/scripts/build.py
 
