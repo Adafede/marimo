@@ -31,7 +31,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import marimo
 
-__generated_with = "0.19.6"
+__generated_with = "0.20.2"
 app = marimo.App(width="full", app_title="LOTUS Wikidata Explorer")
 
 with app.setup:
@@ -2166,7 +2166,7 @@ def display_results(
         _out = mo.vstack(result_parts)
 
     _out
-    return
+    return (metadata,)
 
 
 @app.cell
