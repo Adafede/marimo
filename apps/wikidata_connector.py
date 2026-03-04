@@ -200,24 +200,30 @@ with app.setup:
             values = " ".join(f"wd:{q}" for q in frontier)
 
             # Query 1: get all outgoing edges
-            rows_out = sparql(f"""
+            rows_out = sparql(
+                f"""
                 SELECT ?src ?p ?tgt WHERE {{
                   VALUES ?src {{ {values} }}
                   ?src ?p ?tgt .
                   FILTER(STRSTARTS(STR(?p), "{WDT_PREFIX}"))
                   FILTER(STRSTARTS(STR(?tgt), "{WD_Q_PREFIX}"))
                 }}
-            """, timeout=90)
+            """,
+                timeout=90,
+            )
 
             # Query 2: get all incoming edges
-            rows_in = sparql(f"""
+            rows_in = sparql(
+                f"""
                 SELECT ?src ?p ?tgt WHERE {{
                   VALUES ?tgt {{ {values} }}
                   ?src ?p ?tgt .
                   FILTER(STRSTARTS(STR(?p), "{WDT_PREFIX}"))
                   FILTER(STRSTARTS(STR(?src), "{WD_Q_PREFIX}"))
                 }}
-            """, timeout=90)
+            """,
+                timeout=90,
+            )
 
             new_frontier: set[str] = set()
 
@@ -266,7 +272,7 @@ with app.setup:
         path_graph = nx.Graph()
 
         for i, t1 in enumerate(terminal_list):
-            for t2 in terminal_list[i + 1:]:
+            for t2 in terminal_list[i + 1 :]:
                 try:
                     path = nx.shortest_path(edge_graph, t1, t2)
                     path_graph.add_edge(t1, t2, weight=len(path) - 1, path=path)
