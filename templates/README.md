@@ -1,6 +1,6 @@
 ---
 title: Readme
-marimo-version: 0.20.2
+marimo-version: 0.20.4
 ---
 
 # Template Documentation

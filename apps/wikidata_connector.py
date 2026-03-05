@@ -311,7 +311,7 @@ with app.setup:
         # Batch fetch all labels at once
         node_labels = fetch_labels_batch(list(G.nodes()))
         prop_ids = list(
-            {d.get("prop", "") for _, _, d in G.edges(data=True) if d.get("prop")}
+            {d.get("prop", "") for _, _, d in G.edges(data=True) if d.get("prop")},
         )
         edge_label_map = fetch_prop_labels_batch(prop_ids)
 
@@ -326,7 +326,7 @@ with app.setup:
                     "popupHtml": f"<b>{lbl}</b><br/><span style='color:#54595d;font-size:11px'>{node}</span><br/><a href='https://www.wikidata.org/wiki/{node}' target='_blank' style='color:#006699'>Open in Wikidata ↗</a>",
                     "group": "terminal" if is_terminal else "connector",
                     "shape": "ellipse" if is_terminal else "box",
-                }
+                },
             )
 
         vis_edges = []
@@ -340,7 +340,7 @@ with app.setup:
                     "to": tgt,
                     "label": plabel,
                     "popupHtml": f"<b>{plabel}</b><br/><span style='color:#54595d;font-size:11px'>{pid}</span><br/><a href='https://www.wikidata.org/wiki/{pid}' target='_blank' style='color:#006699'>Open in Wikidata ↗</a>",
-                }
+                },
             )
 
         nodes_json = json.dumps(vis_nodes, ensure_ascii=False)
