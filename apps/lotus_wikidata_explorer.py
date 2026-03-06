@@ -1811,6 +1811,32 @@ def ui_search_inputs():
 
 
 @app.cell
+def ketcher_helper():
+    mo.accordion(
+        {
+            "✏️ Ketcher Structure Editor: draw or look up a SMILES": mo.vstack(
+                [
+                    mo.Html("""
+                <iframe
+                  src="public/standalone/index.html"
+                  style="width:100%; height:800px; border:1px solid #ccc; border-radius:6px;"
+                ></iframe>
+            """),
+                    mo.callout(
+                        mo.md(
+                            "**Copy SMILES** - *Edit → Copy as Daylight SMILES* (`Ctrl+Shift+S`), then paste into a cell",
+                        ),
+                        kind="info",
+                    ),
+                ],
+                gap=1,
+            ),
+        },
+    )
+    return
+
+
+@app.cell
 def ui_search_panel(
     br_state,
     c_max,
