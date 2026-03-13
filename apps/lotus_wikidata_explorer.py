@@ -594,6 +594,11 @@ with app.setup:
             threshold: float,
         ) -> str:
             if smiles:
+                # Molfile-like multiline queries are handled in substructure mode.
+                effective_search_type = search_type
+                if ("\n" in smiles or "\r" in smiles) and search_type == "similarity":
+                    effective_search_type = "substructure"
+
                 if not qid or qid == "":
                     effective_qid = None
                 elif qid == "*":
@@ -603,7 +608,7 @@ with app.setup:
 
                 return query_sachem(
                     escaped_smiles=validate_and_escape(smiles),
-                    search_type=search_type,
+                    search_type=effective_search_type,
                     threshold=threshold,
                     taxon_qid=effective_qid,
                 )
@@ -1160,7 +1165,7 @@ with app.setup:
 
             # Normalize taxon name for RDF
             if not self.taxon_input or self.taxon_input.strip() == "":
-                dataset_name = "LOTUS Data - any taxon (SMILES-only search)"
+                dataset_name = "LOTUS Data - any taxon (structure-only search)"
                 taxon_description = "any taxon"
             elif self.taxon_input == "*":
                 dataset_name = "LOTUS Data - all taxa"
@@ -1200,6 +1205,16 @@ with app.setup:
             g.add(
                 (dataset_uri, DCTERMS.provenance, Literal(f"Query hash: {query_hash}")),
             )
+            if self.filters:
+                g.add(
+                    (
+                        dataset_uri,
+                        DCTERMS.provenance,
+                        Literal(
+                            f"Search parameters: {json.dumps(self.filters, sort_keys=True)}"
+                        ),
+                    ),
+                )
             g.add((dataset_uri, DCTERMS.identifier, Literal(f"sha256:{result_hash}")))
 
         def _add_compound_triples(
@@ -1551,6 +1566,31 @@ with app.setup:
                     "provider": "IDSM",
                     "endpoint": "https://idsm.elixir-czech.cz/sparql/endpoint/",
                 }
+                structure_value = smiles_info.get("smiles") or ""
+                structure_is_multiline = (
+                    "\n" in structure_value or "\r" in structure_value
+                )
+                metadata["search_parameters"]["structure_query"] = {
+                    "param_key": "structure",
+                    "legacy_param_key": "smiles",
+                    "search_type": smiles_info.get("search_type", "substructure"),
+                    "input_format": "molfile" if structure_is_multiline else "smiles",
+                }
+                if "similarity_threshold" in smiles_info:
+                    metadata["search_parameters"]["structure_query"][
+                        "similarity_threshold"
+                    ] = smiles_info["similarity_threshold"]
+                if structure_is_multiline:
+                    metadata["search_parameters"]["structure_query"][
+                        "query_preview"
+                    ] = structure_value[:120]
+                    metadata["search_parameters"]["structure_query"]["query_length"] = (
+                        len(structure_value)
+                    )
+                else:
+                    metadata["search_parameters"]["structure_query"]["query_text"] = (
+                        structure_value
+                    )
             if filters:
                 metadata["search_parameters"]["filters"] = filters
             metadata["sparql_endpoint"] = {
@@ -1592,7 +1632,7 @@ with app.setup:
 
             if not taxon_input or taxon_input.strip() == "":
                 if smiles_info:
-                    return "any taxon (SMILES-only search)"
+                    return "any taxon (structure-only search)"
                 else:
                     return "any taxon"
             elif taxon_input == "*":
@@ -1608,7 +1648,7 @@ with app.setup:
 
             # Normalize taxon for citation
             if not taxon_input or taxon_input.strip() == "":
-                taxon_display = "any taxon (SMILES-only search)"
+                taxon_display = "any taxon (structure-only search)"
             elif taxon_input == "*":
                 taxon_display = "all taxa"
             else:
@@ -1632,13 +1672,17 @@ with app.setup:
             """Build shareable URL handling None/empty taxon."""
             params = {}
 
-            # Only add taxon if it's not empty (empty means SMILES-only)
+            # Only add taxon if it's not empty (empty means structure-only search)
             if criteria.taxon and criteria.taxon.strip() and criteria.taxon != "":
                 params["taxon"] = criteria.taxon
 
             if criteria.smiles:
-                params["smiles"] = criteria.smiles
+                params["structure"] = criteria.smiles
+                # Keep legacy key for backward compatibility when single-line.
+                if "\n" not in criteria.smiles and "\r" not in criteria.smiles:
+                    params["smiles"] = criteria.smiles
                 params["smiles_search_type"] = criteria.smiles_search_type
+                params["structure_search_type"] = criteria.smiles_search_type
                 if criteria.smiles_search_type == "similarity":
                     params["smiles_threshold"] = str(criteria.smiles_threshold)
 
@@ -1707,9 +1751,9 @@ def ui_help():
     mo.accordion(
         {
             "Help & API": mo.md("""
-    **Search:** Enter a taxon name (e.g., *Gentiana lutea*) and/or a SMILES structure.
+    **Search:** Enter a taxon name (e.g., *Gentiana lutea*) and/or a structure in SMILES or Molfile (V2000/V3000).
 
-    **URL API:** `?taxon=Salix&smiles=CC(=O)Oc1ccccc1C(=O)O`
+    **URL API:** `?taxon=Salix&structure=CC(=O)Oc1ccccc1C(=O)O`
     """),
         },
     )
@@ -1717,22 +1761,57 @@ def ui_help():
 
 
 @app.cell
-def ui_search_inputs():
+def url_api_defaults():
+    query_params = mo.query_params()
+
+    def _to_float(value: str | None, default: float) -> float:
+        if value is None or value == "":
+            return default
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    _structure_value = query_params["structure"] or query_params["smiles"] or ""
+    search_type = (
+        query_params["structure_search_type"]
+        or query_params["smiles_search_type"]
+        or "substructure"
+    )
+    if search_type not in {"substructure", "similarity"}:
+        search_type = "substructure"
+
+    url_api_defaults = {
+        "taxon": query_params["taxon"] or "Gentiana lutea",
+        "structure": _structure_value,
+        "search_type": search_type,
+        "threshold": _to_float(query_params["smiles_threshold"], 0.8),
+    }
+    return (url_api_defaults,)
+
+
+@app.cell
+def ui_search_inputs(url_api_defaults):
     taxon_input = mo.ui.text(
-        value="Gentiana lutea",
+        value=url_api_defaults["taxon"],
         label="Taxon Name or QID",
         full_width=True,
     )
-    smiles_input = mo.ui.text(value="", label="SMILES", full_width=True)
+    smiles_input = mo.ui.text_area(
+        value=url_api_defaults["structure"],
+        label="SMILES or Molfile",
+        placeholder="Paste a SMILES string or a Molfile (V2000/V3000)",
+        full_width=True,
+    )
     smiles_search_type = mo.ui.dropdown(
         options=["substructure", "similarity"],
-        value="substructure",
+        value=url_api_defaults["search_type"],
     )
     smiles_threshold = mo.ui.slider(
         start=0.05,
         stop=1.0,
         step=0.05,
-        value=0.8,
+        value=url_api_defaults["threshold"],
         label="Threshold",
     )
     mass_filter = mo.ui.checkbox(label="Mass filter", value=False)
@@ -1814,7 +1893,7 @@ def ui_search_inputs():
 def ketcher_helper():
     mo.accordion(
         {
-            "✏️ Ketcher Structure Editor: draw or look up a SMILES": mo.vstack(
+            "✏️ Ketcher Structure Editor: draw or look up a structure": mo.vstack(
                 [
                     mo.Html("""
                 <iframe
@@ -1824,7 +1903,7 @@ def ketcher_helper():
             """),
                     mo.callout(
                         mo.md(
-                            "**Copy SMILES** - *Edit → Copy as Daylight SMILES* (`Ctrl+Shift+S`), then paste into a cell",
+                            "**Copy SMILES** - *Edit → Copy as Daylight SMILES* (`Ctrl+Shift+S`), then paste into the structure box",
                         ),
                         kind="info",
                     ),
@@ -1952,7 +2031,7 @@ def execute_search(
 
         qid, taxon_warning = lotus.resolve_taxon(taxon_input.value)
         if not taxon_input.value.strip() and not smiles_input.value.strip():
-            mo.stop(True, "Need taxon or SMILES")
+            mo.stop(True, "Need taxon or structure")
         else:
             qid, taxon_warning = lotus.resolve_taxon(taxon_input.value)
 
@@ -1980,7 +2059,7 @@ def execute_search(
 
         criteria = SearchCriteria(
             taxon=taxon_input.value,
-            smiles=smiles_input.value.strip() if smiles_input.value else "",
+            smiles=smiles_input.value if smiles_input.value else "",
             smiles_search_type=smiles_search_type.value,
             smiles_threshold=smiles_threshold.value,
             mass_range=(mass_min.value, mass_max.value)
@@ -1993,7 +2072,22 @@ def execute_search(
         )
 
         with mo.status.spinner("Searching..."):
-            results, stats = lotus.search(criteria, qid)
+            try:
+                results, stats = lotus.search(criteria, qid)
+            except ValueError as exc:
+                mo.stop(True, mo.callout(mo.md(str(exc)), kind="warn"))
+            except ConnectionError as exc:
+                mo.stop(
+                    True,
+                    mo.callout(
+                        mo.md(
+                            f"Search backend error: `{str(exc)}`\n\n"
+                            "If this is a Molfile query, try rerunning once; "
+                            "the full upstream error message is shown above."
+                        ),
+                        kind="warn",
+                    ),
+                )
 
         query_hash, result_hash = lotus.compute_hashes(
             qid,
@@ -2076,11 +2170,16 @@ def display_results(
             if criteria.taxon is not None
             else ""
         )
-        display_compound = (
-            f"**SMILES:** `{criteria.smiles}` ({criteria.smiles_search_type}) \n\n"
-            if criteria.smiles
-            else "\n\n"
-        )
+        if criteria.smiles:
+            if "\n" in criteria.smiles or "\r" in criteria.smiles:
+                structure_label = "Molfile"
+                _structure_value = "multiline input"
+            else:
+                structure_label = "SMILES"
+                _structure_value = criteria.smiles
+            display_compound = f"**{structure_label}:** `{_structure_value}` ({criteria.smiles_search_type}) \n\n"
+        else:
+            display_compound = "\n\n"
         display_hashes = (
             f"**Hashes:** \n\n*Query*: `{query_hash}` - *Results*: `{result_hash}`"
         )
@@ -2326,7 +2425,10 @@ def main():
             choices=["csv", "json", "ttl"],
             default="csv",
         )
-        parser.add_argument("--smiles", help="SMILES string")
+        parser.add_argument(
+            "--smiles",
+            help="Structure query text (SMILES or Molfile V2000/V3000)",
+        )
         parser.add_argument(
             "--smiles-search-type",
             choices=["substructure", "similarity"],
@@ -2361,11 +2463,11 @@ def main():
 
             if args.taxon is None or args.taxon.strip() == "":
                 if args.smiles:
-                    # SMILES-only search
+                    # Structure-only search
                     args.taxon = ""
                     qid = "*"
                 else:
-                    print("[x] Need taxon or SMILES", file=sys.stderr)
+                    print("[x] Need taxon or structure", file=sys.stderr)
                     sys.exit(1)
             elif args.taxon == "*":
                 qid = "*"
@@ -2418,7 +2520,7 @@ def main():
 
             criteria = SearchCriteria(
                 taxon=args.taxon,
-                smiles=args.smiles or "",
+                smiles=args.smiles if args.smiles is not None else "",
                 smiles_search_type=args.smiles_search_type,
                 smiles_threshold=args.smiles_threshold,
                 mass_range=(args.mass_min or 0.0, args.mass_max or 2000.0)
