@@ -1,4 +1,4 @@
-"""Validate and escape SMILES for SPARQL."""
+"""Validate and format structure text as a SPARQL string literal."""
 
 __all__ = ["validate_and_escape"]
 
@@ -6,13 +6,40 @@ from .validate import validate
 from ..strings.escape_backslashes import escape_backslashes
 
 
+def _looks_like_molfile(text: str) -> bool:
+    """Heuristic check for Molfile V2000/V3000 blocks."""
+    upper = text.upper()
+    return "M  END" in upper and (
+        "V3000" in upper
+        or "V2000" in upper
+        or "M  V30 BEGIN CTAB" in upper
+        or "BEGIN CTAB" in upper
+    )
+
+
 def validate_and_escape(smiles: str | None) -> str | None:
-    """Validate and escape SMILES string for SPARQL. Raises ValueError if invalid."""
+    """Validate structure text and return a SPARQL-safe string literal.
+
+    Accepts one-line SMILES and multiline Molfile blocks (e.g., V3000).
+    """
     if not smiles:
         return smiles
 
-    is_valid, error_msg = validate(smiles)
-    if not is_valid:
-        raise ValueError(f"Invalid SMILES: {error_msg}")
+    normalized = smiles.replace("\r\n", "\n").replace("\r", "\n")
+    is_molfile = _looks_like_molfile(normalized)
 
-    return escape_backslashes(smiles)
+    # Keep Molfile formatting exactly as pasted (leading spaces and blank lines matter).
+    candidate = normalized if is_molfile else normalized.strip()
+    is_valid, error_msg = validate(candidate)
+    if not is_valid:
+        raise ValueError(f"Invalid structure input: {error_msg}")
+
+    escaped = escape_backslashes(candidate)
+
+    if is_molfile or "\n" in candidate:
+        # Match SACHEM examples that work with multiline query text.
+        return f"'''{escaped}'''"
+
+    escaped = escaped.replace('"', '\\"')
+
+    return f'"{escaped}"'

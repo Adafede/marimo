@@ -23,6 +23,7 @@ def execute_with_retry(
         raise ValueError("SPARQL query cannot be empty")
 
     last_error = None
+    last_http_details = None
 
     # Create clients once, reuse
     main_client = Client(endpoint=endpoint, timeout=timeout)
@@ -48,6 +49,16 @@ def execute_with_retry(
         except Exception as e:
             last_error = e
 
+            status = getattr(e, "code", None)
+            if status is not None:
+                body_preview = ""
+                if hasattr(e, "read"):
+                    try:
+                        body_preview = e.read().decode("utf-8", errors="replace")[:400]
+                    except Exception:
+                        body_preview = ""
+                last_http_details = (status, body_preview)
+
             # Don't sleep after the last attempt
             if attempt < max_retries - 1:
                 sleep_time = backoff_base * (2**attempt)
@@ -62,6 +73,12 @@ def execute_with_retry(
             f"Query timed out after {max_retries} attempts.",
         ) from last_error
     elif "http" in error_name.lower() or "urlerror" in error_name.lower():
+        if last_http_details is not None:
+            status, body_preview = last_http_details
+            detail = f"HTTP status {status}"
+            if body_preview:
+                detail = f"{detail}; response: {body_preview}"
+            raise ConnectionError(f"HTTP error: {detail[:600]}") from last_error
         raise ConnectionError(f"HTTP error: {error_msg[:200]}") from last_error
     else:
         raise RuntimeError(f"{error_name}: {last_error}") from last_error

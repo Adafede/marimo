@@ -12,26 +12,49 @@ from .patterns_compound import (
 
 
 def build_sachem_service(
-    escaped_smiles: str,
+    structure_literal: str,
     search_type: str,
     threshold: float,
 ) -> str:
     """Build the SACHEM SERVICE clause."""
+    is_multiline_literal = structure_literal.startswith(
+        "'''"
+    ) or structure_literal.startswith(
+        '"""',
+    )
+
     if search_type == "similarity":
         return f"""
     SERVICE idsm:wikidata {{
-        VALUES ?QUERY_SMILES {{ "{escaped_smiles}" }}
-        VALUES ?CUTOFF {{ "{threshold}"^^xsd:double }}
         ?c sachem:similarCompoundSearch [
-            sachem:query ?QUERY_SMILES;
-            sachem:cutoff ?CUTOFF
+            sachem:query {structure_literal};
+            sachem:cutoff "{threshold}"^^xsd:double
         ].
+    }}"""
+    elif is_multiline_literal:
+        # Query Molfiles are handled robustly via scoredSubstructureSearch + explicit options.
+        return f"""
+    SERVICE idsm:wikidata {{
+        [ sachem:compound ?c; sachem:score ?_sachem_score ]
+            sachem:scoredSubstructureSearch [
+                sachem:query {structure_literal};
+                sachem:searchMode sachem:substructureSearch;
+                sachem:chargeMode sachem:defaultChargeAsAny;
+                sachem:isotopeMode sachem:ignoreIsotopes;
+                sachem:aromaticityMode sachem:aromaticityDetectIfMissing;
+                sachem:stereoMode sachem:ignoreStereo;
+                sachem:tautomerMode sachem:ignoreTautomers;
+                sachem:radicalMode sachem:ignoreSpinMultiplicity;
+                sachem:topn "-1"^^xsd:integer;
+                sachem:internalMatchingLimit "1000000"^^xsd:integer
+            ]
+        .
     }}"""
     else:
         return f"""
     SERVICE idsm:wikidata {{
         ?c sachem:substructureSearch [
-            sachem:query "{escaped_smiles}"
+            sachem:query {structure_literal}
         ].
     }}"""
 
@@ -50,7 +73,8 @@ def query_sachem(
     SERVICE to the pre-filtered compounds. This is dramatically faster.
 
     Args:
-        escaped_smiles: SMILES string (already escaped for SPARQL)
+        escaped_smiles: Structure string already formatted as a SPARQL literal
+            (quoted, escaped, and potentially long-string for multiline input)
         search_type: Either "substructure" or "similarity"
         threshold: Tanimoto similarity threshold (0.0-1.0, for similarity search)
         taxon_qid: Optional QID to filter by taxon (e.g., "Q12345")
@@ -59,12 +83,45 @@ def query_sachem(
         Complete SPARQL query string
     """
     sachem_clause = build_sachem_service(
-        escaped_smiles=escaped_smiles,
+        structure_literal=escaped_smiles,
         search_type=search_type,
         threshold=threshold,
     )
+    is_multiline_literal = escaped_smiles.startswith(
+        "'''"
+    ) or escaped_smiles.startswith(
+        '"""',
+    )
 
-    if taxon_qid:
+    if taxon_qid and is_multiline_literal:
+        # For multiline query molfiles, keep SERVICE first; pre-binding ?c can trigger
+        # unstable behavior in some federated SACHEM executions.
+        return f"""
+{PREFIXES}
+{PREFIXES_SACHEM}
+SELECT
+{SELECT_VARS_FULL}
+WHERE {{
+    {sachem_clause}
+
+    # Get compound identifiers
+    ?c wdt:P235 ?compound_inchikey ;
+              wdt:P233 ?compound_smiles_conn .
+
+    # Require taxonomic association and filter by hierarchy
+    ?c p:P703 ?statement .
+    ?statement wikibase:rank wikibase:NormalRank ;
+               ps:P703 ?t ;
+               prov:wasDerivedFrom ?ref .
+    ?ref pr:P248 ?r .
+    ?t wdt:P225 ?taxon_name .
+    ?t (wdt:P171*) wd:{taxon_qid} .
+
+    {REFERENCE_METADATA_OPTIONAL}
+    {PROPERTIES_OPTIONAL}
+}}
+"""
+    elif taxon_qid:
         # OPTIMIZED: Filter by taxonomic data FIRST (uses indexes, much smaller set)
         # Then apply SACHEM to pre-filtered compounds
         return f"""
