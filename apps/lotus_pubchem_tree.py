@@ -469,14 +469,14 @@ with app.setup:
                 "Fetching compound-CXSMILES pairs...",
             ),
             (
-                "compound_parent",
-                QUERY_COMPOUND_PARENT,
-                "Fetching compound-parent pairs (under chemical compound)...",
-            ),
-            (
                 "compound_label",
                 QUERY_COMPOUND_LABEL,
                 "Fetching compound-label pairs...",
+            ),
+            (
+                "compound_parent",
+                QUERY_COMPOUND_PARENT,
+                "Fetching compound-parent pairs (under chemical compound)...",
             ),
         ]
 
