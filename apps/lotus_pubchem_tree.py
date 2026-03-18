@@ -1058,6 +1058,142 @@ with app.setup:
                 count += count_tree_nodes(node["Children"])
         return count
 
+    # ========================================================================
+    # PUBCHEM FORMAT CONVERSION
+    # ========================================================================
+    # The old PubChem format uses dict-based nesting with names as keys:
+    #   {"children": {"Name1": {"children": {...}, "NCBI_ID": {...}}}}
+    # The internal format uses arrays:
+    #   [{"Name": "...", "Children": [...]}]
+    # These functions convert between formats.
+    # ========================================================================
+
+    def tree_to_pubchem_format(
+        tree: list[dict],
+        tree_type: str,
+    ) -> dict:
+        """
+        Convert array-based tree to PubChem's dict-based format.
+
+        For biological tree:
+          - Names as keys for intermediate nodes
+          - NCBI TaxID as key for leaf taxa with InChIKeys as children
+        For chemical tree:
+          - Names as keys for intermediate nodes
+          - InChIKeys as leaf keys with empty arrays
+
+        Args:
+            tree: Array-based tree from build_*_tree functions
+            tree_type: "biological" or "chemical"
+
+        Returns:
+            Dict-based tree in PubChem format
+        """
+        if tree_type == "biological":
+            return _convert_bio_node_to_pubchem(tree)
+        else:
+            return _convert_chem_node_to_pubchem(tree)
+
+    def _convert_bio_node_to_pubchem(nodes: list[dict]) -> dict:
+        """
+        Convert biological tree nodes to PubChem format.
+
+        Structure:
+        {
+          "children": {
+            "TaxonName": {
+              "children": {
+                "ChildTaxonName": {...},
+                "NCBI_ID": {"organism_name": ["TaxonName"]}
+              }
+            }
+          }
+        }
+
+        Note: InChIKeys are NOT included in the biological tree.
+        The biological tree only contains the biological hierarchy.
+        """
+        if not nodes:
+            return {}
+
+        result = {"children": {}}
+
+        for node in nodes:
+            name = node.get("Name", "Unknown")
+            identifiers = node.get("Identifiers", {})
+            ncbi_id = identifiers.get("NCBI_TaxID")
+            children = node.get("Children", [])
+
+            # Build this node's content
+            node_content = {}
+
+            # Recursively convert children
+            if children:
+                child_result = _convert_bio_node_to_pubchem(children)
+                if "children" in child_result:
+                    node_content["children"] = child_result["children"]
+
+            # Add NCBI ID entry if present (this is the leaf identifier)
+            if ncbi_id:
+                if "children" not in node_content:
+                    node_content["children"] = {}
+                node_content["children"][ncbi_id] = {"organism_name": [name]}
+
+            result["children"][name] = node_content if node_content else {}
+
+        return result
+
+    def _convert_chem_node_to_pubchem(nodes: list[dict]) -> dict:
+        """
+        Convert chemical tree nodes to PubChem format.
+
+        Structure:
+        {
+          "children": {
+            "CompoundClassName": {
+              "children": {
+                "INCHIKEY-...": []
+              }
+            }
+          }
+        }
+        """
+        if not nodes:
+            return {}
+
+        result = {"children": {}}
+
+        for node in nodes:
+            name = node.get("Name", "Unknown")
+            descriptors = node.get("Descriptors", {})
+            children = node.get("Children", [])
+
+            # Build this node's content
+            node_content = {}
+
+            # Recursively convert children
+            if children:
+                child_result = _convert_chem_node_to_pubchem(children)
+                if "children" in child_result:
+                    node_content["children"] = child_result["children"]
+
+            # If this node has an InChIKey, add it as a leaf
+            inchikey = descriptors.get("InChIKey")
+            if inchikey:
+                if isinstance(inchikey, list):
+                    for ik in inchikey:
+                        if "children" not in node_content:
+                            node_content["children"] = {}
+                        node_content["children"][ik] = []
+                else:
+                    if "children" not in node_content:
+                        node_content["children"] = {}
+                    node_content["children"][inchikey] = []
+
+            result["children"][name] = node_content if node_content else {}
+
+        return result
+
 
 @app.cell
 def md_title():
@@ -1502,7 +1638,7 @@ def main():
             epilog="""
 Examples:
   uv run lotus_pubchem_tree.py export -o ./output -v
-  python lotus_pubchem_tree.py export -o ./output -v
+  uv run lotus_pubchem_tree.py export -o ./output -v --format pubchem
             """,
             formatter_class=argparse.RawDescriptionHelpFormatter,
         )
@@ -1513,6 +1649,13 @@ Examples:
             "-v",
             action="store_true",
             help="Verbose output",
+        )
+        parser.add_argument(
+            "--format",
+            "-f",
+            choices=["full", "pubchem"],
+            default="full",
+            help="Output format: 'full' (detailed with metadata) or 'pubchem' (compact, name-as-key)",
         )
         args = parser.parse_args()
 
@@ -1741,14 +1884,31 @@ Examples:
             biological_output = build_cli_tree_output("biological", biological_tree)
             chemical_output = build_cli_tree_output("chemical", chemical_tree)
 
-            biological_path = output_dir / f"{date_str}_lotus_biological_tree.json"
-            chemical_path = output_dir / f"{date_str}_lotus_chemical_tree.json"
+            # Choose format based on --format option
+            if args.format == "pubchem":
+                # PubChem format: compact, name-as-key structure
+                if args.verbose:
+                    print("\nConverting to PubChem format...", file=sys.stderr)
+                biological_final = tree_to_pubchem_format(biological_tree, "biological")
+                chemical_final = tree_to_pubchem_format(chemical_tree, "chemical")
+                biological_path = (
+                    output_dir / f"{date_str}_lotus_biological_tree_pubchem.json"
+                )
+                chemical_path = (
+                    output_dir / f"{date_str}_lotus_chemical_tree_pubchem.json"
+                )
+            else:
+                # Full format: detailed with metadata
+                biological_final = biological_output
+                chemical_final = chemical_output
+                biological_path = output_dir / f"{date_str}_lotus_biological_tree.json"
+                chemical_path = output_dir / f"{date_str}_lotus_chemical_tree.json"
 
             if args.verbose:
                 print("\nWriting output files...", file=sys.stderr)
 
-            biological_path.write_text(json.dumps(biological_output, indent=2))
-            chemical_path.write_text(json.dumps(chemical_output, indent=2))
+            biological_path.write_text(json.dumps(biological_final, indent=2))
+            chemical_path.write_text(json.dumps(chemical_final, indent=2))
 
             if args.verbose:
                 print(f"  ✓ {biological_path}", file=sys.stderr)
