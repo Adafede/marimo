@@ -1,10 +1,10 @@
 # /// script
 # requires-python = "==3.13.*"
 # dependencies = [
-#     "great-tables==0.20.0",
+#     "great-tables==0.21.0",
 #     "marimo",
-#     "polars==1.37.1",
-#     "rdflib==7.5.0",
+#     "polars==1.39.2",
+#     "maplib==0.19.24",
 # ]
 # [tool.marimo.runtime]
 # output_max_bytes = 300_000_000
@@ -31,7 +31,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import marimo
 
-__generated_with = "0.20.4"
+__generated_with = "0.21.0"
 app = marimo.App(width="full", app_title="LOTUS Wikidata Explorer")
 
 with app.setup:
@@ -49,8 +49,7 @@ with app.setup:
     from abc import ABC, abstractmethod
     from dataclasses import dataclass
     from datetime import date, datetime
-    from rdflib import Graph, Literal, URIRef, BNode
-    from rdflib.namespace import RDF, RDFS, XSD, DCTERMS
+    from maplib import Model as MaplibModel
 
     _USE_LOCAL = False
     if _USE_LOCAL:
@@ -86,7 +85,6 @@ with app.setup:
     from modules.net.sparql.parse_response import parse_sparql_response
     from modules.net.sparql.values_clause import values_clause
     from modules.chem.cdk.depict.svg_from_smiles import svg_from_smiles
-    from modules.knowledge.rdf.graph.add_literal import add_literal
     from modules.knowledge.rdf.namespace.wikidata import WIKIDATA_NAMESPACES
     from modules.io.compress.if_large import compress_if_large
 
@@ -1084,18 +1082,14 @@ with app.setup:
         def _to_bytes(self, df: pl.LazyFrame) -> bytes:
             df_collected = df.collect()
 
-            g = Graph()
-            for prefix, ns in WIKIDATA_NAMESPACES.items():
-                g.bind(prefix.lower(), ns)
-            g.bind("rdfs", RDFS)
-            g.bind("xsd", XSD)
-            g.bind("dcterms", DCTERMS)
+            model = MaplibModel()
+            model.add_prefixes(WIKIDATA_NAMESPACES)
 
             dataset_uri, query_hash, result_hash = self._create_dataset_uri(
                 df_collected,
             )
             self._add_metadata(
-                g,
+                model,
                 dataset_uri,
                 len(df_collected),
                 query_hash,
@@ -1103,35 +1097,29 @@ with app.setup:
             )
 
             batch_size = self.memory.get_batch_size("ttl")
-            processed_taxa = set()
-            processed_refs = set()
-            ns_cache = {
-                k: WIKIDATA_NAMESPACES[k]
-                for k in ["WD", "WDT", "P", "PS", "PR", "PROV", "SCHEMA"]
-            }
+            processed_taxa: set[str] = set()
+            processed_refs: set[str] = set()
 
             for start_idx in range(0, len(df_collected), batch_size):
                 batch = df_collected[start_idx : start_idx + batch_size]
-                for row in batch.iter_rows(named=True):
-                    self._add_compound_triples(
-                        g,
-                        row,
-                        dataset_uri,
-                        processed_taxa,
-                        processed_refs,
-                        ns_cache,
-                    )
+                self._add_compound_triples_batch(
+                    model,
+                    batch,
+                    dataset_uri,
+                    processed_taxa,
+                    processed_refs,
+                )
                 del batch
                 if self.memory.is_wasm:
                     gc.collect()
 
-            result = g.serialize(format="turtle").encode("utf-8")
-            del df_collected, g
+            result = model.writes(format="turtle").encode("utf-8")
+            del df_collected, model
             if self.memory.is_wasm:
                 gc.collect()
             return result
 
-        def _create_dataset_uri(self, df: pl.DataFrame) -> tuple[URIRef, str, str]:
+        def _create_dataset_uri(self, df: pl.DataFrame) -> tuple[str, str, str]:
             query_components = [self.qid or "", self.taxon_input or ""]
             if self.filters:
                 query_components.append(json.dumps(self.filters, sort_keys=True))
@@ -1150,20 +1138,21 @@ with app.setup:
                 result_hasher.update(str(val).encode("utf-8"))
             result_hash = result_hasher.hexdigest()
 
-            return URIRef(f"urn:hash:sha256:{result_hash}"), query_hash, result_hash
+            return f"urn:hash:sha256:{result_hash}", query_hash, result_hash
 
         def _add_metadata(
             self,
-            g: Graph,
-            dataset_uri: URIRef,
+            model: MaplibModel,
+            dataset_uri: str,
             record_count: int,
             query_hash: str,
             result_hash: str,
         ):
-            SCHEMA = WIKIDATA_NAMESPACES["SCHEMA"]
-            WD = WIKIDATA_NAMESPACES["WD"]
+            schema_ns = WIKIDATA_NAMESPACES["schema"]
+            wd_ns = WIKIDATA_NAMESPACES["wd"]
+            dcterms_ns = WIKIDATA_NAMESPACES["dcterms"]
+            rdf_ns = WIKIDATA_NAMESPACES["rdf"]
 
-            # Normalize taxon name for RDF
             if not self.taxon_input or self.taxon_input.strip() == "":
                 dataset_name = "LOTUS Data - any taxon (structure-only search)"
                 taxon_description = "any taxon"
@@ -1174,120 +1163,217 @@ with app.setup:
                 dataset_name = f"LOTUS Data - {self.taxon_input}"
                 taxon_description = self.taxon_input
 
-            g.add((dataset_uri, RDF.type, SCHEMA.Dataset))
-            g.add((dataset_uri, SCHEMA.name, Literal(dataset_name)))
-            g.add(
-                (
-                    dataset_uri,
-                    SCHEMA.description,
-                    Literal(f"Chemical compounds from {taxon_description}"),
-                ),
-            )
-            g.add(
-                (
-                    dataset_uri,
-                    SCHEMA.numberOfRecords,
-                    Literal(record_count, datatype=XSD.integer),
-                ),
-            )
-            g.add((dataset_uri, SCHEMA.version, Literal(CONFIG["app_version"])))
-            g.add((dataset_uri, SCHEMA.provider, URIRef(CONFIG["app_url"])))
-            g.add((dataset_uri, DCTERMS.source, URIRef(WIKIDATA_HTTP_BASE)))
-            g.add((dataset_uri, SCHEMA.isBasedOn, URIRef(WIKI_PREFIX + "Q104225190")))
+            iri_triples = [
+                (dataset_uri, f"{rdf_ns}type", f"{schema_ns}Dataset"),
+                (dataset_uri, f"{schema_ns}provider", CONFIG["app_url"]),
+                (dataset_uri, f"{dcterms_ns}source", WIKIDATA_HTTP_BASE),
+                (dataset_uri, f"{schema_ns}isBasedOn", f"{WIKI_PREFIX}Q104225190"),
+            ]
 
-            # Only add taxon reference if we have a specific taxon
             if self.qid and self.qid != "*" and self.qid.strip():
-                g.add((dataset_uri, SCHEMA.about, WD[self.qid]))
+                iri_triples.append(
+                    (dataset_uri, f"{schema_ns}about", f"{wd_ns}{self.qid}"),
+                )
             elif self.taxon_input == "*":
-                # Add Biota reference for "all taxa"
-                g.add((dataset_uri, SCHEMA.about, WD["Q2382443"]))
+                iri_triples.append(
+                    (dataset_uri, f"{schema_ns}about", f"{wd_ns}Q2382443"),
+                )
 
-            g.add(
-                (dataset_uri, DCTERMS.provenance, Literal(f"Query hash: {query_hash}")),
-            )
+            if iri_triples:
+                df_iri = pl.DataFrame(
+                    {
+                        "subject": [t[0] for t in iri_triples],
+                        "predicate": [t[1] for t in iri_triples],
+                        "object": [t[2] for t in iri_triples],
+                    }
+                )
+                model.map_triples(df_iri)
+
+            literal_triples = [
+                (dataset_uri, f"{schema_ns}name", dataset_name),
+                (
+                    dataset_uri,
+                    f"{schema_ns}description",
+                    f"Chemical compounds from {taxon_description}",
+                ),
+                (dataset_uri, f"{schema_ns}numberOfRecords", str(record_count)),
+                (dataset_uri, f"{schema_ns}version", CONFIG["app_version"]),
+                (dataset_uri, f"{dcterms_ns}provenance", f"Query hash: {query_hash}"),
+                (dataset_uri, f"{dcterms_ns}identifier", f"sha256:{result_hash}"),
+            ]
+
             if self.filters:
-                g.add(
+                literal_triples.append(
                     (
                         dataset_uri,
-                        DCTERMS.provenance,
-                        Literal(
-                            f"Search parameters: {json.dumps(self.filters, sort_keys=True)}",
-                        ),
+                        f"{dcterms_ns}provenance",
+                        f"Search parameters: {json.dumps(self.filters, sort_keys=True)}",
                     ),
                 )
-            g.add((dataset_uri, DCTERMS.identifier, Literal(f"sha256:{result_hash}")))
 
-        def _add_compound_triples(
-            self,
-            g: Graph,
-            row: dict,
-            dataset_uri: URIRef,
-            processed_taxa: set,
-            processed_refs: set,
-            ns_cache: dict,
-        ):
-            WD, WDT, P, PS, PR, PROV, SCHEMA = (
-                ns_cache[k] for k in ["WD", "WDT", "P", "PS", "PR", "PROV", "SCHEMA"]
+            df_literal = pl.DataFrame(
+                {
+                    "subject": [t[0] for t in literal_triples],
+                    "predicate": [t[1] for t in literal_triples],
+                    "object": [t[2] for t in literal_triples],
+                }
             )
+            model.map_triples(df_literal, validate_iris=False)
 
-            compound_qid = row.get("compound_qid")
-            if not compound_qid:
-                return
+        def _add_compound_triples_batch(
+            self,
+            model: MaplibModel,
+            batch: pl.DataFrame,
+            dataset_uri: str,
+            processed_taxa: set[str],
+            processed_refs: set[str],
+        ):
+            wd_ns = WIKIDATA_NAMESPACES["wd"]
+            wdt_ns = WIKIDATA_NAMESPACES["wdt"]
+            wds_ns = WIKIDATA_NAMESPACES["wds"]
+            p_ns = WIKIDATA_NAMESPACES["p"]
+            ps_ns = WIKIDATA_NAMESPACES["ps"]
+            pr_ns = WIKIDATA_NAMESPACES["pr"]
+            prov_ns = WIKIDATA_NAMESPACES["prov"]
+            schema_ns = WIKIDATA_NAMESPACES["schema"]
+            rdfs_ns = WIKIDATA_NAMESPACES["rdfs"]
 
-            compound_uri = WD[compound_qid]
-            g.add((dataset_uri, SCHEMA.hasPart, compound_uri))
+            iri_triples: list[tuple[str, str, str]] = []
+            literal_triples: list[tuple[str, str, str]] = []
+            blank_node_counter = 0
 
-            add_literal(g, compound_uri, WDT.P235, row.get("compound_inchikey"))
-            add_literal(g, compound_uri, WDT.P233, row.get("compound_smiles"))
-            add_literal(g, compound_uri, WDT.P274, row.get("molecular_formula"))
-            add_literal(g, compound_uri, RDFS.label, row.get("compound_name"))
+            for row in batch.iter_rows(named=True):
+                compound_qid = row.get("compound_qid")
+                if not compound_qid:
+                    continue
 
-            if row.get("compound_mass") is not None:
-                add_literal(g, compound_uri, WDT.P2067, row["compound_mass"], XSD.float)
+                compound_uri = f"{wd_ns}{compound_qid}"
 
-            taxon_qid = row.get("taxon_qid")
-            ref_qid = row.get("reference_qid")
-            statement_uri_str = row.get("statement_id")
-            ref_uri_str = row.get("ref")
-
-            if taxon_qid:
-                taxon_uri = WD[taxon_qid]
-                statement_node = (
-                    URIRef(WIKIDATA_STATEMENT_PREFIX + statement_uri_str)
-                    if statement_uri_str
-                    else BNode()
+                iri_triples.append(
+                    (dataset_uri, f"{schema_ns}hasPart", compound_uri),
                 )
 
-                g.add((compound_uri, P.P703, statement_node))
-                g.add((statement_node, PS.P703, taxon_uri))
+                if row.get("compound_inchikey"):
+                    literal_triples.append(
+                        (compound_uri, f"{wdt_ns}P235", row["compound_inchikey"]),
+                    )
+                if row.get("compound_smiles"):
+                    literal_triples.append(
+                        (compound_uri, f"{wdt_ns}P233", row["compound_smiles"]),
+                    )
+                if row.get("molecular_formula"):
+                    literal_triples.append(
+                        (compound_uri, f"{wdt_ns}P274", row["molecular_formula"]),
+                    )
+                if row.get("compound_name"):
+                    literal_triples.append(
+                        (compound_uri, f"{rdfs_ns}label", row["compound_name"]),
+                    )
+                if row.get("compound_mass") is not None:
+                    literal_triples.append(
+                        (compound_uri, f"{wdt_ns}P2067", str(row["compound_mass"])),
+                    )
 
-                if ref_qid:
-                    ref_uri = WD[ref_qid]
-                    ref_node = URIRef(ref_uri_str) if ref_uri_str else BNode()
+                taxon_qid = row.get("taxon_qid")
+                ref_qid = row.get("reference_qid")
+                statement_uri_str = row.get("statement_id")
+                ref_uri_str = row.get("ref")
 
-                    g.add((statement_node, PROV.wasDerivedFrom, ref_node))
-                    g.add((ref_node, PR.P248, ref_uri))
+                if taxon_qid:
+                    taxon_uri = f"{wd_ns}{taxon_qid}"
 
-                    if ref_qid not in processed_refs:
-                        add_literal(g, ref_uri, WDT.P1476, row.get("reference_title"))
-                        add_literal(g, ref_uri, RDFS.label, row.get("reference_title"))
-                        add_literal(g, ref_uri, WDT.P356, row.get("reference_doi"))
-                        if row.get("reference_date"):
-                            add_literal(
-                                g,
-                                ref_uri,
-                                WDT.P577,
-                                str(row["reference_date"]),
-                                XSD.date,
+                    if statement_uri_str:
+                        statement_uri = f"{wds_ns}{statement_uri_str}"
+                    else:
+                        statement_uri = f"urn:bnode:stmt_{blank_node_counter}"
+                        blank_node_counter += 1
+
+                    iri_triples.extend(
+                        [
+                            (compound_uri, f"{p_ns}P703", statement_uri),
+                            (statement_uri, f"{ps_ns}P703", taxon_uri),
+                            (compound_uri, f"{wdt_ns}P703", taxon_uri),
+                        ]
+                    )
+
+                    if ref_qid:
+                        ref_uri = f"{wd_ns}{ref_qid}"
+                        if ref_uri_str:
+                            ref_node_uri = ref_uri_str
+                        else:
+                            ref_node_uri = f"urn:bnode:ref_{blank_node_counter}"
+                            blank_node_counter += 1
+
+                        iri_triples.extend(
+                            [
+                                (
+                                    statement_uri,
+                                    f"{prov_ns}wasDerivedFrom",
+                                    ref_node_uri,
+                                ),
+                                (ref_node_uri, f"{pr_ns}P248", ref_uri),
+                            ]
+                        )
+
+                        if ref_qid not in processed_refs:
+                            if row.get("reference_title"):
+                                literal_triples.extend(
+                                    [
+                                        (
+                                            ref_uri,
+                                            f"{wdt_ns}P1476",
+                                            row["reference_title"],
+                                        ),
+                                        (
+                                            ref_uri,
+                                            f"{rdfs_ns}label",
+                                            row["reference_title"],
+                                        ),
+                                    ]
+                                )
+                            if row.get("reference_doi"):
+                                literal_triples.append(
+                                    (ref_uri, f"{wdt_ns}P356", row["reference_doi"]),
+                                )
+                            if row.get("reference_date"):
+                                literal_triples.append(
+                                    (
+                                        ref_uri,
+                                        f"{wdt_ns}P577",
+                                        str(row["reference_date"]),
+                                    ),
+                                )
+                            processed_refs.add(ref_qid)
+
+                    if taxon_qid not in processed_taxa:
+                        if row.get("taxon_name"):
+                            literal_triples.extend(
+                                [
+                                    (taxon_uri, f"{wdt_ns}P225", row["taxon_name"]),
+                                    (taxon_uri, f"{rdfs_ns}label", row["taxon_name"]),
+                                ]
                             )
-                        processed_refs.add(ref_qid)
+                        processed_taxa.add(taxon_qid)
 
-                g.add((compound_uri, WDT.P703, taxon_uri))
+            if iri_triples:
+                df_iri = pl.DataFrame(
+                    {
+                        "subject": [t[0] for t in iri_triples],
+                        "predicate": [t[1] for t in iri_triples],
+                        "object": [t[2] for t in iri_triples],
+                    }
+                )
+                model.map_triples(df_iri)
 
-                if taxon_qid not in processed_taxa:
-                    add_literal(g, taxon_uri, WDT.P225, row.get("taxon_name"))
-                    add_literal(g, taxon_uri, RDFS.label, row.get("taxon_name"))
-                    processed_taxa.add(taxon_qid)
+            if literal_triples:
+                df_literal = pl.DataFrame(
+                    {
+                        "subject": [t[0] for t in literal_triples],
+                        "predicate": [t[1] for t in literal_triples],
+                        "object": [t[2] for t in literal_triples],
+                    }
+                )
+                model.map_triples(df_literal, validate_iris=False)
 
     # ========================================================================
     # FACADE
