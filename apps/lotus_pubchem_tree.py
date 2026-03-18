@@ -138,6 +138,22 @@ with app.setup:
         }
     """
 
+    QUERY_COMPOUND_SMARTS = """
+        PREFIX wd: <http://www.wikidata.org/entity/>
+        PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+        SELECT DISTINCT ?compound ?compound_smarts WHERE {
+          ?compound wdt:P8533 ?compound_smarts .
+        }
+    """
+
+    QUERY_COMPOUND_CXSMILES = """
+        PREFIX wd: <http://www.wikidata.org/entity/>
+        PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+        SELECT DISTINCT ?compound ?compound_cxsmiles WHERE {
+          ?compound wdt:P10718 ?compound_cxsmiles .
+        }
+    """
+
     QUERY_COMPOUND_PARENT = """
     PREFIX wd: <http://www.wikidata.org/entity/>
     PREFIX wdt: <http://www.wikidata.org/prop/direct/>
@@ -189,6 +205,14 @@ with app.setup:
             "compound": pl.Utf8,
             "compound_smiles_iso": pl.Utf8,
         },
+        "compound_smarts": {
+            "compound": pl.Utf8,
+            "compound_smarts": pl.Utf8,
+        },
+        "compound_cxsmiles": {
+            "compound": pl.Utf8,
+            "compound_cxsmiles": pl.Utf8,
+        },
         "compound_parent": {
             "compound": pl.Utf8,
             "compound_parent": pl.Utf8,
@@ -238,6 +262,8 @@ with app.setup:
         taxon_name: pl.LazyFrame
         compound_smiles_can: pl.LazyFrame
         compound_smiles_iso: pl.LazyFrame
+        compound_smarts: pl.LazyFrame
+        compound_cxsmiles: pl.LazyFrame
         compound_parent: pl.LazyFrame
         compound_label: pl.LazyFrame
 
@@ -265,6 +291,16 @@ with app.setup:
                 "compound_smiles_iso",
                 QUERY_COMPOUND_SMILES_ISO,
                 "Fetching compound isomeric SMILES...",
+            ),
+            (
+                "compound_smarts",
+                QUERY_COMPOUND_SMARTS,
+                "Fetching compound SMARTS...",
+            ),
+            (
+                "compound_cxsmiles",
+                QUERY_COMPOUND_CXSMILES,
+                "Fetching compound CXSMILES...",
             ),
             (
                 "compound_parent",
@@ -358,15 +394,60 @@ with app.setup:
         combined = can_df.rename({"compound_smiles_can": "smiles"})
 
         # Join with isomeric and prefer isomeric when available
-        combined = combined.join(
-            iso_df.rename({"compound_smiles_iso": "smiles_iso"}),
-            on="compound",
-            how="outer",
-        ).with_columns(
-            pl.coalesce(["smiles_iso", "smiles"]).alias("smiles"),
-        ).drop("smiles_iso").unique(subset=["compound"])
+        combined = (
+            combined.join(
+                iso_df.rename({"compound_smiles_iso": "smiles_iso"}),
+                on="compound",
+                how="outer",
+            )
+            .with_columns(
+                pl.coalesce(["smiles_iso", "smiles"]).alias("smiles"),
+            )
+            .drop("smiles_iso")
+            .unique(subset=["compound"])
+        )
 
         return combined
+
+    def build_structure_maps(
+        smiles_iso: pl.LazyFrame,
+        smiles_can: pl.LazyFrame,
+        smarts: pl.LazyFrame,
+        cxsmiles: pl.LazyFrame,
+    ) -> tuple[dict, dict, dict]:
+        """
+        Build mappings for SMILES, SMARTS, and CXSMILES.
+
+        Returns (smiles_map, smarts_map, cxsmiles_map)
+        """
+        # Combine SMILES (prefer isomeric over canonical)
+        smiles_df = combine_smiles(smiles_iso, smiles_can)
+        smiles_map = dict(
+            zip(
+                smiles_df["compound"].to_list(),
+                smiles_df["smiles"].to_list(),
+            ),
+        )
+
+        # Build SMARTS mapping
+        smarts_df = smarts.collect()
+        smarts_map = dict(
+            zip(
+                smarts_df["compound"].to_list(),
+                smarts_df["compound_smarts"].to_list(),
+            ),
+        )
+
+        # Build CXSMILES mapping
+        cxsmiles_df = cxsmiles.collect()
+        cxsmiles_map = dict(
+            zip(
+                cxsmiles_df["compound"].to_list(),
+                cxsmiles_df["compound_cxsmiles"].to_list(),
+            ),
+        )
+
+        return smiles_map, smarts_map, cxsmiles_map
 
     # ========================================================================
     # TREE BUILDING
@@ -377,7 +458,9 @@ with app.setup:
         taxon_ncbi: pl.DataFrame,
         taxon_parent: pl.DataFrame,
         taxon_name: pl.DataFrame,
-        compound_smiles: pl.DataFrame,
+        smiles_map: dict,
+        smarts_map: dict,
+        cxsmiles_map: dict,
     ) -> list[dict]:
         """
         Build biological tree JSON for PubChem.
@@ -389,7 +472,7 @@ with app.setup:
         - NCBI_TaxID: NCBI taxonomy ID
         - Wikidata_QID: Wikidata QID
         - Name: Taxonomic name
-        - Compounds: List of compound objects with InChIKey and SMILES (if available)
+        - Compounds: List of compound objects with InChIKey, SMILES, SMARTS, CXSMILES (if available)
         - Children: List of child nodes
         """
         # Build parent-child relationships
@@ -433,14 +516,6 @@ with app.setup:
             ),
         )
 
-        # Build compound to SMILES mapping
-        smiles_map = dict(
-            zip(
-                compound_smiles["compound"].to_list(),
-                compound_smiles["smiles"].to_list(),
-            ),
-        )
-
         # Find root taxa (those without parents in our set)
         all_taxa = set(taxon_parent["taxon"].to_list())
         all_parents = set(taxon_parent["taxon_parent"].to_list())
@@ -456,15 +531,25 @@ with app.setup:
             compound_structs = compounds_by_taxon_map.get(taxon_qid, [])
             has_own_compounds = len(compound_structs) > 0
 
-            # Build compound list with InChIKey and SMILES paired
+            # Build compound list with all structure representations
             compounds_list = []
             for cs in compound_structs:
                 compound_qid = cs["compound"]
                 inchikey = cs["compound_inchikey"]
-                smiles = smiles_map.get(compound_qid)
                 compound_obj = {"InChIKey": inchikey}
+                
+                smiles = smiles_map.get(compound_qid)
                 if smiles:
                     compound_obj["SMILES"] = smiles
+                
+                smarts = smarts_map.get(compound_qid)
+                if smarts:
+                    compound_obj["SMARTS"] = smarts
+                
+                cxsmiles = cxsmiles_map.get(compound_qid)
+                if cxsmiles:
+                    compound_obj["CXSMILES"] = cxsmiles
+                
                 compounds_list.append(compound_obj)
 
             # Build children first to check if any have compounds
@@ -510,7 +595,9 @@ with app.setup:
         compound_taxon: pl.DataFrame,
         compound_parent: pl.DataFrame,
         compound_label: pl.DataFrame,
-        compound_smiles: pl.DataFrame,
+        smiles_map: dict,
+        smarts_map: dict,
+        cxsmiles_map: dict,
     ) -> list[dict]:
         """
         Build chemical compound tree JSON for PubChem.
@@ -521,7 +608,7 @@ with app.setup:
         Returns a hierarchical tree structure where each node contains:
         - Wikidata_QID: Wikidata QID
         - Label: Compound label/name
-        - Compounds: List of compound objects with InChIKey and SMILES (if available)
+        - Compounds: List of compound objects with InChIKey, SMILES, SMARTS, CXSMILES (if available)
         - Children: List of child compound classes
         """
         # Build parent-child relationships
@@ -557,14 +644,6 @@ with app.setup:
             ),
         )
 
-        # Build compound to SMILES mapping
-        smiles_map = dict(
-            zip(
-                compound_smiles["compound"].to_list(),
-                compound_smiles["smiles"].to_list(),
-            ),
-        )
-
         # Find root compounds
         all_compounds = set(compound_parent["compound"].to_list())
         all_parents = set(compound_parent["compound_parent"].to_list())
@@ -579,16 +658,21 @@ with app.setup:
             inchikeys = inchikey_map.get(compound_qid, [])
             has_own_inchikeys = len(inchikeys) > 0
 
-            # Get SMILES for this compound class
+            # Get structure representations for this compound class
             smiles = smiles_map.get(compound_qid)
+            smarts = smarts_map.get(compound_qid)
+            cxsmiles = cxsmiles_map.get(compound_qid)
 
-            # Build compound list - for compound tree, each node is a compound class
-            # with potentially multiple InChIKeys (from different taxa entries)
+            # Build compound list with all structure representations
             compounds_list = []
             for inchikey in inchikeys:
                 compound_obj = {"InChIKey": inchikey}
                 if smiles:
                     compound_obj["SMILES"] = smiles
+                if smarts:
+                    compound_obj["SMARTS"] = smarts
+                if cxsmiles:
+                    compound_obj["CXSMILES"] = cxsmiles
                 compounds_list.append(compound_obj)
 
             # Build children first to check if any have compounds
@@ -770,6 +854,8 @@ def fetch_data(run_button):
             taxon_name=process_taxon_name(data.taxon_name),
             compound_smiles_can=process_compound_smiles(data.compound_smiles_can, "compound_smiles_can"),
             compound_smiles_iso=process_compound_smiles(data.compound_smiles_iso, "compound_smiles_iso"),
+            compound_smarts=process_compound_smiles(data.compound_smarts, "compound_smarts"),
+            compound_cxsmiles=process_compound_smiles(data.compound_cxsmiles, "compound_cxsmiles"),
             compound_parent=process_compound_parent(data.compound_parent),
             compound_label=process_compound_label(data.compound_label),
         )
@@ -867,10 +953,12 @@ def build_trees(build_trees_btn, data):
         compound_taxon_df = data.compound_taxon.collect()
         _pyodide_note = ""
 
-    with mo.status.spinner("Combining SMILES data..."):
-        compound_smiles_df = combine_smiles(
+    with mo.status.spinner("Building structure maps..."):
+        smiles_map, smarts_map, cxsmiles_map = build_structure_maps(
             data.compound_smiles_iso,
             data.compound_smiles_can,
+            data.compound_smarts,
+            data.compound_cxsmiles,
         )
 
     with mo.status.spinner("Building biological tree..."):
@@ -883,7 +971,9 @@ def build_trees(build_trees_btn, data):
             taxon_ncbi_df,
             taxon_parent_df,
             taxon_name_df,
-            compound_smiles_df,
+            smiles_map,
+            smarts_map,
+            cxsmiles_map,
         )
 
     with mo.status.spinner("Building chemical tree..."):
@@ -894,7 +984,9 @@ def build_trees(build_trees_btn, data):
             compound_taxon_df,
             compound_parent_df,
             compound_label_df,
-            compound_smiles_df,
+            smiles_map,
+            smarts_map,
+            cxsmiles_map,
         )
 
     bio_nodes = count_tree_nodes(biological_tree)
@@ -1119,6 +1211,8 @@ Examples:
                 taxon_name=process_taxon_name(data.taxon_name),
                 compound_smiles_can=process_compound_smiles(data.compound_smiles_can, "compound_smiles_can"),
                 compound_smiles_iso=process_compound_smiles(data.compound_smiles_iso, "compound_smiles_iso"),
+                compound_smarts=process_compound_smiles(data.compound_smarts, "compound_smarts"),
+                compound_cxsmiles=process_compound_smiles(data.compound_cxsmiles, "compound_cxsmiles"),
                 compound_parent=process_compound_parent(data.compound_parent),
                 compound_label=process_compound_label(data.compound_label),
             )
@@ -1133,11 +1227,13 @@ Examples:
                 )
 
             if args.verbose:
-                print("\nCombining SMILES data...", file=sys.stderr)
+                print("\nBuilding structure maps...", file=sys.stderr)
 
-            compound_smiles_df = combine_smiles(
+            smiles_map, smarts_map, cxsmiles_map = build_structure_maps(
                 data.compound_smiles_iso,
                 data.compound_smiles_can,
+                data.compound_smarts,
+                data.compound_cxsmiles,
             )
 
             if args.verbose:
@@ -1153,7 +1249,9 @@ Examples:
                 taxon_ncbi_df,
                 taxon_parent_df,
                 taxon_name_df,
-                compound_smiles_df,
+                smiles_map,
+                smarts_map,
+                cxsmiles_map,
             )
 
             if args.verbose:
@@ -1171,7 +1269,9 @@ Examples:
                 compound_taxon_df,
                 compound_parent_df,
                 compound_label_df,
-                compound_smiles_df,
+                smiles_map,
+                smarts_map,
+                cxsmiles_map,
             )
 
             if args.verbose:
