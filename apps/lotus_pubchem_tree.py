@@ -80,8 +80,6 @@ with app.setup:
         "preview_max_root_nodes": 30,
         "preview_max_children": 20,
         "preview_max_depth": 3,
-        # Pyodide memory limits - significantly reduce data for browser mode
-        "pyodide_max_compound_taxon_pairs": 10000,
     }
 
     # Metadata for provenance and reproducibility
@@ -591,34 +589,47 @@ with app.setup:
             if len(smiles_df) > 0
             else {}
         )
+        del smiles_df
 
         # Build SMARTS mapping (as list)
-        smarts_collected = smarts.collect()
-        if len(smarts_collected) > 0:
-            smarts_df = smarts_collected.group_by("compound").agg(
-                pl.col("compound_smarts").alias("smarts"),
-            )
-            smarts_map = dict(
-                zip(
-                    smarts_df["compound"].to_list(),
-                    smarts_df["smarts"].to_list(),
-                ),
-            )
+        smarts_has_data = len(smarts.collect_schema()) > 0
+        if smarts_has_data:
+            smarts_collected = smarts.collect()
+            if len(smarts_collected) > 0:
+                smarts_df = smarts_collected.group_by("compound").agg(
+                    pl.col("compound_smarts").alias("smarts"),
+                )
+                smarts_map = dict(
+                    zip(
+                        smarts_df["compound"].to_list(),
+                        smarts_df["smarts"].to_list(),
+                    ),
+                )
+                del smarts_df
+            else:
+                smarts_map = {}
+            del smarts_collected
         else:
             smarts_map = {}
 
         # Build CXSMILES mapping (as list)
-        cxsmiles_collected = cxsmiles.collect()
-        if len(cxsmiles_collected) > 0:
-            cxsmiles_df = cxsmiles_collected.group_by("compound").agg(
-                pl.col("compound_cxsmiles").alias("cxsmiles"),
-            )
-            cxsmiles_map = dict(
-                zip(
-                    cxsmiles_df["compound"].to_list(),
-                    cxsmiles_df["cxsmiles"].to_list(),
-                ),
-            )
+        cxsmiles_has_data = len(cxsmiles.collect_schema()) > 0
+        if cxsmiles_has_data:
+            cxsmiles_collected = cxsmiles.collect()
+            if len(cxsmiles_collected) > 0:
+                cxsmiles_df = cxsmiles_collected.group_by("compound").agg(
+                    pl.col("compound_cxsmiles").alias("cxsmiles"),
+                )
+                cxsmiles_map = dict(
+                    zip(
+                        cxsmiles_df["compound"].to_list(),
+                        cxsmiles_df["cxsmiles"].to_list(),
+                    ),
+                )
+                del cxsmiles_df
+            else:
+                cxsmiles_map = {}
+            del cxsmiles_collected
         else:
             cxsmiles_map = {}
 
@@ -1090,11 +1101,11 @@ with app.setup:
             Dict-based tree in PubChem format
         """
         if tree_type == "biological":
-            return _convert_bio_node_to_pubchem(tree)
+            return convert_bio_node_to_pubchem(tree)
         else:
-            return _convert_chem_node_to_pubchem(tree)
+            return convert_chem_node_to_pubchem(tree)
 
-    def _convert_bio_node_to_pubchem(nodes: list[dict]) -> dict:
+    def convert_bio_node_to_pubchem(nodes: list[dict]) -> dict:
         """
         Convert biological tree nodes to PubChem format.
 
@@ -1129,7 +1140,7 @@ with app.setup:
 
             # Recursively convert children
             if children:
-                child_result = _convert_bio_node_to_pubchem(children)
+                child_result = convert_bio_node_to_pubchem(children)
                 if "children" in child_result:
                     node_content["children"] = child_result["children"]
 
@@ -1143,7 +1154,7 @@ with app.setup:
 
         return result
 
-    def _convert_chem_node_to_pubchem(nodes: list[dict]) -> dict:
+    def convert_chem_node_to_pubchem(nodes: list[dict]) -> dict:
         """
         Convert chemical tree nodes to PubChem format.
 
@@ -1173,7 +1184,7 @@ with app.setup:
 
             # Recursively convert children
             if children:
-                child_result = _convert_chem_node_to_pubchem(children)
+                child_result = convert_chem_node_to_pubchem(children)
                 if "children" in child_result:
                     node_content["children"] = child_result["children"]
 
@@ -1197,14 +1208,7 @@ with app.setup:
 
 @app.cell
 def md_title():
-    _pyodide_warning = ""
-    if IS_PYODIDE:
-        _pyodide_warning = f"""
-> ⚠️ **Browser Mode**: Limited to {CONFIG["pyodide_max_compound_taxon_pairs"]:,} compound-taxon pairs for preview.
-> For full trees, use: `uv run https://adafede.github.io/marimo/apps/lotus_pubchem_tree.py export -o ./output -v`
-"""
-
-    mo.md(f"""
+    mo.md("""
     # LOTUS PubChem Tree Generator
 
     This app generates hierarchical JSON files for PubChem classification matching
@@ -1215,8 +1219,36 @@ def md_title():
     2. **Chemical Tree**: Chemical taxonomy (under [chemical compound](https://www.wikidata.org/wiki/Q11173)) with associated descriptors
 
     *Only nodes with InChIKey and taxon association (directly or in descendants) are included.*
-    {_pyodide_warning}
     """)
+    return
+
+
+@app.cell
+def wasm_warning():
+    if IS_PYODIDE:
+        mo.stop(
+            True,
+            mo.callout(
+                mo.md("""
+                **This app cannot run in the browser**
+
+                The LOTUS PubChem Tree Generator processes lasrge amount
+                of data from Wikidata, which exceeds WebAssembly memory limits.
+
+                **Please use the CLI instead:**
+                ```bash
+                # Full format with metadata
+                uv run https://adafede.github.io/marimo/apps/lotus_pubchem_tree.py export -o ./output -v
+
+                # PubChem compact format
+                uv run https://adafede.github.io/marimo/apps/lotus_pubchem_tree.py export -o ./output -v --format pubchem
+                ```
+
+                The CLI runs natively and has no memory limitations.
+                """),
+                kind="danger",
+            ),
+        )
     return
 
 
@@ -1334,10 +1366,7 @@ def display_stats(stats):
 def build_trees_button(data):
     mo.stop(data is None)
 
-    if IS_PYODIDE:
-        build_trees_btn = mo.ui.run_button(label="Build Trees (Limited Preview)")
-    else:
-        build_trees_btn = mo.ui.run_button(label="Build Trees")
+    build_trees_btn = mo.ui.run_button(label="Build Trees")
     build_trees_btn
     return (build_trees_btn,)
 
@@ -1350,23 +1379,36 @@ def build_trees(build_trees_btn, data):
         mo.md("Click **Build Trees** to generate the tree structures"),
     )
 
-    # In Pyodide, sample data to reduce memory usage
-    if IS_PYODIDE:
-        max_pairs = CONFIG["pyodide_max_compound_taxon_pairs"]
-        compound_taxon_df = data.compound_taxon.head(max_pairs).collect()
-        _pyodide_note = f" (limited to {max_pairs:,} compound-taxon pairs)"
-    else:
+    # Step 1: Collect compound_taxon first (needed for multiple steps)
+    with mo.status.spinner("Loading compound-taxon data..."):
         compound_taxon_df = data.compound_taxon.collect()
-        _pyodide_note = ""
 
-    with mo.status.spinner("Building structure maps..."):
-        smiles_map, smarts_map, cxsmiles_map = build_structure_maps(
+    # Step 2: Build structure maps (one at a time to save memory)
+    with mo.status.spinner("Building SMILES map..."):
+        smiles_map, _, _ = build_structure_maps(
             data.compound_smiles_iso,
             data.compound_smiles_can,
+            pl.LazyFrame(),  # Empty - we'll do SMARTS separately
+            pl.LazyFrame(),  # Empty - we'll do CXSMILES separately
+        )
+
+    with mo.status.spinner("Building SMARTS map..."):
+        _, smarts_map, _ = build_structure_maps(
+            pl.LazyFrame(),
+            pl.LazyFrame(),
             data.compound_smarts,
+            pl.LazyFrame(),
+        )
+
+    with mo.status.spinner("Building CXSMILES map..."):
+        _, _, cxsmiles_map = build_structure_maps(
+            pl.LazyFrame(),
+            pl.LazyFrame(),
+            pl.LazyFrame(),
             data.compound_cxsmiles,
         )
 
+    # Step 3: Build label map
     with mo.status.spinner("Building compound label map..."):
         compound_label_df = data.compound_label.collect()
         label_map = dict(
@@ -1376,24 +1418,28 @@ def build_trees(build_trees_btn, data):
             ),
         )
 
+    # Step 4: Identify compounds with taxa
     with mo.status.spinner("Identifying compounds with taxa..."):
-        # Get compounds that have InChIKeys AND are associated with taxa
         compounds_with_taxa, inchikey_map = build_compounds_with_taxa(compound_taxon_df)
 
+    # Step 5: Build unified descriptor map
     with mo.status.spinner("Building unified descriptor map..."):
-        # Build unified descriptor map for ALL compounds (including intermediary nodes)
         descriptor_map = build_descriptor_map(
             smiles_map,
             smarts_map,
             cxsmiles_map,
             inchikey_map,
         )
+        # Free the individual maps now that descriptor_map is built
+        del smiles_map, smarts_map, cxsmiles_map, inchikey_map
 
-    with mo.status.spinner("Building biological tree..."):
+    # Step 6: Build biological tree
+    with mo.status.spinner("Loading taxon data..."):
         taxon_ncbi_df = data.taxon_ncbi.collect()
         taxon_parent_df = data.taxon_parent.collect()
         taxon_name_df = data.taxon_name.collect()
 
+    with mo.status.spinner("Building biological tree..."):
         biological_tree = build_biological_tree(
             compound_taxon_df,
             taxon_ncbi_df,
@@ -1403,41 +1449,35 @@ def build_trees(build_trees_btn, data):
             descriptor_map,
             label_map,
         )
+        # Free taxon DataFrames after biological tree is built
+        del taxon_ncbi_df, taxon_parent_df, taxon_name_df
 
-    with mo.status.spinner("Building chemical tree..."):
+    # Step 7: Build chemical tree
+    with mo.status.spinner("Loading compound parent data..."):
         compound_parent_df = data.compound_parent.collect()
 
+    with mo.status.spinner("Building chemical tree..."):
         chemical_tree = build_compound_tree(
             compound_parent_df,
             compound_label_df,
             compounds_with_taxa,
             descriptor_map,
         )
+        # Free remaining DataFrames
+        del compound_taxon_df, compound_parent_df, compound_label_df
+        del compounds_with_taxa, descriptor_map, label_map
 
     bio_nodes = count_tree_nodes(biological_tree)
     chem_nodes = count_tree_nodes(chemical_tree)
 
     _output = [
         mo.md(f"""
-## Trees Built{_pyodide_note}
+    ## Trees Built
 
-- **Biological Tree**: {len(biological_tree)} root nodes, {bio_nodes:,} total nodes
-- **Chemical Tree**: {len(chemical_tree)} root nodes, {chem_nodes:,} total nodes
-        """),
+    - **Biological Tree**: {len(biological_tree)} root nodes, {bio_nodes:,} total nodes
+    - **Chemical Tree**: {len(chemical_tree)} root nodes, {chem_nodes:,} total nodes
+            """),
     ]
-
-    if IS_PYODIDE:
-        _output.append(
-            mo.callout(
-                mo.md("""
-**This is a limited preview.** For full trees, use the CLI:
-```bash
-uv run https://adafede.github.io/marimo/apps/lotus_pubchem_tree.py export -o ./output -v
-```
-                """),
-                kind="info",
-            ),
-        )
 
     mo.vstack(_output)
     return biological_tree, chemical_tree
@@ -1547,15 +1587,22 @@ def download_buttons(biological_tree, chemical_tree):
             "tree": tree,
         }
 
+    # Full format (with metadata)
     biological_output = build_tree_output("biological", biological_tree)
     chemical_output = build_tree_output("chemical", chemical_tree)
-
     biological_json = json.dumps(biological_output, indent=2)
     chemical_json = json.dumps(chemical_output, indent=2)
+
+    # PubChem format (compact, name-as-key)
+    biological_pubchem = tree_to_pubchem_format(biological_tree, "biological")
+    chemical_pubchem = tree_to_pubchem_format(chemical_tree, "chemical")
+    biological_pubchem_json = json.dumps(biological_pubchem, indent=2)
+    chemical_pubchem_json = json.dumps(chemical_pubchem, indent=2)
 
     mo.vstack(
         [
             mo.md("## Download Trees"),
+            mo.md("### Full Format (with metadata)"),
             mo.hstack(
                 [
                     mo.download(
@@ -1573,38 +1620,25 @@ def download_buttons(biological_tree, chemical_tree):
                 ],
                 gap=2,
             ),
+            mo.md("### PubChem Format (compact, name-as-key)"),
+            mo.hstack(
+                [
+                    mo.download(
+                        label="Biological Tree (PubChem)",
+                        filename=f"{date_str}_lotus_biological_tree_pubchem.json",
+                        mimetype="application/json",
+                        data=lambda: biological_pubchem_json.encode("utf-8"),
+                    ),
+                    mo.download(
+                        label="Chemical Tree (PubChem)",
+                        filename=f"{date_str}_lotus_chemical_tree_pubchem.json",
+                        mimetype="application/json",
+                        data=lambda: chemical_pubchem_json.encode("utf-8"),
+                    ),
+                ],
+                gap=2,
+            ),
         ],
-    )
-    return
-
-
-@app.cell
-def cli_usage():
-    mo.accordion(
-        {
-            "Programmatic / CLI Usage": mo.md("""
-**Remote CLI export (one-liner, auto-installs deps):**
-```bash
-uv run https://adafede.github.io/marimo/apps/lotus_pubchem_tree.py export -o ./output -v
-```
-
-**Remote GUI (interactive, limited preview in browser):**
-```bash
-uvx marimo run https://adafede.github.io/marimo/apps/lotus_pubchem_tree.py
-```
-
----
-
-**Local usage:**
-```bash
-# GUI
-marimo run lotus_pubchem_tree.py
-
-# CLI export
-python lotus_pubchem_tree.py export -o ./output -v
-```
-        """),
-        },
     )
     return
 
@@ -1733,8 +1767,8 @@ Examples:
             # Build label map
             label_map = dict(
                 zip(
-                    compound_label_df["compound"].to_list(),
-                    compound_label_df["compound_label"].to_list(),
+                    compound_label_df["compound"],
+                    compound_label_df["compound_label"],
                 ),
             )
 

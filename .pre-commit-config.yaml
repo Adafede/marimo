@@ -23,7 +23,7 @@ repos:
       - id: mixed-line-ending
       - id: trailing-whitespace
   - repo: https://github.com/fpgmaas/deptry
-    rev: 0.25.0
+    rev: 0.25.1
     hooks:
       - id: deptry
         language: python
