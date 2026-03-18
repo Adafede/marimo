@@ -276,12 +276,17 @@ with app.setup:
         )
 
     # ========================================================================
-    # DATA FETCHING
+    # DATA STRUCTURES
+    # ========================================================================
+    # Naming conventions:
+    #   - *_map: dict mapping QID to value(s), e.g., inchikey_map, smiles_map
+    #   - Descriptors fields: singular (type name), hold list[str] | None
+    #   - Local variables: plural when holding lists, e.g., inchikeys, children
     # ========================================================================
 
     @dataclass
     class LOTUSData:
-        """Container for all fetched LOTUS data."""
+        """Container for all fetched LOTUS data as LazyFrames."""
 
         compound_taxon: pl.LazyFrame
         taxon_ncbi: pl.LazyFrame
@@ -310,7 +315,12 @@ with app.setup:
 
     @dataclass
     class Descriptors:
-        """Chemical structure descriptors for a compound."""
+        """
+        Chemical structure descriptors for a compound.
+
+        Field names are singular (descriptor type), but hold lists since a compound
+        may have multiple values (rare). Output uses single value when unique.
+        """
 
         inchikey: list[str] | None = None
         smiles: list[str] | None = None
@@ -344,30 +354,6 @@ with app.setup:
             return not (self.inchikey or self.smiles or self.smarts or self.cxsmiles)
 
     @dataclass
-    class Compound:
-        """A chemical compound with identifiers, label, and descriptors."""
-
-        identifiers: Identifiers
-        label: str
-        descriptors: Descriptors
-
-        @property
-        def qid(self) -> str:
-            """Shortcut to get the QID."""
-            return self.identifiers.wikidata_qid
-
-        def to_dict(self) -> dict:
-            """Convert to dictionary for JSON output. Name first for readability."""
-            result = {
-                "Name": self.label,
-                "Identifiers": self.identifiers.to_dict(),
-            }
-            descriptors_dict = self.descriptors.to_dict()
-            if descriptors_dict:
-                result["Descriptors"] = descriptors_dict
-            return result
-
-    @dataclass
     class Taxon:
         """A biological taxon with identifiers and name."""
 
@@ -395,18 +381,16 @@ with app.setup:
                 node["Children"] = children
             return node
 
-    def build_compound_map(
+    def build_compounds_with_taxa(
         compound_taxon: pl.DataFrame,
-        smiles_map: dict,
-        smarts_map: dict,
-        cxsmiles_map: dict,
-        label_map: dict[str, str],
-    ) -> dict[str, Compound]:
+    ) -> tuple[set[str], dict[str, list[str]]]:
         """
-        Build a mapping from compound QID to Compound object.
+        Identify compounds that have InChIKeys AND are associated with taxa.
 
-        Uses compound_taxon to get InChIKeys (compounds with taxon associations),
-        and enriches with SMILES, SMARTS, CXSMILES from the structure maps.
+        These are the "leaf" compounds that must appear in the trees.
+        Returns:
+            - Set of compound QIDs with valid InChIKeys+taxa
+            - Dict mapping compound QID to list of InChIKeys
         """
         # Group InChIKeys by compound
         compound_inchikeys = (
@@ -414,33 +398,21 @@ with app.setup:
             .agg(pl.col("compound_inchikey").unique().alias("inchikeys"))
             .to_dict(as_series=False)
         )
-        inchikey_map = dict(
-            zip(compound_inchikeys["compound"], compound_inchikeys["inchikeys"]),
-        )
 
-        # Build Compound objects for all compounds in compound_taxon
-        compound_map: dict[str, Compound] = {}
-        for qid, inchikeys in inchikey_map.items():
+        inchikey_map: dict[str, list[str]] = {}
+        compounds_with_taxa: set[str] = set()
+
+        for qid, inchikeys in zip(
+            compound_inchikeys["compound"],
+            compound_inchikeys["inchikeys"],
+        ):
             # Filter out None/empty InChIKeys
             valid_inchikeys = [ik for ik in inchikeys if ik]
-            if not valid_inchikeys:
-                continue
+            if valid_inchikeys:
+                inchikey_map[qid] = valid_inchikeys
+                compounds_with_taxa.add(qid)
 
-            identifiers = Identifiers(wikidata_qid=qid)
-            label = label_map.get(qid, qid)
-            descriptors = Descriptors(
-                inchikey=valid_inchikeys,
-                smiles=smiles_map.get(qid),
-                smarts=smarts_map.get(qid),
-                cxsmiles=cxsmiles_map.get(qid),
-            )
-            compound_map[qid] = Compound(
-                identifiers=identifiers,
-                label=label,
-                descriptors=descriptors,
-            )
-
-        return compound_map
+        return compounds_with_taxa, inchikey_map
 
     def fetch_all_data(endpoint: str, progress_callback=None) -> LOTUSData:
         """Fetch all required data from Wikidata."""
@@ -652,6 +624,56 @@ with app.setup:
 
         return smiles_map, smarts_map, cxsmiles_map
 
+    def build_descriptor_map(
+        smiles_map: dict,
+        smarts_map: dict,
+        cxsmiles_map: dict,
+        inchikey_map: dict[str, list[str]] = None,
+    ) -> dict[str, Descriptors]:
+        """
+        Build a unified mapping from compound QID to Descriptors.
+
+        Includes ALL compounds with any descriptor data (SMILES, SMARTS, CXSMILES),
+        not just those with InChIKeys. This enables efficient single-lookup for
+        descriptors in tree building.
+
+        Args:
+            smiles_map: Compound QID -> SMILES list
+            smarts_map: Compound QID -> SMARTS list
+            cxsmiles_map: Compound QID -> CXSMILES list
+            inchikey_map: Optional compound QID -> InChIKey list (for compounds with taxa)
+
+        Returns:
+            dict mapping compound QID to Descriptors object
+        """
+        inchikey_map = inchikey_map or {}
+
+        # Collect all compound QIDs with any descriptor
+        all_qids = (
+            set(smiles_map.keys())
+            | set(smarts_map.keys())
+            | set(cxsmiles_map.keys())
+            | set(inchikey_map.keys())
+        )
+
+        descriptor_map: dict[str, Descriptors] = {}
+        for qid in all_qids:
+            inchikeys = inchikey_map.get(qid)
+            smiles = smiles_map.get(qid)
+            smarts = smarts_map.get(qid)
+            cxsmiles = cxsmiles_map.get(qid)
+
+            # Only create Descriptors if at least one field has data
+            if inchikeys or smiles or smarts or cxsmiles:
+                descriptor_map[qid] = Descriptors(
+                    inchikey=inchikeys,
+                    smiles=smiles,
+                    smarts=smarts,
+                    cxsmiles=cxsmiles,
+                )
+
+        return descriptor_map
+
     # ========================================================================
     # TREE BUILDING
     # ========================================================================
@@ -661,7 +683,9 @@ with app.setup:
         taxon_ncbi: pl.DataFrame,
         taxon_parent: pl.DataFrame,
         taxon_name: pl.DataFrame,
-        compound_map: dict[str, Compound],
+        compounds_with_taxa: set[str],
+        descriptor_map: dict[str, Descriptors],
+        label_map: dict[str, str],
     ) -> list[dict]:
         """
         Build biological tree JSON for PubChem.
@@ -670,15 +694,19 @@ with app.setup:
         Only includes taxa that have compounds with InChIKeys directly or in their descendants.
         All taxa are constrained to be under Biota (Q2382443).
 
-        IMPORTANT: We first identify which taxa are relevant (have compounds or ancestors
-        of taxa with compounds), then only build tree for those taxa. This prevents
-        explosion through the entire tree of life.
+        Args:
+            compound_taxon: DataFrame with compound-taxon relationships
+            taxon_ncbi: DataFrame with taxon-NCBI ID mappings
+            taxon_parent: DataFrame with taxon parent relationships
+            taxon_name: DataFrame with taxon names
+            compounds_with_taxa: Set of compound QIDs that have InChIKeys+taxa
+            descriptor_map: Unified mapping of compound QID to Descriptors
+            label_map: Mapping of compound QID to label
 
         Returns a hierarchical tree structure where each taxon node contains:
-        - NCBI_TaxID: NCBI taxonomy ID
-        - Wikidata_QID: Wikidata QID of the taxon
         - Name: Taxonomic name
-        - Compounds: List of Compound objects found in this taxon
+        - Identifiers: NCBI TaxID and Wikidata QID
+        - Compounds: List of compounds found in this taxon
         - Children: List of child taxon nodes
         """
         # Step 1: Get all taxa that directly have compounds
@@ -717,7 +745,7 @@ with app.setup:
             )
             .to_dict(as_series=False)
         )
-        parent_dict = dict(
+        parent_map = dict(
             zip(parent_map_data["taxon_parent"], parent_map_data["children"]),
         )
 
@@ -761,16 +789,28 @@ with app.setup:
                 return None
             visited.add(taxon_qid)
 
-            # Get compounds for this taxon using the Compound objects
+            # Get compounds for this taxon
             compound_qids = taxon_to_compound_qids.get(taxon_qid, [])
             compounds_list = []
             for qid in compound_qids:
-                compound = compound_map.get(qid)
-                if compound:  # Only include if in compound_map (has valid InChIKey)
-                    compounds_list.append(compound.to_dict())
+                if qid not in compounds_with_taxa:
+                    continue  # Skip compounds without valid InChIKeys
+                # Build compound dict from descriptor_map and label_map
+                label = label_map.get(qid, qid)
+                identifiers = Identifiers(wikidata_qid=qid)
+                compound_dict = {
+                    "Name": label,
+                    "Identifiers": identifiers.to_dict(),
+                }
+                descriptors = descriptor_map.get(qid)
+                if descriptors:
+                    desc_dict = descriptors.to_dict()
+                    if desc_dict:
+                        compound_dict["Descriptors"] = desc_dict
+                compounds_list.append(compound_dict)
 
             # Build children (only for children in relevant_taxa)
-            children = parent_dict.get(taxon_qid, [])
+            children = parent_map.get(taxon_qid, [])
             child_nodes = []
             for child in children:
                 child_node = build_node(child, visited)
@@ -818,21 +858,28 @@ with app.setup:
     def build_compound_tree(
         compound_parent: pl.DataFrame,
         compound_label: pl.DataFrame,
-        compound_map: dict[str, Compound],
+        compounds_with_taxa: set[str],
+        descriptor_map: dict[str, Descriptors],
     ) -> list[dict]:
         """
         Build chemical compound tree JSON for PubChem.
 
         Includes:
-        - Nodes with InChIKeys that are associated with taxa (from compound_map)
+        - Nodes with InChIKeys that are associated with taxa (from compounds_with_taxa)
         - Intermediary nodes without InChIKeys but with valid children
-        - Structures (SMILES/SMARTS/CXSMILES) are included via the Compound class
+        - Descriptors from descriptor_map for ALL nodes when available
 
         All compounds are constrained to be under chemical compound (Q11173).
 
+        Args:
+            compound_parent: DataFrame with compound-parent relationships
+            compound_label: DataFrame with compound labels
+            compounds_with_taxa: Set of compound QIDs that have InChIKeys AND taxa
+            descriptor_map: Unified mapping of compound QID to Descriptors
+
         Returns a hierarchical tree structure where each node contains:
-        - Wikidata_QID: Wikidata QID
-        - Label: Compound label/name
+        - Name: Compound label/name
+        - Identifiers: Wikidata QID
         - Descriptors: Structure descriptors (InChIKey, SMILES, SMARTS, CXSMILES)
         - Children: List of child compound classes
         """
@@ -844,7 +891,7 @@ with app.setup:
             )
             .to_dict(as_series=False)
         )
-        parent_dict = dict(
+        parent_map = dict(
             zip(parent_map_data["compound_parent"], parent_map_data["children"]),
         )
 
@@ -862,17 +909,16 @@ with app.setup:
         roots = all_parents - all_compounds
 
         def build_node(compound_qid: str, visited: set) -> dict | None:
-            """Build node, returning None if no descriptors in subtree."""
+            """Build node, returning None if no valid descendants."""
             if compound_qid in visited:
                 return None
             visited.add(compound_qid)
 
-            # Check if this compound has InChIKeys (via compound_map)
-            compound = compound_map.get(compound_qid)
-            has_compound_data = compound is not None
+            # Check if this compound has taxa (required for inclusion)
+            has_taxa = compound_qid in compounds_with_taxa
 
             # Build children first to check if any have valid descendants
-            children = parent_dict.get(compound_qid, [])
+            children = parent_map.get(compound_qid, [])
             child_nodes = []
             for child in children:
                 child_node = build_node(child, visited)
@@ -880,9 +926,9 @@ with app.setup:
                     child_nodes.append(child_node)
 
             # Include this node ONLY if:
-            # - It has InChIKeys (which means it has taxa), OR
+            # - It has InChIKeys+taxa, OR
             # - It has valid children (making it an intermediary node)
-            if not has_compound_data and not child_nodes:
+            if not has_taxa and not child_nodes:
                 return None
 
             label = label_map.get(compound_qid, compound_qid)
@@ -894,11 +940,12 @@ with app.setup:
                 "Identifiers": identifiers.to_dict(),
             }
 
-            # Add descriptors from the Compound object if available
-            if compound:
-                descriptors = compound.descriptors.to_dict()
-                if descriptors:
-                    node["Descriptors"] = descriptors
+            # Add descriptors from unified map (single lookup)
+            descriptors = descriptor_map.get(compound_qid)
+            if descriptors:
+                desc_dict = descriptors.to_dict()
+                if desc_dict:
+                    node["Descriptors"] = desc_dict
 
             if child_nodes:
                 # Sort children by Name
@@ -1193,13 +1240,17 @@ def build_trees(build_trees_btn, data):
             ),
         )
 
-    with mo.status.spinner("Building compound map..."):
-        compound_map = build_compound_map(
-            compound_taxon_df,
+    with mo.status.spinner("Identifying compounds with taxa..."):
+        # Get compounds that have InChIKeys AND are associated with taxa
+        compounds_with_taxa, inchikey_map = build_compounds_with_taxa(compound_taxon_df)
+
+    with mo.status.spinner("Building unified descriptor map..."):
+        # Build unified descriptor map for ALL compounds (including intermediary nodes)
+        descriptor_map = build_descriptor_map(
             smiles_map,
             smarts_map,
             cxsmiles_map,
-            label_map,
+            inchikey_map,
         )
 
     with mo.status.spinner("Building biological tree..."):
@@ -1212,7 +1263,9 @@ def build_trees(build_trees_btn, data):
             taxon_ncbi_df,
             taxon_parent_df,
             taxon_name_df,
-            compound_map,
+            compounds_with_taxa,
+            descriptor_map,
+            label_map,
         )
 
     with mo.status.spinner("Building chemical tree..."):
@@ -1221,7 +1274,8 @@ def build_trees(build_trees_btn, data):
         chemical_tree = build_compound_tree(
             compound_parent_df,
             compound_label_df,
-            compound_map,
+            compounds_with_taxa,
+            descriptor_map,
         )
 
     bio_nodes = count_tree_nodes(biological_tree)
@@ -1320,10 +1374,6 @@ def download_buttons(biological_tree, chemical_tree):
                     "Only nodes with InChIKey associations (directly or via descendants) are included.",
                     "Data queried from Wikidata via QLever SPARQL endpoint.",
                 ],
-                "usage_example": {
-                    "python": "data = json.load(open('file.json')); roots = data['tree']",
-                    "jq": "jq '.tree[] | .Name' file.json",
-                },
             },
             "metadata": {
                 "name": f"LOTUS {tree_type.title()} Tree",
@@ -1546,18 +1596,35 @@ Examples:
             )
 
             if args.verbose:
-                print("\nBuilding compound map...", file=sys.stderr)
+                print("\nIdentifying compounds with taxa...", file=sys.stderr)
 
-            compound_map = build_compound_map(
+            # Get compounds that have InChIKeys AND are associated with taxa
+            compounds_with_taxa, inchikey_map = build_compounds_with_taxa(
                 compound_taxon_df,
-                smiles_map,
-                smarts_map,
-                cxsmiles_map,
-                label_map,
             )
 
             if args.verbose:
-                print(f"  Compounds with data: {len(compound_map):,}", file=sys.stderr)
+                print(
+                    f"  Compounds with InChIKey+taxa: {len(compounds_with_taxa):,}",
+                    file=sys.stderr,
+                )
+
+            if args.verbose:
+                print("\nBuilding unified descriptor map...", file=sys.stderr)
+
+            # Build unified descriptor map for ALL compounds
+            descriptor_map = build_descriptor_map(
+                smiles_map,
+                smarts_map,
+                cxsmiles_map,
+                inchikey_map,
+            )
+
+            if args.verbose:
+                print(
+                    f"  Compounds with descriptors: {len(descriptor_map):,}",
+                    file=sys.stderr,
+                )
 
             if args.verbose:
                 print("\nBuilding biological tree...", file=sys.stderr)
@@ -1571,7 +1638,9 @@ Examples:
                 taxon_ncbi_df,
                 taxon_parent_df,
                 taxon_name_df,
-                compound_map,
+                compounds_with_taxa,
+                descriptor_map,
+                label_map,
             )
 
             if args.verbose:
@@ -1587,7 +1656,8 @@ Examples:
             chemical_tree = build_compound_tree(
                 compound_parent_df,
                 compound_label_df,
-                compound_map,
+                compounds_with_taxa,
+                descriptor_map,
             )
 
             if args.verbose:
@@ -1631,10 +1701,6 @@ Examples:
                             "Only nodes with InChIKey associations (directly or via descendants) are included.",
                             "Data queried from Wikidata via QLever SPARQL endpoint.",
                         ],
-                        "usage_example": {
-                            "python": "data = json.load(open('file.json')); roots = data['tree']",
-                            "jq": "jq '.tree[] | .Name' file.json",
-                        },
                     },
                     "metadata": {
                         "name": f"LOTUS {tree_type.title()} Tree",
