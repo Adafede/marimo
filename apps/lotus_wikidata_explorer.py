@@ -3,7 +3,7 @@
 # dependencies = [
 #     "great-tables==0.21.0",
 #     "marimo",
-#     "polars==1.37.1",
+#     "polars==1.39.2",
 #     "maplib==0.19.24",
 # ]
 # [tool.marimo.runtime]
@@ -31,7 +31,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import marimo
 
-__generated_with = "0.21.0"
+__generated_with = "0.20.4"
 app = marimo.App(width="full", app_title="LOTUS Wikidata Explorer")
 
 with app.setup:
