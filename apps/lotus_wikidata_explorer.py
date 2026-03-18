@@ -1082,39 +1082,42 @@ with app.setup:
         def _to_bytes(self, df: pl.LazyFrame) -> bytes:
             df_collected = df.collect()
 
-            model = MaplibModel()
-            model.add_prefixes(WIKIDATA_NAMESPACES)
-
             dataset_uri, query_hash, result_hash = self._create_dataset_uri(
                 df_collected,
             )
-            self._add_metadata(
-                model,
-                dataset_uri,
-                len(df_collected),
-                query_hash,
-                result_hash,
+
+            # Create model
+            model = MaplibModel()
+            model.add_prefixes(WIKIDATA_NAMESPACES)
+
+            # Add metadata (small, keep as list)
+            self._add_metadata_triples(
+                model, dataset_uri, len(df_collected), query_hash, result_hash
             )
 
-            batch_size = self.memory.get_batch_size("ttl")
-            processed_taxa: set[str] = set()
-            processed_refs: set[str] = set()
+            # Build all triples using vectorized Polars operations
+            iri_df, literal_df = self._build_triples_vectorized(
+                df_collected, dataset_uri
+            )
 
-            for start_idx in range(0, len(df_collected), batch_size):
-                batch = df_collected[start_idx : start_idx + batch_size]
-                self._add_compound_triples_batch(
-                    model,
-                    batch,
-                    dataset_uri,
-                    processed_taxa,
-                    processed_refs,
-                )
-                del batch
-                if self.memory.is_wasm:
-                    gc.collect()
+            del df_collected
+            if self.memory.is_wasm:
+                gc.collect()
+
+            # Add to model
+            if iri_df is not None and len(iri_df) > 0:
+                model.map_triples(iri_df)
+                del iri_df
+
+            if literal_df is not None and len(literal_df) > 0:
+                model.map_triples(literal_df, validate_iris=False)
+                del literal_df
+
+            if self.memory.is_wasm:
+                gc.collect()
 
             result = model.writes(format="turtle").encode("utf-8")
-            del df_collected, model
+            del model
             if self.memory.is_wasm:
                 gc.collect()
             return result
@@ -1127,20 +1130,17 @@ with app.setup:
                 "|".join(query_components).encode("utf-8"),
             ).hexdigest()
 
-            result_hasher = hashlib.sha256()
-            for val in (
-                df.select(pl.col("compound_qid"))
-                .to_series()
-                .drop_nulls()
-                .unique()
-                .sort()
-            ):
-                result_hasher.update(str(val).encode("utf-8"))
-            result_hash = result_hasher.hexdigest()
+            # Vectorized hash computation
+            compound_qids = df.select(
+                pl.col("compound_qid").drop_nulls().unique().sort(),
+            ).to_series()
+            result_hash = hashlib.sha256(
+                "|".join(compound_qids.cast(pl.Utf8).to_list()).encode("utf-8"),
+            ).hexdigest()
 
             return f"urn:hash:sha256:{result_hash}", query_hash, result_hash
 
-        def _add_metadata(
+        def _add_metadata_triples(
             self,
             model: MaplibModel,
             dataset_uri: str,
@@ -1169,25 +1169,24 @@ with app.setup:
                 (dataset_uri, f"{dcterms_ns}source", WIKIDATA_HTTP_BASE),
                 (dataset_uri, f"{schema_ns}isBasedOn", f"{WIKI_PREFIX}Q104225190"),
             ]
-
             if self.qid and self.qid != "*" and self.qid.strip():
                 iri_triples.append(
-                    (dataset_uri, f"{schema_ns}about", f"{wd_ns}{self.qid}"),
+                    (dataset_uri, f"{schema_ns}about", f"{wd_ns}{self.qid}")
                 )
             elif self.taxon_input == "*":
                 iri_triples.append(
-                    (dataset_uri, f"{schema_ns}about", f"{wd_ns}Q2382443"),
+                    (dataset_uri, f"{schema_ns}about", f"{wd_ns}Q2382443")
                 )
 
-            if iri_triples:
-                df_iri = pl.DataFrame(
+            model.map_triples(
+                pl.DataFrame(
                     {
                         "subject": [t[0] for t in iri_triples],
                         "predicate": [t[1] for t in iri_triples],
                         "object": [t[2] for t in iri_triples],
                     }
-                )
-                model.map_triples(df_iri)
+                ),
+            )
 
             literal_triples = [
                 (dataset_uri, f"{schema_ns}name", dataset_name),
@@ -1201,7 +1200,6 @@ with app.setup:
                 (dataset_uri, f"{dcterms_ns}provenance", f"Query hash: {query_hash}"),
                 (dataset_uri, f"{dcterms_ns}identifier", f"sha256:{result_hash}"),
             ]
-
             if self.filters:
                 literal_triples.append(
                     (
@@ -1211,23 +1209,23 @@ with app.setup:
                     ),
                 )
 
-            df_literal = pl.DataFrame(
-                {
-                    "subject": [t[0] for t in literal_triples],
-                    "predicate": [t[1] for t in literal_triples],
-                    "object": [t[2] for t in literal_triples],
-                }
+            model.map_triples(
+                pl.DataFrame(
+                    {
+                        "subject": [t[0] for t in literal_triples],
+                        "predicate": [t[1] for t in literal_triples],
+                        "object": [t[2] for t in literal_triples],
+                    }
+                ),
+                validate_iris=False,
             )
-            model.map_triples(df_literal, validate_iris=False)
 
-        def _add_compound_triples_batch(
+        def _build_triples_vectorized(
             self,
-            model: MaplibModel,
-            batch: pl.DataFrame,
+            df: pl.DataFrame,
             dataset_uri: str,
-            processed_taxa: set[str],
-            processed_refs: set[str],
-        ):
+        ) -> tuple[pl.DataFrame | None, pl.DataFrame | None]:
+            """Build all triples using vectorized Polars operations."""
             wd_ns = WIKIDATA_NAMESPACES["wd"]
             wdt_ns = WIKIDATA_NAMESPACES["wdt"]
             wds_ns = WIKIDATA_NAMESPACES["wds"]
@@ -1238,142 +1236,236 @@ with app.setup:
             schema_ns = WIKIDATA_NAMESPACES["schema"]
             rdfs_ns = WIKIDATA_NAMESPACES["rdfs"]
 
-            iri_triples: list[tuple[str, str, str]] = []
-            literal_triples: list[tuple[str, str, str]] = []
-            blank_node_counter = 0
+            # Filter to rows with compound_qid
+            df = df.filter(pl.col("compound_qid").is_not_null())
+            if len(df) == 0:
+                return None, None
 
-            for row in batch.iter_rows(named=True):
-                compound_qid = row.get("compound_qid")
-                if not compound_qid:
-                    continue
+            # Pre-compute URI columns
+            df = df.with_columns(
+                [
+                    (pl.lit(wd_ns) + pl.col("compound_qid")).alias("_compound_uri"),
+                    pl.when(pl.col("taxon_qid").is_not_null())
+                    .then(pl.lit(wd_ns) + pl.col("taxon_qid"))
+                    .otherwise(pl.lit(None))
+                    .alias("_taxon_uri"),
+                    pl.when(pl.col("statement_id").is_not_null())
+                    .then(pl.lit(wds_ns) + pl.col("statement_id"))
+                    .otherwise(pl.lit("urn:bnode:stmt_") + pl.col("compound_qid"))
+                    .alias("_statement_uri"),
+                    pl.when(pl.col("reference_qid").is_not_null())
+                    .then(pl.lit(wd_ns) + pl.col("reference_qid"))
+                    .otherwise(pl.lit(None))
+                    .alias("_ref_uri"),
+                    pl.when(pl.col("ref").is_not_null())
+                    .then(pl.col("ref"))
+                    .otherwise(pl.lit("urn:bnode:ref_") + pl.col("compound_qid"))
+                    .alias("_ref_node_uri"),
+                ]
+            )
 
-                compound_uri = f"{wd_ns}{compound_qid}"
+            iri_dfs = []
+            literal_dfs = []
 
-                iri_triples.append(
-                    (dataset_uri, f"{schema_ns}hasPart", compound_uri),
+            # 1. Dataset hasPart compound (all rows)
+            iri_dfs.append(
+                df.select(
+                    [
+                        pl.lit(dataset_uri).alias("subject"),
+                        pl.lit(f"{schema_ns}hasPart").alias("predicate"),
+                        pl.col("_compound_uri").alias("object"),
+                    ]
+                ),
+            )
+
+            # 2. Compound -> Taxon IRI triples (where taxon exists)
+            taxon_df = df.filter(pl.col("taxon_qid").is_not_null())
+            if len(taxon_df) > 0:
+                # compound P703 statement
+                iri_dfs.append(
+                    taxon_df.select(
+                        [
+                            pl.col("_compound_uri").alias("subject"),
+                            pl.lit(f"{p_ns}P703").alias("predicate"),
+                            pl.col("_statement_uri").alias("object"),
+                        ]
+                    ),
+                )
+                # statement PS703 taxon
+                iri_dfs.append(
+                    taxon_df.select(
+                        [
+                            pl.col("_statement_uri").alias("subject"),
+                            pl.lit(f"{ps_ns}P703").alias("predicate"),
+                            pl.col("_taxon_uri").alias("object"),
+                        ]
+                    ),
+                )
+                # compound WDT P703 taxon (direct)
+                iri_dfs.append(
+                    taxon_df.select(
+                        [
+                            pl.col("_compound_uri").alias("subject"),
+                            pl.lit(f"{wdt_ns}P703").alias("predicate"),
+                            pl.col("_taxon_uri").alias("object"),
+                        ]
+                    ),
                 )
 
-                if row.get("compound_inchikey"):
-                    literal_triples.append(
-                        (compound_uri, f"{wdt_ns}P235", row["compound_inchikey"]),
-                    )
-                if row.get("compound_smiles"):
-                    literal_triples.append(
-                        (compound_uri, f"{wdt_ns}P233", row["compound_smiles"]),
-                    )
-                if row.get("molecular_formula"):
-                    literal_triples.append(
-                        (compound_uri, f"{wdt_ns}P274", row["molecular_formula"]),
-                    )
-                if row.get("compound_name"):
-                    literal_triples.append(
-                        (compound_uri, f"{rdfs_ns}label", row["compound_name"]),
-                    )
-                if row.get("compound_mass") is not None:
-                    literal_triples.append(
-                        (compound_uri, f"{wdt_ns}P2067", str(row["compound_mass"])),
-                    )
-
-                taxon_qid = row.get("taxon_qid")
-                ref_qid = row.get("reference_qid")
-                statement_uri_str = row.get("statement_id")
-                ref_uri_str = row.get("ref")
-
-                if taxon_qid:
-                    taxon_uri = f"{wd_ns}{taxon_qid}"
-
-                    if statement_uri_str:
-                        statement_uri = f"{wds_ns}{statement_uri_str}"
-                    else:
-                        statement_uri = f"urn:bnode:stmt_{blank_node_counter}"
-                        blank_node_counter += 1
-
-                    iri_triples.extend(
+            # 3. Reference IRI triples (where ref exists)
+            ref_df = df.filter(pl.col("reference_qid").is_not_null())
+            if len(ref_df) > 0:
+                # statement wasDerivedFrom ref_node
+                iri_dfs.append(
+                    ref_df.select(
                         [
-                            (compound_uri, f"{p_ns}P703", statement_uri),
-                            (statement_uri, f"{ps_ns}P703", taxon_uri),
-                            (compound_uri, f"{wdt_ns}P703", taxon_uri),
+                            pl.col("_statement_uri").alias("subject"),
+                            pl.lit(f"{prov_ns}wasDerivedFrom").alias("predicate"),
+                            pl.col("_ref_node_uri").alias("object"),
                         ]
-                    )
+                    ),
+                )
+                # ref_node PR248 ref_uri
+                iri_dfs.append(
+                    ref_df.select(
+                        [
+                            pl.col("_ref_node_uri").alias("subject"),
+                            pl.lit(f"{pr_ns}P248").alias("predicate"),
+                            pl.col("_ref_uri").alias("object"),
+                        ]
+                    ),
+                )
 
-                    if ref_qid:
-                        ref_uri = f"{wd_ns}{ref_qid}"
-                        if ref_uri_str:
-                            ref_node_uri = ref_uri_str
-                        else:
-                            ref_node_uri = f"urn:bnode:ref_{blank_node_counter}"
-                            blank_node_counter += 1
-
-                        iri_triples.extend(
-                            [
-                                (
-                                    statement_uri,
-                                    f"{prov_ns}wasDerivedFrom",
-                                    ref_node_uri,
-                                ),
-                                (ref_node_uri, f"{pr_ns}P248", ref_uri),
-                            ]
+            # 4. Compound literal triples
+            for col, pred in [
+                ("compound_inchikey", f"{wdt_ns}P235"),
+                ("compound_smiles", f"{wdt_ns}P233"),
+                ("molecular_formula", f"{wdt_ns}P274"),
+                ("compound_name", f"{rdfs_ns}label"),
+            ]:
+                if col in df.columns:
+                    filtered = df.filter(pl.col(col).is_not_null())
+                    if len(filtered) > 0:
+                        literal_dfs.append(
+                            filtered.select(
+                                [
+                                    pl.col("_compound_uri").alias("subject"),
+                                    pl.lit(pred).alias("predicate"),
+                                    pl.col(col).cast(pl.Utf8).alias("object"),
+                                ]
+                            ),
                         )
 
-                        if ref_qid not in processed_refs:
-                            if row.get("reference_title"):
-                                literal_triples.extend(
+            # compound_mass as string
+            if "compound_mass" in df.columns:
+                mass_df = df.filter(pl.col("compound_mass").is_not_null())
+                if len(mass_df) > 0:
+                    literal_dfs.append(
+                        mass_df.select(
+                            [
+                                pl.col("_compound_uri").alias("subject"),
+                                pl.lit(f"{wdt_ns}P2067").alias("predicate"),
+                                pl.col("compound_mass").cast(pl.Utf8).alias("object"),
+                            ]
+                        ),
+                    )
+
+            # 5. Taxon literals (deduplicated)
+            if "taxon_name" in df.columns:
+                taxon_unique = (
+                    df.filter(
+                        pl.col("taxon_qid").is_not_null()
+                        & pl.col("taxon_name").is_not_null(),
+                    )
+                    .unique(subset=["taxon_qid"])
+                    .select(
+                        [
+                            pl.col("_taxon_uri"),
+                            pl.col("taxon_name"),
+                        ]
+                    )
+                )
+                if len(taxon_unique) > 0:
+                    literal_dfs.append(
+                        taxon_unique.select(
+                            [
+                                pl.col("_taxon_uri").alias("subject"),
+                                pl.lit(f"{wdt_ns}P225").alias("predicate"),
+                                pl.col("taxon_name").alias("object"),
+                            ]
+                        ),
+                    )
+                    literal_dfs.append(
+                        taxon_unique.select(
+                            [
+                                pl.col("_taxon_uri").alias("subject"),
+                                pl.lit(f"{rdfs_ns}label").alias("predicate"),
+                                pl.col("taxon_name").alias("object"),
+                            ]
+                        ),
+                    )
+
+            # 6. Reference literals (deduplicated)
+            ref_unique = df.filter(pl.col("reference_qid").is_not_null()).unique(
+                subset=["reference_qid"]
+            )
+            if len(ref_unique) > 0:
+                for col, pred in [
+                    ("reference_title", f"{wdt_ns}P1476"),
+                    ("reference_doi", f"{wdt_ns}P356"),
+                ]:
+                    if col in ref_unique.columns:
+                        filtered = ref_unique.filter(pl.col(col).is_not_null())
+                        if len(filtered) > 0:
+                            literal_dfs.append(
+                                filtered.select(
                                     [
-                                        (
-                                            ref_uri,
-                                            f"{wdt_ns}P1476",
-                                            row["reference_title"],
-                                        ),
-                                        (
-                                            ref_uri,
-                                            f"{rdfs_ns}label",
-                                            row["reference_title"],
-                                        ),
+                                        pl.col("_ref_uri").alias("subject"),
+                                        pl.lit(pred).alias("predicate"),
+                                        pl.col(col).cast(pl.Utf8).alias("object"),
                                     ]
-                                )
-                            if row.get("reference_doi"):
-                                literal_triples.append(
-                                    (ref_uri, f"{wdt_ns}P356", row["reference_doi"]),
-                                )
-                            if row.get("reference_date"):
-                                literal_triples.append(
-                                    (
-                                        ref_uri,
-                                        f"{wdt_ns}P577",
-                                        str(row["reference_date"]),
-                                    ),
-                                )
-                            processed_refs.add(ref_qid)
-
-                    if taxon_qid not in processed_taxa:
-                        if row.get("taxon_name"):
-                            literal_triples.extend(
-                                [
-                                    (taxon_uri, f"{wdt_ns}P225", row["taxon_name"]),
-                                    (taxon_uri, f"{rdfs_ns}label", row["taxon_name"]),
-                                ]
+                                ),
                             )
-                        processed_taxa.add(taxon_qid)
 
-            if iri_triples:
-                df_iri = pl.DataFrame(
-                    {
-                        "subject": [t[0] for t in iri_triples],
-                        "predicate": [t[1] for t in iri_triples],
-                        "object": [t[2] for t in iri_triples],
-                    }
-                )
-                model.map_triples(df_iri)
+                # Also add rdfs:label for reference_title
+                if "reference_title" in ref_unique.columns:
+                    filtered = ref_unique.filter(
+                        pl.col("reference_title").is_not_null()
+                    )
+                    if len(filtered) > 0:
+                        literal_dfs.append(
+                            filtered.select(
+                                [
+                                    pl.col("_ref_uri").alias("subject"),
+                                    pl.lit(f"{rdfs_ns}label").alias("predicate"),
+                                    pl.col("reference_title")
+                                    .cast(pl.Utf8)
+                                    .alias("object"),
+                                ]
+                            ),
+                        )
 
-            if literal_triples:
-                df_literal = pl.DataFrame(
-                    {
-                        "subject": [t[0] for t in literal_triples],
-                        "predicate": [t[1] for t in literal_triples],
-                        "object": [t[2] for t in literal_triples],
-                    }
-                )
-                model.map_triples(df_literal, validate_iris=False)
+                # reference_date
+                if "reference_date" in ref_unique.columns:
+                    filtered = ref_unique.filter(pl.col("reference_date").is_not_null())
+                    if len(filtered) > 0:
+                        literal_dfs.append(
+                            filtered.select(
+                                [
+                                    pl.col("_ref_uri").alias("subject"),
+                                    pl.lit(f"{wdt_ns}P577").alias("predicate"),
+                                    pl.col("reference_date")
+                                    .cast(pl.Utf8)
+                                    .alias("object"),
+                                ]
+                            ),
+                        )
+
+            # Concatenate all DataFrames
+            iri_df = pl.concat(iri_dfs) if iri_dfs else None
+            literal_df = pl.concat(literal_dfs) if literal_dfs else None
+
+            return iri_df, literal_df
 
     # ========================================================================
     # FACADE
