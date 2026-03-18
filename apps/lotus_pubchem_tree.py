@@ -31,10 +31,10 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 Usage:
     # Remote CLI export (auto-installs deps, fetches, builds, saves)
-    uv run https://raw.githubusercontent.com/Adafede/marimo/main/apps/lotus_pubchem_tree.py export -o ./output -v
+    uv run https://adafede.github.io/marimo/apps/lotus_pubchem_tree.py export -o ./output -v
 
     # Remote GUI (interactive)
-    uvx marimo run https://raw.githubusercontent.com/Adafede/marimo/main/apps/lotus_pubchem_tree.py
+    uvx marimo run https://adafede.github.io/marimo/apps/lotus_pubchem_tree.py
 
     # Local GUI
     marimo run lotus_pubchem_tree.py
@@ -606,7 +606,7 @@ def md_title():
     if IS_PYODIDE:
         _pyodide_warning = f"""
 > ⚠️ **Browser Mode**: Limited to {CONFIG["pyodide_max_compound_taxon_pairs"]:,} compound-taxon pairs for preview.
-> For full trees, use: `uv run https://raw.githubusercontent.com/Adafede/marimo/main/apps/lotus_pubchem_tree.py export -o ./output -v`
+> For full trees, use: `uv run https://adafede.github.io/marimo/apps/lotus_pubchem_tree.py export -o ./output -v`
 """
 
     mo.md(f"""
@@ -788,7 +788,7 @@ def build_trees(build_trees_btn, data):
                 mo.md("""
 **This is a limited preview.** For full trees, use the CLI:
 ```bash
-uv run https://raw.githubusercontent.com/Adafede/marimo/main/apps/lotus_pubchem_tree.py export -o ./output -v
+uv run https://adafede.github.io/marimo/apps/lotus_pubchem_tree.py export -o ./output -v
 ```
                 """),
                 kind="info",
@@ -894,12 +894,12 @@ def cli_usage():
             "Programmatic / CLI Usage": mo.md("""
 **Remote CLI export (one-liner, auto-installs deps):**
 ```bash
-uv run https://raw.githubusercontent.com/Adafede/marimo/main/apps/lotus_pubchem_tree.py export -o ./output -v
+uv run https://adafede.github.io/marimo/apps/lotus_pubchem_tree.py export -o ./output -v
 ```
 
 **Remote GUI (interactive, limited preview in browser):**
 ```bash
-uvx marimo run https://raw.githubusercontent.com/Adafede/marimo/main/apps/lotus_pubchem_tree.py
+uvx marimo run https://adafede.github.io/marimo/apps/lotus_pubchem_tree.py
 ```
 
 ---
@@ -926,7 +926,7 @@ def footer():
     <a href="https://www.wikidata.org/wiki/Q104225190" style="color:#990000;">LOTUS Initiative</a> &
     <a href="https://www.wikidata.org/" style="color:#990000;">Wikidata</a> |
     **Code:**
-    <a href="https://github.com/Adafede/marimo/blob/main/apps/lotus_pubchem_tree.py" style="color:#339966;">lotus_pubchem_tree.py</a> |
+    <a href="https://adafede.github.io/marimo/apps/lotus_pubchem_tree.py" style="color:#339966;">lotus_pubchem_tree.py</a> |
     **External tools:**
     <a href="https://qlever.dev/wikidata" style="color:#006699;">QLever</a> |
     **License:**
@@ -936,5 +936,160 @@ def footer():
     return
 
 
+def main():
+    """Entry point for CLI mode."""
+    import argparse
+    from pathlib import Path
+
+    if len(sys.argv) > 1 and sys.argv[1] == "export":
+        parser = argparse.ArgumentParser(
+            description="Export LOTUS PubChem trees via CLI",
+            epilog="""
+Examples:
+  uv run lotus_pubchem_tree.py export -o ./output -v
+  python lotus_pubchem_tree.py export -o ./output -v
+            """,
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+        )
+        parser.add_argument("export", help="Export command")
+        parser.add_argument("--output-dir", "-o", help="Output directory", default=".")
+        parser.add_argument(
+            "--verbose", "-v", action="store_true", help="Verbose output"
+        )
+        args = parser.parse_args()
+
+        output_dir = Path(args.output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        try:
+            if args.verbose:
+                print("=" * 60, file=sys.stderr)
+                print("LOTUS PubChem Tree Generator - CLI Export", file=sys.stderr)
+                print("=" * 60, file=sys.stderr)
+                print(f"Output directory: {output_dir.absolute()}", file=sys.stderr)
+                print(f"Endpoint: {CONFIG['qlever_endpoint']}", file=sys.stderr)
+                print("", file=sys.stderr)
+
+            def progress_callback(msg):
+                if args.verbose:
+                    print(f"  → {msg}", file=sys.stderr)
+
+            if args.verbose:
+                print("Fetching data from Wikidata...", file=sys.stderr)
+
+            data = fetch_all_data(CONFIG["qlever_endpoint"], progress_callback)
+
+            if args.verbose:
+                print("\nProcessing data...", file=sys.stderr)
+
+            data = LOTUSData(
+                compound_taxon=process_compound_taxon(data.compound_taxon),
+                taxon_ncbi=process_taxon_ncbi(data.taxon_ncbi),
+                taxon_parent=process_taxon_parent(data.taxon_parent),
+                taxon_name=process_taxon_name(data.taxon_name),
+                compound_parent=process_compound_parent(data.compound_parent),
+                compound_label=process_compound_label(data.compound_label),
+            )
+
+            if args.verbose:
+                stats = compute_stats(data)
+                print(f"  Compounds: {stats.n_compounds:,}", file=sys.stderr)
+                print(f"  Taxa: {stats.n_taxa:,}", file=sys.stderr)
+                print(
+                    f"  Compound-Taxon pairs: {stats.n_compound_taxon_pairs:,}",
+                    file=sys.stderr,
+                )
+
+            if args.verbose:
+                print("\nBuilding biological tree...", file=sys.stderr)
+
+            compound_taxon_df = data.compound_taxon.collect()
+            taxon_ncbi_df = data.taxon_ncbi.collect()
+            taxon_parent_df = data.taxon_parent.collect()
+            taxon_name_df = data.taxon_name.collect()
+
+            biological_tree = build_biological_tree(
+                compound_taxon_df,
+                taxon_ncbi_df,
+                taxon_parent_df,
+                taxon_name_df,
+            )
+
+            if args.verbose:
+                bio_nodes = count_tree_nodes(biological_tree)
+                print(f"  Root nodes: {len(biological_tree)}", file=sys.stderr)
+                print(f"  Total nodes: {bio_nodes:,}", file=sys.stderr)
+
+            if args.verbose:
+                print("\nBuilding chemical tree...", file=sys.stderr)
+
+            compound_parent_df = data.compound_parent.collect()
+            compound_label_df = data.compound_label.collect()
+
+            chemical_tree = build_compound_tree(
+                compound_taxon_df,
+                compound_parent_df,
+                compound_label_df,
+            )
+
+            if args.verbose:
+                chem_nodes = count_tree_nodes(chemical_tree)
+                print(f"  Root nodes: {len(chemical_tree)}", file=sys.stderr)
+                print(f"  Total nodes: {chem_nodes:,}", file=sys.stderr)
+
+            date_str = datetime.now().strftime("%Y%m%d")
+
+            biological_output = {
+                "metadata": {
+                    "name": "LOTUS Biological Tree",
+                    "description": "Hierarchical taxonomy (under Biota Q2382443) with associated compound InChIKeys",
+                    "source": "Wikidata/LOTUS",
+                    "generated": datetime.now().isoformat(),
+                    "version": CONFIG["app_version"],
+                    "root_constraint": "wdt:P171* wd:Q2382443",
+                },
+                "tree": biological_tree,
+            }
+
+            chemical_output = {
+                "metadata": {
+                    "name": "LOTUS Chemical Tree",
+                    "description": "Hierarchical compound classification (under chemical compound Q11173) with associated InChIKeys",
+                    "source": "Wikidata/LOTUS",
+                    "generated": datetime.now().isoformat(),
+                    "version": CONFIG["app_version"],
+                    "root_constraint": "wdt:P279* wd:Q11173",
+                },
+                "tree": chemical_tree,
+            }
+
+            biological_path = output_dir / f"{date_str}_lotus_biological_tree.json"
+            chemical_path = output_dir / f"{date_str}_lotus_chemical_tree.json"
+
+            if args.verbose:
+                print("\nWriting output files...", file=sys.stderr)
+
+            biological_path.write_text(json.dumps(biological_output, indent=2))
+            chemical_path.write_text(json.dumps(chemical_output, indent=2))
+
+            if args.verbose:
+                print(f"  ✓ {biological_path}", file=sys.stderr)
+                print(f"  ✓ {chemical_path}", file=sys.stderr)
+                print("\nDone!", file=sys.stderr)
+            else:
+                print(biological_path)
+                print(chemical_path)
+
+        except Exception as e:
+            print(f"Error: {e}", file=sys.stderr)
+            if args.verbose:
+                import traceback
+
+                traceback.print_exc()
+            sys.exit(1)
+    else:
+        app.run()
+
+
 if __name__ == "__main__":
-    app.run()
+    main()
