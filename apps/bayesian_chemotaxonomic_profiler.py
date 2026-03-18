@@ -114,7 +114,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import marimo
 
-__generated_with = "0.20.4"
+__generated_with = "0.21.1"
 app = marimo.App(width="medium", app_title="Bayesian Chemotaxonomic Markers")
 
 with app.setup:
