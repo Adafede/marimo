@@ -30,14 +30,17 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 Usage:
-    # Interactive mode (GUI)
+    # Remote CLI export (auto-installs deps, fetches, builds, saves)
+    uv run https://raw.githubusercontent.com/Adafede/marimo/main/apps/lotus_pubchem_tree.py export -o ./output -v
+
+    # Remote GUI (interactive)
+    uvx marimo run https://raw.githubusercontent.com/Adafede/marimo/main/apps/lotus_pubchem_tree.py
+
+    # Local GUI
     marimo run lotus_pubchem_tree.py
 
-    # Programmatic export (CLI)
-    python lotus_pubchem_tree.py export --output-dir ./output --verbose
-
-    # Remote execution
-    uvx marimo run https://adafede.github.io/marimo/apps/lotus_pubchem_tree.py
+    # Local CLI export
+    python lotus_pubchem_tree.py export -o ./output -v
 """
 
 import marimo
@@ -55,7 +58,7 @@ with app.setup:
     from dataclasses import dataclass
     from datetime import datetime
 
-    _USE_LOCAL = False
+    _USE_LOCAL = True
     if _USE_LOCAL:
         sys.path.insert(0, ".")
 
@@ -178,7 +181,9 @@ with app.setup:
         return url
 
     def execute_query(
-        query: str, endpoint: str, schema_name: str | None = None
+        query: str,
+        endpoint: str,
+        schema_name: str | None = None,
     ) -> pl.LazyFrame:
         """Execute SPARQL query and return LazyFrame."""
         csv_bytes = execute_with_retry(query, endpoint, timeout=600)
@@ -258,7 +263,8 @@ with app.setup:
     def process_compound_taxon(lf: pl.LazyFrame) -> pl.LazyFrame:
         """Process compound-taxon triplets."""
         return lf.pipe(extract_qids_from_lazyframe, "compound").pipe(
-            extract_qids_from_lazyframe, "taxon"
+            extract_qids_from_lazyframe,
+            "taxon",
         )
 
     def process_taxon_ncbi(lf: pl.LazyFrame) -> pl.LazyFrame:
@@ -268,7 +274,8 @@ with app.setup:
     def process_taxon_parent(lf: pl.LazyFrame) -> pl.LazyFrame:
         """Process taxon-parent pairs."""
         return lf.pipe(extract_qids_from_lazyframe, "taxon").pipe(
-            extract_qids_from_lazyframe, "taxon_parent"
+            extract_qids_from_lazyframe,
+            "taxon_parent",
         )
 
     def process_taxon_name(lf: pl.LazyFrame) -> pl.LazyFrame:
@@ -278,7 +285,8 @@ with app.setup:
     def process_compound_parent(lf: pl.LazyFrame) -> pl.LazyFrame:
         """Process compound-parent pairs."""
         return lf.pipe(extract_qids_from_lazyframe, "compound").pipe(
-            extract_qids_from_lazyframe, "compound_parent"
+            extract_qids_from_lazyframe,
+            "compound_parent",
         )
 
     def process_compound_label(lf: pl.LazyFrame) -> pl.LazyFrame:
@@ -594,7 +602,14 @@ with app.setup:
 
 @app.cell
 def md_title():
-    mo.md("""
+    _pyodide_warning = ""
+    if IS_PYODIDE:
+        _pyodide_warning = f"""
+> ⚠️ **Browser Mode**: Limited to {CONFIG["pyodide_max_compound_taxon_pairs"]:,} compound-taxon pairs for preview.
+> For full trees, use: `uv run https://raw.githubusercontent.com/Adafede/marimo/main/apps/lotus_pubchem_tree.py export -o ./output -v`
+"""
+
+    mo.md(f"""
     # LOTUS PubChem Tree Generator
 
     This app generates hierarchical JSON files for PubChem classification matching
@@ -605,6 +620,7 @@ def md_title():
     2. **Chemical Tree**: Hierarchical compound classes (under [chemical compound](https://www.wikidata.org/wiki/Q11173)) with associated InChIKeys
 
     *Only nodes with InChIKeys (directly or in descendants) are included.*
+    {_pyodide_warning}
     """)
     return
 
@@ -669,14 +685,16 @@ def display_stats(stats):
             mo.hstack(
                 [
                     mo.stat(
-                        value=f"{stats.n_taxa_with_ncbi:,}", label="Taxa with NCBI ID"
+                        value=f"{stats.n_taxa_with_ncbi:,}",
+                        label="Taxa with NCBI ID",
                     ),
                     mo.stat(
                         value=f"{stats.n_taxon_parent_pairs:,}",
                         label="Taxon-Parent Pairs",
                     ),
                     mo.stat(
-                        value=f"{stats.n_taxa_with_names:,}", label="Taxa with Names"
+                        value=f"{stats.n_taxa_with_names:,}",
+                        label="Taxa with Names",
                     ),
                 ],
                 gap=0,
@@ -696,7 +714,7 @@ def display_stats(stats):
                 gap=0,
                 wrap=True,
             ),
-        ]
+        ],
     )
     return
 
@@ -704,7 +722,11 @@ def display_stats(stats):
 @app.cell
 def build_trees_button(data):
     mo.stop(data is None)
-    build_trees_btn = mo.ui.run_button(label="Build Trees")
+
+    if IS_PYODIDE:
+        build_trees_btn = mo.ui.run_button(label="Build Trees (Limited Preview)")
+    else:
+        build_trees_btn = mo.ui.run_button(label="Build Trees")
     build_trees_btn
     return (build_trees_btn,)
 
@@ -713,12 +735,20 @@ def build_trees_button(data):
 def build_trees(build_trees_btn, data):
     mo.stop(data is None)
     mo.stop(
-        not build_trees_btn.value,
+        build_trees_btn is None or not build_trees_btn.value,
         mo.md("Click **Build Trees** to generate the tree structures"),
     )
 
-    with mo.status.spinner("Building biological tree..."):
+    # In Pyodide, sample data to reduce memory usage
+    if IS_PYODIDE:
+        max_pairs = CONFIG["pyodide_max_compound_taxon_pairs"]
+        compound_taxon_df = data.compound_taxon.head(max_pairs).collect()
+        _pyodide_note = f" (limited to {max_pairs:,} compound-taxon pairs)"
+    else:
         compound_taxon_df = data.compound_taxon.collect()
+        _pyodide_note = ""
+
+    with mo.status.spinner("Building biological tree..."):
         taxon_ncbi_df = data.taxon_ncbi.collect()
         taxon_parent_df = data.taxon_parent.collect()
         taxon_name_df = data.taxon_name.collect()
@@ -743,12 +773,29 @@ def build_trees(build_trees_btn, data):
     bio_nodes = count_tree_nodes(biological_tree)
     chem_nodes = count_tree_nodes(chemical_tree)
 
-    mo.md(f"""
-    ## Trees Built
+    _output = [
+        mo.md(f"""
+## Trees Built{_pyodide_note}
 
-    - **Biological Tree**: {len(biological_tree)} root nodes, {bio_nodes:,} total nodes
-    - **Chemical Tree**: {len(chemical_tree)} root nodes, {chem_nodes:,} total nodes
-    """)
+- **Biological Tree**: {len(biological_tree)} root nodes, {bio_nodes:,} total nodes
+- **Chemical Tree**: {len(chemical_tree)} root nodes, {chem_nodes:,} total nodes
+        """),
+    ]
+
+    if IS_PYODIDE:
+        _output.append(
+            mo.callout(
+                mo.md("""
+**This is a limited preview.** For full trees, use the CLI:
+```bash
+uv run https://raw.githubusercontent.com/Adafede/marimo/main/apps/lotus_pubchem_tree.py export -o ./output -v
+```
+                """),
+                kind="info",
+            ),
+        )
+
+    mo.vstack(_output)
     return biological_tree, chemical_tree
 
 
@@ -772,9 +819,9 @@ def display_previews(biological_tree, chemical_tree):
                 {
                     f"Biological Tree ({bio_total:,} nodes)": mo.tree(bio_display),
                     f"Chemical Tree ({chem_total:,} nodes)": mo.tree(chem_display),
-                }
+                },
             ),
-        ]
+        ],
     )
     return
 
@@ -835,7 +882,7 @@ def download_buttons(biological_tree, chemical_tree):
                 ],
                 gap=2,
             ),
-        ]
+        ],
     )
     return
 
@@ -845,22 +892,28 @@ def cli_usage():
     mo.accordion(
         {
             "Programmatic / CLI Usage": mo.md("""
+**Remote CLI export (one-liner, auto-installs deps):**
 ```bash
-# Run interactively (GUI)
-marimo run lotus_pubchem_tree.py
-
-# Export trees via CLI
-python lotus_pubchem_tree.py export --output-dir ./output --verbose
-
-# Run remotely (requires uvx)
-uvx marimo run https://adafede.github.io/marimo/apps/lotus_pubchem_tree.py
+uv run https://raw.githubusercontent.com/Adafede/marimo/main/apps/lotus_pubchem_tree.py export -o ./output -v
 ```
 
-The CLI export will generate two JSON files in the specified output directory:
-- `YYYYMMDD_lotus_biological_tree.json`
-- `YYYYMMDD_lotus_chemical_tree.json`
+**Remote GUI (interactive, limited preview in browser):**
+```bash
+uvx marimo run https://raw.githubusercontent.com/Adafede/marimo/main/apps/lotus_pubchem_tree.py
+```
+
+---
+
+**Local usage:**
+```bash
+# GUI
+marimo run lotus_pubchem_tree.py
+
+# CLI export
+python lotus_pubchem_tree.py export -o ./output -v
+```
         """),
-        }
+        },
     )
     return
 
@@ -883,160 +936,5 @@ def footer():
     return
 
 
-def main():
-    """Entry point for CLI mode."""
-    import argparse
-    from pathlib import Path
-
-    if len(sys.argv) > 1 and sys.argv[1] == "export":
-        parser = argparse.ArgumentParser(
-            description="Export LOTUS PubChem trees via CLI",
-            epilog="""
-Examples:
-  python lotus_pubchem_tree.py export --output-dir ./output --verbose
-  python lotus_pubchem_tree.py export -o /tmp/lotus -v
-            """,
-            formatter_class=argparse.RawDescriptionHelpFormatter,
-        )
-        parser.add_argument("export", help="Export command")
-        parser.add_argument("--output-dir", "-o", help="Output directory", default=".")
-        parser.add_argument(
-            "--verbose", "-v", action="store_true", help="Verbose output"
-        )
-        args = parser.parse_args()
-
-        output_dir = Path(args.output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        try:
-            if args.verbose:
-                print("=" * 60, file=sys.stderr)
-                print("LOTUS PubChem Tree Generator - CLI Export", file=sys.stderr)
-                print("=" * 60, file=sys.stderr)
-                print(f"Output directory: {output_dir.absolute()}", file=sys.stderr)
-                print(f"Endpoint: {CONFIG['qlever_endpoint']}", file=sys.stderr)
-                print("", file=sys.stderr)
-
-            def progress_callback(msg):
-                if args.verbose:
-                    print(f"  → {msg}", file=sys.stderr)
-
-            if args.verbose:
-                print("Fetching data from Wikidata...", file=sys.stderr)
-
-            data = fetch_all_data(CONFIG["qlever_endpoint"], progress_callback)
-
-            if args.verbose:
-                print("\nProcessing data...", file=sys.stderr)
-
-            data = LOTUSData(
-                compound_taxon=process_compound_taxon(data.compound_taxon),
-                taxon_ncbi=process_taxon_ncbi(data.taxon_ncbi),
-                taxon_parent=process_taxon_parent(data.taxon_parent),
-                taxon_name=process_taxon_name(data.taxon_name),
-                compound_parent=process_compound_parent(data.compound_parent),
-                compound_label=process_compound_label(data.compound_label),
-            )
-
-            if args.verbose:
-                stats = compute_stats(data)
-                print(f"  Compounds: {stats.n_compounds:,}", file=sys.stderr)
-                print(f"  Taxa: {stats.n_taxa:,}", file=sys.stderr)
-                print(
-                    f"  Compound-Taxon pairs: {stats.n_compound_taxon_pairs:,}",
-                    file=sys.stderr,
-                )
-
-            if args.verbose:
-                print("\nBuilding biological tree...", file=sys.stderr)
-
-            compound_taxon_df = data.compound_taxon.collect()
-            taxon_ncbi_df = data.taxon_ncbi.collect()
-            taxon_parent_df = data.taxon_parent.collect()
-            taxon_name_df = data.taxon_name.collect()
-
-            biological_tree = build_biological_tree(
-                compound_taxon_df,
-                taxon_ncbi_df,
-                taxon_parent_df,
-                taxon_name_df,
-            )
-
-            if args.verbose:
-                bio_nodes = count_tree_nodes(biological_tree)
-                print(f"  Root nodes: {len(biological_tree)}", file=sys.stderr)
-                print(f"  Total nodes: {bio_nodes:,}", file=sys.stderr)
-
-            if args.verbose:
-                print("\nBuilding chemical tree...", file=sys.stderr)
-
-            compound_parent_df = data.compound_parent.collect()
-            compound_label_df = data.compound_label.collect()
-
-            chemical_tree = build_compound_tree(
-                compound_taxon_df,
-                compound_parent_df,
-                compound_label_df,
-            )
-
-            if args.verbose:
-                chem_nodes = count_tree_nodes(chemical_tree)
-                print(f"  Root nodes: {len(chemical_tree)}", file=sys.stderr)
-                print(f"  Total nodes: {chem_nodes:,}", file=sys.stderr)
-
-            date_str = datetime.now().strftime("%Y%m%d")
-
-            biological_output = {
-                "metadata": {
-                    "name": "LOTUS Biological Tree",
-                    "description": "Hierarchical taxonomy (under Biota Q2382443) with associated compound InChIKeys",
-                    "source": "Wikidata/LOTUS",
-                    "generated": datetime.now().isoformat(),
-                    "version": CONFIG["app_version"],
-                    "root_constraint": "wdt:P171* wd:Q2382443",
-                },
-                "tree": biological_tree,
-            }
-
-            chemical_output = {
-                "metadata": {
-                    "name": "LOTUS Chemical Tree",
-                    "description": "Hierarchical compound classification (under chemical compound Q11173) with associated InChIKeys",
-                    "source": "Wikidata/LOTUS",
-                    "generated": datetime.now().isoformat(),
-                    "version": CONFIG["app_version"],
-                    "root_constraint": "wdt:P279* wd:Q11173",
-                },
-                "tree": chemical_tree,
-            }
-
-            biological_path = output_dir / f"{date_str}_lotus_biological_tree.json"
-            chemical_path = output_dir / f"{date_str}_lotus_chemical_tree.json"
-
-            if args.verbose:
-                print("\nWriting output files...", file=sys.stderr)
-
-            biological_path.write_text(json.dumps(biological_output, indent=2))
-            chemical_path.write_text(json.dumps(chemical_output, indent=2))
-
-            if args.verbose:
-                print(f"  ✓ {biological_path}", file=sys.stderr)
-                print(f"  ✓ {chemical_path}", file=sys.stderr)
-                print("\nDone!", file=sys.stderr)
-            else:
-                print(biological_path)
-                print(chemical_path)
-
-        except Exception as e:
-            print(f"Error: {e}", file=sys.stderr)
-            if args.verbose:
-                import traceback
-
-                traceback.print_exc()
-            sys.exit(1)
-    else:
-        app.run()
-
-
 if __name__ == "__main__":
-    main()
+    app.run()
