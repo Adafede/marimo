@@ -43,14 +43,14 @@ repos:
     hooks:
       - id: add-trailing-comma
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.5
+    rev: v0.15.6
     hooks:
       - id: ruff-check
         args:
           - --fix
       - id: ruff-format
   - repo: https://github.com/tombi-toml/tombi-pre-commit
-    rev: v0.9.4
+    rev: v0.9.7
     hooks:
       - id: tombi-format
       - id: tombi-lint
@@ -60,7 +60,7 @@ repos:
       - id: typos
         exclude: "^apps/public/"
   - repo: https://github.com/astral-sh/uv-pre-commit
-    rev: 0.10.9
+    rev: 0.10.11
     hooks:
       - id: uv-lock
   - repo: local

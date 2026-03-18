@@ -18,7 +18,7 @@ def build_sachem_service(
 ) -> str:
     """Build the SACHEM SERVICE clause."""
     is_multiline_literal = structure_literal.startswith(
-        "'''"
+        "'''",
     ) or structure_literal.startswith(
         '"""',
     )
@@ -88,7 +88,7 @@ def query_sachem(
         threshold=threshold,
     )
     is_multiline_literal = escaped_smiles.startswith(
-        "'''"
+        "'''",
     ) or escaped_smiles.startswith(
         '"""',
     )

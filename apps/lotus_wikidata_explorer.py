@@ -1211,7 +1211,7 @@ with app.setup:
                         dataset_uri,
                         DCTERMS.provenance,
                         Literal(
-                            f"Search parameters: {json.dumps(self.filters, sort_keys=True)}"
+                            f"Search parameters: {json.dumps(self.filters, sort_keys=True)}",
                         ),
                     ),
                 )
@@ -2083,7 +2083,7 @@ def execute_search(
                         mo.md(
                             f"Search backend error: `{str(exc)}`\n\n"
                             "If this is a Molfile query, try rerunning once; "
-                            "the full upstream error message is shown above."
+                            "the full upstream error message is shown above.",
                         ),
                         kind="warn",
                     ),
