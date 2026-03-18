@@ -4,7 +4,7 @@
 #     "great-tables==0.21.0",
 #     "marimo",
 #     "polars==1.39.2",
-#     "maplib==0.19.24",
+#     "rdflib==7.1.0",
 # ]
 # [tool.marimo.runtime]
 # output_max_bytes = 300_000_000
@@ -31,7 +31,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import marimo
 
-__generated_with = "0.20.4"
+__generated_with = "0.21.1"
 app = marimo.App(width="full", app_title="LOTUS Wikidata Explorer")
 
 with app.setup:
@@ -49,7 +49,21 @@ with app.setup:
     from abc import ABC, abstractmethod
     from dataclasses import dataclass
     from datetime import date, datetime
-    from maplib import Model as MaplibModel
+
+    # Check for WASM/Pyodide environment early
+    IS_PYODIDE = "pyodide" in sys.modules
+
+    # rdflib is always available (WASM compatible)
+    from rdflib import Graph, Literal, URIRef
+    from rdflib.namespace import XSD, Namespace
+
+    # maplib is faster but not WASM compatible
+    MaplibModel = None
+    if not IS_PYODIDE:
+        try:
+            from maplib import Model as MaplibModel
+        except ImportError:
+            pass  # Fall back to rdflib
 
     _USE_LOCAL = False
     if _USE_LOCAL:
@@ -88,7 +102,6 @@ with app.setup:
     from modules.knowledge.rdf.namespace.wikidata import WIKIDATA_NAMESPACES
     from modules.io.compress.if_large import compress_if_large
 
-    IS_PYODIDE = "pyodide" in sys.modules
     if IS_PYODIDE:
         import pyodide_http
 
@@ -1067,6 +1080,8 @@ with app.setup:
             return result
 
     class TTLExportStrategy(ExportStrategy):
+        """TTL export using maplib (native, fast) or rdflib (WASM compatible)."""
+
         def __init__(
             self,
             memory: MemoryManager,
@@ -1078,33 +1093,39 @@ with app.setup:
             self.taxon_input = taxon_input
             self.qid = qid
             self.filters = filters
+            # Use maplib if available and not in WASM
+            self._use_maplib = MaplibModel is not None and not self.memory.is_wasm
 
         def _to_bytes(self, df: pl.LazyFrame) -> bytes:
+            if self._use_maplib:
+                return self._to_bytes_maplib(df)
+            else:
+                return self._to_bytes_rdflib(df)
+
+        def _to_bytes_maplib(self, df: pl.LazyFrame) -> bytes:
+            """Fast export using maplib (native only)."""
             df_collected = df.collect()
 
             dataset_uri, query_hash, result_hash = self._create_dataset_uri(
-                df_collected,
+                df_collected
             )
 
-            # Create model
+            # Create maplib model
             model = MaplibModel()
             model.add_prefixes(WIKIDATA_NAMESPACES)
 
-            # Add metadata (small, keep as list)
-            self._add_metadata_triples(
+            # Add metadata
+            self._add_metadata_maplib(
                 model, dataset_uri, len(df_collected), query_hash, result_hash
             )
 
-            # Build all triples using vectorized Polars operations
+            # Build triples using vectorized Polars
             iri_df, literal_df = self._build_triples_vectorized(
                 df_collected, dataset_uri
             )
-
             del df_collected
-            if self.memory.is_wasm:
-                gc.collect()
 
-            # Add to model
+            # Add to model (maplib accepts DataFrames directly)
             if iri_df is not None and len(iri_df) > 0:
                 model.map_triples(iri_df)
                 del iri_df
@@ -1113,11 +1134,53 @@ with app.setup:
                 model.map_triples(literal_df, validate_iris=False)
                 del literal_df
 
+            result = model.writes(format="turtle").encode("utf-8")
+            del model
+            return result
+
+        def _to_bytes_rdflib(self, df: pl.LazyFrame) -> bytes:
+            """WASM-compatible export using rdflib."""
+            df_collected = df.collect()
+
+            dataset_uri, query_hash, result_hash = self._create_dataset_uri(
+                df_collected
+            )
+
+            # Create rdflib Graph
+            g = Graph()
+            for prefix, ns_str in WIKIDATA_NAMESPACES.items():
+                g.bind(prefix, Namespace(ns_str))
+
+            # Add metadata
+            self._add_metadata_rdflib(
+                g, dataset_uri, len(df_collected), query_hash, result_hash
+            )
+
+            # Build triples using vectorized Polars
+            iri_df, literal_df = self._build_triples_vectorized(
+                df_collected, dataset_uri
+            )
+
+            del df_collected
             if self.memory.is_wasm:
                 gc.collect()
 
-            result = model.writes(format="turtle").encode("utf-8")
-            del model
+            # Add triples to graph (must iterate for rdflib)
+            if iri_df is not None and len(iri_df) > 0:
+                for s, p, o in iri_df.iter_rows():
+                    g.add((URIRef(s), URIRef(p), URIRef(o)))
+                del iri_df
+
+            if literal_df is not None and len(literal_df) > 0:
+                for s, p, o in literal_df.iter_rows():
+                    g.add((URIRef(s), URIRef(p), Literal(o)))
+                del literal_df
+
+            if self.memory.is_wasm:
+                gc.collect()
+
+            result = g.serialize(format="turtle").encode("utf-8")
+            del g
             if self.memory.is_wasm:
                 gc.collect()
             return result
@@ -1130,7 +1193,6 @@ with app.setup:
                 "|".join(query_components).encode("utf-8"),
             ).hexdigest()
 
-            # Vectorized hash computation
             compound_qids = df.select(
                 pl.col("compound_qid").drop_nulls().unique().sort(),
             ).to_series()
@@ -1140,9 +1202,9 @@ with app.setup:
 
             return f"urn:hash:sha256:{result_hash}", query_hash, result_hash
 
-        def _add_metadata_triples(
+        def _add_metadata_maplib(
             self,
-            model: MaplibModel,
+            model,  # MaplibModel
             dataset_uri: str,
             record_count: int,
             query_hash: str,
@@ -1220,6 +1282,113 @@ with app.setup:
                 validate_iris=False,
             )
 
+        def _add_metadata_rdflib(
+            self,
+            g: Graph,
+            dataset_uri: str,
+            record_count: int,
+            query_hash: str,
+            result_hash: str,
+        ):
+            schema_ns = WIKIDATA_NAMESPACES["schema"]
+            wd_ns = WIKIDATA_NAMESPACES["wd"]
+            dcterms_ns = WIKIDATA_NAMESPACES["dcterms"]
+            rdf_ns = WIKIDATA_NAMESPACES["rdf"]
+
+            if not self.taxon_input or self.taxon_input.strip() == "":
+                dataset_name = "LOTUS Data - any taxon (structure-only search)"
+                taxon_description = "any taxon"
+            elif self.taxon_input == "*":
+                dataset_name = "LOTUS Data - all taxa"
+                taxon_description = "all taxa (Biota)"
+            else:
+                dataset_name = f"LOTUS Data - {self.taxon_input}"
+                taxon_description = self.taxon_input
+
+            dataset_ref = URIRef(dataset_uri)
+
+            # IRI triples
+            g.add((dataset_ref, URIRef(f"{rdf_ns}type"), URIRef(f"{schema_ns}Dataset")))
+            g.add(
+                (dataset_ref, URIRef(f"{schema_ns}provider"), URIRef(CONFIG["app_url"]))
+            )
+            g.add(
+                (dataset_ref, URIRef(f"{dcterms_ns}source"), URIRef(WIKIDATA_HTTP_BASE))
+            )
+            g.add(
+                (
+                    dataset_ref,
+                    URIRef(f"{schema_ns}isBasedOn"),
+                    URIRef(f"{WIKI_PREFIX}Q104225190"),
+                )
+            )
+
+            if self.qid and self.qid != "*" and self.qid.strip():
+                g.add(
+                    (
+                        dataset_ref,
+                        URIRef(f"{schema_ns}about"),
+                        URIRef(f"{wd_ns}{self.qid}"),
+                    )
+                )
+            elif self.taxon_input == "*":
+                g.add(
+                    (
+                        dataset_ref,
+                        URIRef(f"{schema_ns}about"),
+                        URIRef(f"{wd_ns}Q2382443"),
+                    )
+                )
+
+            # Literal triples
+            g.add((dataset_ref, URIRef(f"{schema_ns}name"), Literal(dataset_name)))
+            g.add(
+                (
+                    dataset_ref,
+                    URIRef(f"{schema_ns}description"),
+                    Literal(f"Chemical compounds from {taxon_description}"),
+                )
+            )
+            g.add(
+                (
+                    dataset_ref,
+                    URIRef(f"{schema_ns}numberOfRecords"),
+                    Literal(record_count, datatype=XSD.integer),
+                )
+            )
+            g.add(
+                (
+                    dataset_ref,
+                    URIRef(f"{schema_ns}version"),
+                    Literal(CONFIG["app_version"]),
+                )
+            )
+            g.add(
+                (
+                    dataset_ref,
+                    URIRef(f"{dcterms_ns}provenance"),
+                    Literal(f"Query hash: {query_hash}"),
+                )
+            )
+            g.add(
+                (
+                    dataset_ref,
+                    URIRef(f"{dcterms_ns}identifier"),
+                    Literal(f"sha256:{result_hash}"),
+                )
+            )
+
+            if self.filters:
+                g.add(
+                    (
+                        dataset_ref,
+                        URIRef(f"{dcterms_ns}provenance"),
+                        Literal(
+                            f"Search parameters: {json.dumps(self.filters, sort_keys=True)}"
+                        ),
+                    )
+                )
+
         def _build_triples_vectorized(
             self,
             df: pl.DataFrame,
@@ -1241,7 +1410,7 @@ with app.setup:
             if len(df) == 0:
                 return None, None
 
-            # Pre-compute URI columns
+            # Pre-compute URI columns (vectorized string concatenation)
             df = df.with_columns(
                 [
                     (pl.lit(wd_ns) + pl.col("compound_qid")).alias("_compound_uri"),
@@ -1281,7 +1450,6 @@ with app.setup:
             # 2. Compound -> Taxon IRI triples (where taxon exists)
             taxon_df = df.filter(pl.col("taxon_qid").is_not_null())
             if len(taxon_df) > 0:
-                # compound P703 statement
                 iri_dfs.append(
                     taxon_df.select(
                         [
@@ -1291,7 +1459,6 @@ with app.setup:
                         ]
                     ),
                 )
-                # statement PS703 taxon
                 iri_dfs.append(
                     taxon_df.select(
                         [
@@ -1301,7 +1468,6 @@ with app.setup:
                         ]
                     ),
                 )
-                # compound WDT P703 taxon (direct)
                 iri_dfs.append(
                     taxon_df.select(
                         [
@@ -1315,7 +1481,6 @@ with app.setup:
             # 3. Reference IRI triples (where ref exists)
             ref_df = df.filter(pl.col("reference_qid").is_not_null())
             if len(ref_df) > 0:
-                # statement wasDerivedFrom ref_node
                 iri_dfs.append(
                     ref_df.select(
                         [
@@ -1325,7 +1490,6 @@ with app.setup:
                         ]
                     ),
                 )
-                # ref_node PR248 ref_uri
                 iri_dfs.append(
                     ref_df.select(
                         [
@@ -1378,12 +1542,7 @@ with app.setup:
                         & pl.col("taxon_name").is_not_null(),
                     )
                     .unique(subset=["taxon_qid"])
-                    .select(
-                        [
-                            pl.col("_taxon_uri"),
-                            pl.col("taxon_name"),
-                        ]
-                    )
+                    .select(["_taxon_uri", "taxon_name"])
                 )
                 if len(taxon_unique) > 0:
                     literal_dfs.append(
@@ -1427,7 +1586,7 @@ with app.setup:
                                 ),
                             )
 
-                # Also add rdfs:label for reference_title
+                # rdfs:label for reference_title
                 if "reference_title" in ref_unique.columns:
                     filtered = ref_unique.filter(
                         pl.col("reference_title").is_not_null()

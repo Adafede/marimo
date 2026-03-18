@@ -8,7 +8,7 @@
 
 import marimo
 
-__generated_with = "0.20.4"
+__generated_with = "0.21.1"
 app = marimo.App(
     width="medium",
     app_title="Automated substructure depiction and verification",
