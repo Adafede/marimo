@@ -122,6 +122,22 @@ with app.setup:
     }
     """
 
+    QUERY_COMPOUND_SMILES_CAN = """
+        PREFIX wd: <http://www.wikidata.org/entity/>
+        PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+        SELECT DISTINCT ?compound ?compound_smiles_can WHERE {
+          ?compound wdt:P233 ?compound_smiles_can .
+        }
+    """
+
+    QUERY_COMPOUND_SMILES_ISO = """
+        PREFIX wd: <http://www.wikidata.org/entity/>
+        PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+        SELECT DISTINCT ?compound ?compound_smiles_iso WHERE {
+          ?compound wdt:P2017 ?compound_smiles_iso .
+        }
+    """
+
     QUERY_COMPOUND_PARENT = """
     PREFIX wd: <http://www.wikidata.org/entity/>
     PREFIX wdt: <http://www.wikidata.org/prop/direct/>
@@ -164,6 +180,14 @@ with app.setup:
         "taxon_name": {
             "taxon": pl.Utf8,
             "taxon_name": pl.Utf8,
+        },
+        "compound_smiles_can": {
+            "compound": pl.Utf8,
+            "compound_smiles_can": pl.Utf8,
+        },
+        "compound_smiles_iso": {
+            "compound": pl.Utf8,
+            "compound_smiles_iso": pl.Utf8,
         },
         "compound_parent": {
             "compound": pl.Utf8,
@@ -212,6 +236,8 @@ with app.setup:
         taxon_ncbi: pl.LazyFrame
         taxon_parent: pl.LazyFrame
         taxon_name: pl.LazyFrame
+        compound_smiles_can: pl.LazyFrame
+        compound_smiles_iso: pl.LazyFrame
         compound_parent: pl.LazyFrame
         compound_label: pl.LazyFrame
 
@@ -230,6 +256,16 @@ with app.setup:
                 "Fetching taxon-parent pairs (under Biota)...",
             ),
             ("taxon_name", QUERY_TAXON_NAME, "Fetching taxon-name pairs..."),
+            (
+                "compound_smiles_can",
+                QUERY_COMPOUND_SMILES_CAN,
+                "Fetching compound canonical SMILES...",
+            ),
+            (
+                "compound_smiles_iso",
+                QUERY_COMPOUND_SMILES_ISO,
+                "Fetching compound isomeric SMILES...",
+            ),
             (
                 "compound_parent",
                 QUERY_COMPOUND_PARENT,
@@ -302,6 +338,36 @@ with app.setup:
             .drop("lang")
         )
 
+    def process_compound_smiles(lf: pl.LazyFrame, col: str) -> pl.LazyFrame:
+        """Process compound SMILES pairs."""
+        return lf.pipe(extract_qids_from_lazyframe, "compound")
+
+    def combine_smiles(
+        smiles_iso: pl.LazyFrame,
+        smiles_can: pl.LazyFrame,
+    ) -> pl.DataFrame:
+        """
+        Combine isomeric and canonical SMILES, preferring isomeric when both exist.
+
+        Returns DataFrame with columns: compound, smiles
+        """
+        iso_df = smiles_iso.collect()
+        can_df = smiles_can.collect()
+
+        # Start with canonical SMILES
+        combined = can_df.rename({"compound_smiles_can": "smiles"})
+
+        # Join with isomeric and prefer isomeric when available
+        combined = combined.join(
+            iso_df.rename({"compound_smiles_iso": "smiles_iso"}),
+            on="compound",
+            how="outer",
+        ).with_columns(
+            pl.coalesce(["smiles_iso", "smiles"]).alias("smiles"),
+        ).drop("smiles_iso").unique(subset=["compound"])
+
+        return combined
+
     # ========================================================================
     # TREE BUILDING
     # ========================================================================
@@ -311,18 +377,19 @@ with app.setup:
         taxon_ncbi: pl.DataFrame,
         taxon_parent: pl.DataFrame,
         taxon_name: pl.DataFrame,
+        compound_smiles: pl.DataFrame,
     ) -> list[dict]:
         """
         Build biological tree JSON for PubChem.
 
-        Only includes nodes that have InChIKeys directly or in their descendants.
+        Only includes nodes that have compounds directly or in their descendants.
         All taxa are constrained to be under Biota (Q2382443).
 
         Returns a hierarchical tree structure where each node contains:
         - NCBI_TaxID: NCBI taxonomy ID
         - Wikidata_QID: Wikidata QID
         - Name: Taxonomic name
-        - InChIKeys: List of compound InChIKeys found in this taxon
+        - Compounds: List of compound objects with InChIKey and SMILES (if available)
         - Children: List of child nodes
         """
         # Build parent-child relationships
@@ -351,18 +418,26 @@ with app.setup:
             ),
         )
 
-        # Build taxon to InChIKeys mapping
+        # Build taxon to compounds mapping (compound QID + InChIKey)
         compound_by_taxon = (
             compound_taxon.group_by("taxon")
             .agg(
-                pl.col("compound_inchikey").alias("inchikeys"),
+                pl.struct(["compound", "compound_inchikey"]).alias("compounds"),
             )
             .to_dict(as_series=False)
         )
-        inchikey_map = dict(
+        compounds_by_taxon_map = dict(
             zip(
                 compound_by_taxon["taxon"],
-                compound_by_taxon["inchikeys"],
+                compound_by_taxon["compounds"],
+            ),
+        )
+
+        # Build compound to SMILES mapping
+        smiles_map = dict(
+            zip(
+                compound_smiles["compound"].to_list(),
+                compound_smiles["smiles"].to_list(),
             ),
         )
 
@@ -372,15 +447,27 @@ with app.setup:
         roots = all_parents - all_taxa
 
         def build_node(taxon_qid: str, visited: set) -> dict | None:
-            """Build node, returning None if no InChIKeys in subtree."""
+            """Build node, returning None if no compounds in subtree."""
             if taxon_qid in visited:
                 return None
             visited.add(taxon_qid)
 
-            inchikeys = inchikey_map.get(taxon_qid, [])
-            has_own_inchikeys = len(inchikeys) > 0
+            # Get compounds for this taxon
+            compound_structs = compounds_by_taxon_map.get(taxon_qid, [])
+            has_own_compounds = len(compound_structs) > 0
 
-            # Build children first to check if any have InChIKeys
+            # Build compound list with InChIKey and SMILES paired
+            compounds_list = []
+            for cs in compound_structs:
+                compound_qid = cs["compound"]
+                inchikey = cs["compound_inchikey"]
+                smiles = smiles_map.get(compound_qid)
+                compound_obj = {"InChIKey": inchikey}
+                if smiles:
+                    compound_obj["SMILES"] = smiles
+                compounds_list.append(compound_obj)
+
+            # Build children first to check if any have compounds
             children = parent_dict.get(taxon_qid, [])
             child_nodes = []
             for child in children:
@@ -388,8 +475,8 @@ with app.setup:
                 if child_node:
                     child_nodes.append(child_node)
 
-            # Only include this node if it has InChIKeys or has valid children
-            if not has_own_inchikeys and not child_nodes:
+            # Only include this node if it has compounds or has valid children
+            if not has_own_compounds and not child_nodes:
                 return None
 
             ncbi_id = ncbi_map.get(taxon_qid)
@@ -401,8 +488,8 @@ with app.setup:
                 "Name": name,
             }
 
-            if inchikeys:
-                node["InChIKeys"] = inchikeys
+            if compounds_list:
+                node["Compounds"] = compounds_list
 
             if child_nodes:
                 node["Children"] = sorted(child_nodes, key=lambda x: x.get("Name", ""))
@@ -423,17 +510,18 @@ with app.setup:
         compound_taxon: pl.DataFrame,
         compound_parent: pl.DataFrame,
         compound_label: pl.DataFrame,
+        compound_smiles: pl.DataFrame,
     ) -> list[dict]:
         """
         Build chemical compound tree JSON for PubChem.
 
-        Only includes nodes that have InChIKeys directly or in their descendants.
+        Only includes nodes that have compounds directly or in their descendants.
         All compounds are constrained to be under chemical compound (Q11173).
 
         Returns a hierarchical tree structure where each node contains:
         - Wikidata_QID: Wikidata QID
         - Label: Compound label/name
-        - InChIKeys: List of InChIKeys for compounds in this class
+        - Compounds: List of compound objects with InChIKey and SMILES (if available)
         - Children: List of child compound classes
         """
         # Build parent-child relationships
@@ -469,13 +557,21 @@ with app.setup:
             ),
         )
 
+        # Build compound to SMILES mapping
+        smiles_map = dict(
+            zip(
+                compound_smiles["compound"].to_list(),
+                compound_smiles["smiles"].to_list(),
+            ),
+        )
+
         # Find root compounds
         all_compounds = set(compound_parent["compound"].to_list())
         all_parents = set(compound_parent["compound_parent"].to_list())
         roots = all_parents - all_compounds
 
         def build_node(compound_qid: str, visited: set) -> dict | None:
-            """Build node, returning None if no InChIKeys in subtree."""
+            """Build node, returning None if no compounds in subtree."""
             if compound_qid in visited:
                 return None
             visited.add(compound_qid)
@@ -483,7 +579,19 @@ with app.setup:
             inchikeys = inchikey_map.get(compound_qid, [])
             has_own_inchikeys = len(inchikeys) > 0
 
-            # Build children first to check if any have InChIKeys
+            # Get SMILES for this compound class
+            smiles = smiles_map.get(compound_qid)
+
+            # Build compound list - for compound tree, each node is a compound class
+            # with potentially multiple InChIKeys (from different taxa entries)
+            compounds_list = []
+            for inchikey in inchikeys:
+                compound_obj = {"InChIKey": inchikey}
+                if smiles:
+                    compound_obj["SMILES"] = smiles
+                compounds_list.append(compound_obj)
+
+            # Build children first to check if any have compounds
             children = parent_dict.get(compound_qid, [])
             child_nodes = []
             for child in children:
@@ -491,7 +599,7 @@ with app.setup:
                 if child_node:
                     child_nodes.append(child_node)
 
-            # Only include this node if it has InChIKeys or has valid children
+            # Only include this node if it has compounds or has valid children
             if not has_own_inchikeys and not child_nodes:
                 return None
 
@@ -502,8 +610,8 @@ with app.setup:
                 "Label": label,
             }
 
-            if inchikeys:
-                node["InChIKeys"] = inchikeys
+            if compounds_list:
+                node["Compounds"] = compounds_list
 
             if child_nodes:
                 node["Children"] = sorted(child_nodes, key=lambda x: x.get("Label", ""))
@@ -537,11 +645,11 @@ with app.setup:
             shown_count += 1
 
             label = node.get(label_key, node.get("Wikidata_QID", "Unknown"))
-            n_inchikeys = len(node.get("InChIKeys", []))
+            n_compounds = len(node.get("Compounds", []))
 
             display_label = f"{label}"
-            if n_inchikeys > 0:
-                display_label += f" ({n_inchikeys} InChIKeys)"
+            if n_compounds > 0:
+                display_label += f" ({n_compounds} compounds)"
 
             result = {}
             if "Children" in node and depth < max_depth:
@@ -660,6 +768,8 @@ def fetch_data(run_button):
             taxon_ncbi=process_taxon_ncbi(data.taxon_ncbi),
             taxon_parent=process_taxon_parent(data.taxon_parent),
             taxon_name=process_taxon_name(data.taxon_name),
+            compound_smiles_can=process_compound_smiles(data.compound_smiles_can, "compound_smiles_can"),
+            compound_smiles_iso=process_compound_smiles(data.compound_smiles_iso, "compound_smiles_iso"),
             compound_parent=process_compound_parent(data.compound_parent),
             compound_label=process_compound_label(data.compound_label),
         )
@@ -757,6 +867,12 @@ def build_trees(build_trees_btn, data):
         compound_taxon_df = data.compound_taxon.collect()
         _pyodide_note = ""
 
+    with mo.status.spinner("Combining SMILES data..."):
+        compound_smiles_df = combine_smiles(
+            data.compound_smiles_iso,
+            data.compound_smiles_can,
+        )
+
     with mo.status.spinner("Building biological tree..."):
         taxon_ncbi_df = data.taxon_ncbi.collect()
         taxon_parent_df = data.taxon_parent.collect()
@@ -767,6 +883,7 @@ def build_trees(build_trees_btn, data):
             taxon_ncbi_df,
             taxon_parent_df,
             taxon_name_df,
+            compound_smiles_df,
         )
 
     with mo.status.spinner("Building chemical tree..."):
@@ -777,6 +894,7 @@ def build_trees(build_trees_btn, data):
             compound_taxon_df,
             compound_parent_df,
             compound_label_df,
+            compound_smiles_df,
         )
 
     bio_nodes = count_tree_nodes(biological_tree)
@@ -999,6 +1117,8 @@ Examples:
                 taxon_ncbi=process_taxon_ncbi(data.taxon_ncbi),
                 taxon_parent=process_taxon_parent(data.taxon_parent),
                 taxon_name=process_taxon_name(data.taxon_name),
+                compound_smiles_can=process_compound_smiles(data.compound_smiles_can, "compound_smiles_can"),
+                compound_smiles_iso=process_compound_smiles(data.compound_smiles_iso, "compound_smiles_iso"),
                 compound_parent=process_compound_parent(data.compound_parent),
                 compound_label=process_compound_label(data.compound_label),
             )
@@ -1013,6 +1133,14 @@ Examples:
                 )
 
             if args.verbose:
+                print("\nCombining SMILES data...", file=sys.stderr)
+
+            compound_smiles_df = combine_smiles(
+                data.compound_smiles_iso,
+                data.compound_smiles_can,
+            )
+
+            if args.verbose:
                 print("\nBuilding biological tree...", file=sys.stderr)
 
             compound_taxon_df = data.compound_taxon.collect()
@@ -1025,6 +1153,7 @@ Examples:
                 taxon_ncbi_df,
                 taxon_parent_df,
                 taxon_name_df,
+                compound_smiles_df,
             )
 
             if args.verbose:
@@ -1042,6 +1171,7 @@ Examples:
                 compound_taxon_df,
                 compound_parent_df,
                 compound_label_df,
+                compound_smiles_df,
             )
 
             if args.verbose:
