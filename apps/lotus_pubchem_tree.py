@@ -135,10 +135,11 @@ with app.setup:
     PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
     PREFIX wd: <http://www.wikidata.org/entity/>
     PREFIX wdt: <http://www.wikidata.org/prop/direct/>
-    SELECT DISTINCT ?compound ?compound_label WHERE {
+    SELECT DISTINCT ?compound ?compound_label ?lang WHERE {
       ?compound wdt:P279* wd:Q11173 .
       ?compound rdfs:label ?compound_label .
-      FILTER (LANG(?compound_label) IN ("en", "mul"))
+      BIND(LANG(?compound_label) AS ?lang)
+      FILTER (?lang IN ("en", "mul"))
     }
     """
 
@@ -171,6 +172,7 @@ with app.setup:
         "compound_label": {
             "compound": pl.Utf8,
             "compound_label": pl.Utf8,
+            "lang": pl.Utf8,
         },
     }
 
@@ -290,8 +292,15 @@ with app.setup:
         )
 
     def process_compound_label(lf: pl.LazyFrame) -> pl.LazyFrame:
-        """Process compound-label pairs."""
-        return lf.pipe(extract_qids_from_lazyframe, "compound")
+        """Process compound-label pairs. Prefers 'mul' labels over 'en' when both exist."""
+        return (
+            lf.pipe(extract_qids_from_lazyframe, "compound")
+            # Sort so 'mul' comes before 'en' (alphabetically 'm' < 'e' is false, so we reverse)
+            .sort("compound", "lang", descending=[False, True])
+            # Keep first occurrence per compound (will be 'mul' if exists, else 'en')
+            .unique(subset=["compound"], keep="first")
+            .drop("lang")
+        )
 
     # ========================================================================
     # TREE BUILDING
@@ -954,7 +963,10 @@ Examples:
         parser.add_argument("export", help="Export command")
         parser.add_argument("--output-dir", "-o", help="Output directory", default=".")
         parser.add_argument(
-            "--verbose", "-v", action="store_true", help="Verbose output"
+            "--verbose",
+            "-v",
+            action="store_true",
+            help="Verbose output",
         )
         args = parser.parse_args()
 
