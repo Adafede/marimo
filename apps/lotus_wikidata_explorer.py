@@ -1060,24 +1060,57 @@ with app.setup:
 
     class CSVExportStrategy(ExportStrategy):
         def _to_bytes(self, df: pl.LazyFrame) -> bytes:
-            df_collected = df.collect()
-            buffer = io.BytesIO()
-            df_collected.write_csv(buffer)
-            result = buffer.getvalue()
-            del df_collected, buffer
             if self.memory.is_wasm:
+                # WASM: collect and write to buffer (no file system)
+                df_collected = df.collect()
+                buffer = io.BytesIO()
+                df_collected.write_csv(buffer)
+                result = buffer.getvalue()
+                del df_collected, buffer
                 gc.collect()
-            return result
+                return result
+            else:
+                # Native: use sink_csv for streaming (memory efficient)
+                import tempfile
+                import os
+
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as f:
+                    temp_path = f.name
+
+                try:
+                    df.sink_csv(temp_path)
+                    with open(temp_path, "rb") as f:
+                        result = f.read()
+                finally:
+                    os.unlink(temp_path)
+                return result
 
     class JSONExportStrategy(ExportStrategy):
         def _to_bytes(self, df: pl.LazyFrame) -> bytes:
-            df_collected = df.collect()
-            json_str = df_collected.write_json()
-            result = json_str.encode("utf-8")
-            del df_collected
             if self.memory.is_wasm:
+                # WASM: collect and write NDJSON to buffer
+                df_collected = df.collect()
+                buffer = io.BytesIO()
+                df_collected.write_ndjson(buffer)
+                result = buffer.getvalue()
+                del df_collected, buffer
                 gc.collect()
-            return result
+                return result
+            else:
+                # Native: use sink_ndjson for streaming
+                import tempfile
+                import os
+
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".ndjson") as f:
+                    temp_path = f.name
+
+                try:
+                    df.sink_ndjson(temp_path)
+                    with open(temp_path, "rb") as f:
+                        result = f.read()
+                finally:
+                    os.unlink(temp_path)
+                return result
 
     class TTLExportStrategy(ExportStrategy):
         """TTL export using maplib (native, fast) or rdflib (WASM compatible)."""
@@ -1107,7 +1140,7 @@ with app.setup:
             df_collected = df.collect()
 
             dataset_uri, query_hash, result_hash = self._create_dataset_uri(
-                df_collected
+                df_collected,
             )
 
             # Create maplib model
@@ -1116,12 +1149,17 @@ with app.setup:
 
             # Add metadata
             self._add_metadata_maplib(
-                model, dataset_uri, len(df_collected), query_hash, result_hash
+                model,
+                dataset_uri,
+                len(df_collected),
+                query_hash,
+                result_hash,
             )
 
             # Build triples using vectorized Polars
             iri_df, literal_df = self._build_triples_vectorized(
-                df_collected, dataset_uri
+                df_collected,
+                dataset_uri,
             )
             del df_collected
 
@@ -1143,7 +1181,7 @@ with app.setup:
             df_collected = df.collect()
 
             dataset_uri, query_hash, result_hash = self._create_dataset_uri(
-                df_collected
+                df_collected,
             )
 
             # Create rdflib Graph
@@ -1153,12 +1191,17 @@ with app.setup:
 
             # Add metadata
             self._add_metadata_rdflib(
-                g, dataset_uri, len(df_collected), query_hash, result_hash
+                g,
+                dataset_uri,
+                len(df_collected),
+                query_hash,
+                result_hash,
             )
 
             # Build triples using vectorized Polars
             iri_df, literal_df = self._build_triples_vectorized(
-                df_collected, dataset_uri
+                df_collected,
+                dataset_uri,
             )
 
             del df_collected
@@ -1233,11 +1276,11 @@ with app.setup:
             ]
             if self.qid and self.qid != "*" and self.qid.strip():
                 iri_triples.append(
-                    (dataset_uri, f"{schema_ns}about", f"{wd_ns}{self.qid}")
+                    (dataset_uri, f"{schema_ns}about", f"{wd_ns}{self.qid}"),
                 )
             elif self.taxon_input == "*":
                 iri_triples.append(
-                    (dataset_uri, f"{schema_ns}about", f"{wd_ns}Q2382443")
+                    (dataset_uri, f"{schema_ns}about", f"{wd_ns}Q2382443"),
                 )
 
             model.map_triples(
@@ -1246,7 +1289,7 @@ with app.setup:
                         "subject": [t[0] for t in iri_triples],
                         "predicate": [t[1] for t in iri_triples],
                         "object": [t[2] for t in iri_triples],
-                    }
+                    },
                 ),
             )
 
@@ -1277,7 +1320,7 @@ with app.setup:
                         "subject": [t[0] for t in literal_triples],
                         "predicate": [t[1] for t in literal_triples],
                         "object": [t[2] for t in literal_triples],
-                    }
+                    },
                 ),
                 validate_iris=False,
             )
@@ -1310,17 +1353,25 @@ with app.setup:
             # IRI triples
             g.add((dataset_ref, URIRef(f"{rdf_ns}type"), URIRef(f"{schema_ns}Dataset")))
             g.add(
-                (dataset_ref, URIRef(f"{schema_ns}provider"), URIRef(CONFIG["app_url"]))
+                (
+                    dataset_ref,
+                    URIRef(f"{schema_ns}provider"),
+                    URIRef(CONFIG["app_url"]),
+                ),
             )
             g.add(
-                (dataset_ref, URIRef(f"{dcterms_ns}source"), URIRef(WIKIDATA_HTTP_BASE))
+                (
+                    dataset_ref,
+                    URIRef(f"{dcterms_ns}source"),
+                    URIRef(WIKIDATA_HTTP_BASE),
+                ),
             )
             g.add(
                 (
                     dataset_ref,
                     URIRef(f"{schema_ns}isBasedOn"),
                     URIRef(f"{WIKI_PREFIX}Q104225190"),
-                )
+                ),
             )
 
             if self.qid and self.qid != "*" and self.qid.strip():
@@ -1329,7 +1380,7 @@ with app.setup:
                         dataset_ref,
                         URIRef(f"{schema_ns}about"),
                         URIRef(f"{wd_ns}{self.qid}"),
-                    )
+                    ),
                 )
             elif self.taxon_input == "*":
                 g.add(
@@ -1337,7 +1388,7 @@ with app.setup:
                         dataset_ref,
                         URIRef(f"{schema_ns}about"),
                         URIRef(f"{wd_ns}Q2382443"),
-                    )
+                    ),
                 )
 
             # Literal triples
@@ -1347,35 +1398,35 @@ with app.setup:
                     dataset_ref,
                     URIRef(f"{schema_ns}description"),
                     Literal(f"Chemical compounds from {taxon_description}"),
-                )
+                ),
             )
             g.add(
                 (
                     dataset_ref,
                     URIRef(f"{schema_ns}numberOfRecords"),
                     Literal(record_count, datatype=XSD.integer),
-                )
+                ),
             )
             g.add(
                 (
                     dataset_ref,
                     URIRef(f"{schema_ns}version"),
                     Literal(CONFIG["app_version"]),
-                )
+                ),
             )
             g.add(
                 (
                     dataset_ref,
                     URIRef(f"{dcterms_ns}provenance"),
                     Literal(f"Query hash: {query_hash}"),
-                )
+                ),
             )
             g.add(
                 (
                     dataset_ref,
                     URIRef(f"{dcterms_ns}identifier"),
                     Literal(f"sha256:{result_hash}"),
-                )
+                ),
             )
 
             if self.filters:
@@ -1384,9 +1435,9 @@ with app.setup:
                         dataset_ref,
                         URIRef(f"{dcterms_ns}provenance"),
                         Literal(
-                            f"Search parameters: {json.dumps(self.filters, sort_keys=True)}"
+                            f"Search parameters: {json.dumps(self.filters, sort_keys=True)}",
                         ),
-                    )
+                    ),
                 )
 
         def _build_triples_vectorized(
@@ -1430,7 +1481,7 @@ with app.setup:
                     .then(pl.col("ref"))
                     .otherwise(pl.lit("urn:bnode:ref_") + pl.col("compound_qid"))
                     .alias("_ref_node_uri"),
-                ]
+                ],
             )
 
             iri_dfs = []
@@ -1443,7 +1494,7 @@ with app.setup:
                         pl.lit(dataset_uri).alias("subject"),
                         pl.lit(f"{schema_ns}hasPart").alias("predicate"),
                         pl.col("_compound_uri").alias("object"),
-                    ]
+                    ],
                 ),
             )
 
@@ -1456,7 +1507,7 @@ with app.setup:
                             pl.col("_compound_uri").alias("subject"),
                             pl.lit(f"{p_ns}P703").alias("predicate"),
                             pl.col("_statement_uri").alias("object"),
-                        ]
+                        ],
                     ),
                 )
                 iri_dfs.append(
@@ -1465,7 +1516,7 @@ with app.setup:
                             pl.col("_statement_uri").alias("subject"),
                             pl.lit(f"{ps_ns}P703").alias("predicate"),
                             pl.col("_taxon_uri").alias("object"),
-                        ]
+                        ],
                     ),
                 )
                 iri_dfs.append(
@@ -1474,7 +1525,7 @@ with app.setup:
                             pl.col("_compound_uri").alias("subject"),
                             pl.lit(f"{wdt_ns}P703").alias("predicate"),
                             pl.col("_taxon_uri").alias("object"),
-                        ]
+                        ],
                     ),
                 )
 
@@ -1487,7 +1538,7 @@ with app.setup:
                             pl.col("_statement_uri").alias("subject"),
                             pl.lit(f"{prov_ns}wasDerivedFrom").alias("predicate"),
                             pl.col("_ref_node_uri").alias("object"),
-                        ]
+                        ],
                     ),
                 )
                 iri_dfs.append(
@@ -1496,7 +1547,7 @@ with app.setup:
                             pl.col("_ref_node_uri").alias("subject"),
                             pl.lit(f"{pr_ns}P248").alias("predicate"),
                             pl.col("_ref_uri").alias("object"),
-                        ]
+                        ],
                     ),
                 )
 
@@ -1516,7 +1567,7 @@ with app.setup:
                                     pl.col("_compound_uri").alias("subject"),
                                     pl.lit(pred).alias("predicate"),
                                     pl.col(col).cast(pl.Utf8).alias("object"),
-                                ]
+                                ],
                             ),
                         )
 
@@ -1530,7 +1581,7 @@ with app.setup:
                                 pl.col("_compound_uri").alias("subject"),
                                 pl.lit(f"{wdt_ns}P2067").alias("predicate"),
                                 pl.col("compound_mass").cast(pl.Utf8).alias("object"),
-                            ]
+                            ],
                         ),
                     )
 
@@ -1551,7 +1602,7 @@ with app.setup:
                                 pl.col("_taxon_uri").alias("subject"),
                                 pl.lit(f"{wdt_ns}P225").alias("predicate"),
                                 pl.col("taxon_name").alias("object"),
-                            ]
+                            ],
                         ),
                     )
                     literal_dfs.append(
@@ -1560,13 +1611,13 @@ with app.setup:
                                 pl.col("_taxon_uri").alias("subject"),
                                 pl.lit(f"{rdfs_ns}label").alias("predicate"),
                                 pl.col("taxon_name").alias("object"),
-                            ]
+                            ],
                         ),
                     )
 
             # 6. Reference literals (deduplicated)
             ref_unique = df.filter(pl.col("reference_qid").is_not_null()).unique(
-                subset=["reference_qid"]
+                subset=["reference_qid"],
             )
             if len(ref_unique) > 0:
                 for col, pred in [
@@ -1582,14 +1633,14 @@ with app.setup:
                                         pl.col("_ref_uri").alias("subject"),
                                         pl.lit(pred).alias("predicate"),
                                         pl.col(col).cast(pl.Utf8).alias("object"),
-                                    ]
+                                    ],
                                 ),
                             )
 
                 # rdfs:label for reference_title
                 if "reference_title" in ref_unique.columns:
                     filtered = ref_unique.filter(
-                        pl.col("reference_title").is_not_null()
+                        pl.col("reference_title").is_not_null(),
                     )
                     if len(filtered) > 0:
                         literal_dfs.append(
@@ -1600,7 +1651,7 @@ with app.setup:
                                     pl.col("reference_title")
                                     .cast(pl.Utf8)
                                     .alias("object"),
-                                ]
+                                ],
                             ),
                         )
 
@@ -1616,7 +1667,7 @@ with app.setup:
                                     pl.col("reference_date")
                                     .cast(pl.Utf8)
                                     .alias("object"),
-                                ]
+                                ],
                             ),
                         )
 
