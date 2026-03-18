@@ -3,7 +3,7 @@
 # dependencies = [
 #     "great-tables==0.21.0",
 #     "marimo",
-#     "polars==1.39.2",
+#     "polars==1.37.1",
 #     "maplib==0.19.24",
 # ]
 # [tool.marimo.runtime]
