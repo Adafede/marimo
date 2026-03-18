@@ -2,7 +2,7 @@
 # requires-python = "==3.13.*"
 # dependencies = [
 #     "marimo",
-#     "polars==1.37.1",
+#     "polars==1.39.2",
 # ]
 # [tool.marimo.runtime]
 # output_max_bytes = 1_073_741_824
@@ -45,7 +45,7 @@ Usage:
 
 import marimo
 
-__generated_with = "0.21.0"
+__generated_with = "0.20.4"
 app = marimo.App(width="full", app_title="LOTUS PubChem Tree Generator")
 
 with app.setup:

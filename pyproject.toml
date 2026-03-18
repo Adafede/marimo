@@ -10,7 +10,7 @@ dependencies = [
   "epam-indigo>=1.40.0",
   "fsspec>=2026.2.0",
   "maplib>=0.19.24",
-  "marimo>=0.21.1",
+  "marimo==0.20.4",
   "networkx>=3.6.1",
   "numpy>=2.4.3",
   "polars>=1.39.2",

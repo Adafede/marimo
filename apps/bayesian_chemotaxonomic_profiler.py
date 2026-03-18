@@ -6,7 +6,7 @@
 #     "cmcrameri==1.9",
 #     "marimo",
 #     "numpy==2.4.3",
-#     "polars==1.37.1",
+#     "polars==1.39.2",
 #     "pyarrow==23.0.1",
 #     "requests==2.32.5",
 #     "scipy==1.17.1",
