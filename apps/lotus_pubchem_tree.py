@@ -317,17 +317,26 @@ with app.setup:
         smarts: list[str] | None = None
         cxsmiles: list[str] | None = None
 
+        @staticmethod
+        def _simplify(values: list[str] | None) -> str | list[str] | None:
+            """Return single value if list has one item, else return list."""
+            if not values:
+                return None
+            if len(values) == 1:
+                return values[0]
+            return values
+
         def to_dict(self) -> dict:
-            """Convert to dictionary, omitting None fields."""
+            """Convert to dictionary. Uses single value when unique, list when multiple."""
             result = {}
             if self.inchikey:
-                result["InChIKey"] = self.inchikey
+                result["InChIKey"] = self._simplify(self.inchikey)
             if self.smiles:
-                result["SMILES"] = self.smiles
+                result["SMILES"] = self._simplify(self.smiles)
             if self.smarts:
-                result["SMARTS"] = self.smarts
+                result["SMARTS"] = self._simplify(self.smarts)
             if self.cxsmiles:
-                result["CXSMILES"] = self.cxsmiles
+                result["CXSMILES"] = self._simplify(self.cxsmiles)
             return result
 
         def is_empty(self) -> bool:
@@ -1283,6 +1292,39 @@ def download_buttons(biological_tree, chemical_tree):
         is_biological = tree_type == "biological"
 
         return {
+            "_documentation": {
+                "overview": (
+                    "This JSON contains a hierarchical tree of biological taxa with their associated natural product compounds."
+                    if is_biological
+                    else "This JSON contains a hierarchical tree of chemical compound classes with structural descriptors."
+                ),
+                "structure": {
+                    "tree": "Array of root nodes. Each node is an object with Name, Identifiers, and optional Children.",
+                    "node_fields": {
+                        "Name": "Human-readable name (taxon name or compound label)",
+                        "Identifiers": "External database identifiers (Wikidata QID, NCBI TaxID for taxa)",
+                        "Compounds": "(Biological tree only) Array of compounds found in this taxon",
+                        "Descriptors": "(Chemical tree only) Chemical structure representations",
+                        "Children": "Array of child nodes (same structure, recursive)",
+                    },
+                    "descriptors_fields": {
+                        "InChIKey": "IUPAC International Chemical Identifier Key",
+                        "SMILES": "Simplified Molecular Input Line Entry System (isomeric preferred over canonical)",
+                        "SMARTS": "SMILES Arbitrary Target Specification (substructure patterns)",
+                        "CXSMILES": "ChemAxon Extended SMILES",
+                    },
+                },
+                "notes": [
+                    "Descriptor values are strings when single, arrays when multiple values exist (very rare).",
+                    "All nodes are sorted alphabetically by Name.",
+                    "Only nodes with InChIKey associations (directly or via descendants) are included.",
+                    "Data queried from Wikidata via QLever SPARQL endpoint.",
+                ],
+                "usage_example": {
+                    "python": "data = json.load(open('file.json')); roots = data['tree']",
+                    "jq": "jq '.tree[] | .Name' file.json",
+                },
+            },
             "metadata": {
                 "name": f"LOTUS {tree_type.title()} Tree",
                 "description": (
@@ -1310,12 +1352,6 @@ def download_buttons(biological_tree, chemical_tree):
                     "sparql_pattern": METADATA["constraints"][
                         "biological_tree" if is_biological else "chemical_tree"
                     ],
-                },
-                "schema": {
-                    "node_structure": "{Name, Identifiers, Compounds|Descriptors?, Children?}",
-                    "identifiers": ["Wikidata_QID"]
-                    + (["NCBI_TaxID"] if is_biological else []),
-                    "descriptors": ["InChIKey", "SMILES", "SMARTS", "CXSMILES"],
                 },
                 "statistics": {
                     "root_nodes": len(tree),
@@ -1567,6 +1603,39 @@ Examples:
                 is_biological = tree_type == "biological"
 
                 return {
+                    "_documentation": {
+                        "overview": (
+                            "This JSON contains a hierarchical tree of biological taxa with their associated natural product compounds."
+                            if is_biological
+                            else "This JSON contains a hierarchical tree of chemical compound classes with structural descriptors."
+                        ),
+                        "structure": {
+                            "tree": "Array of root nodes. Each node is an object with Name, Identifiers, and optional Children.",
+                            "node_fields": {
+                                "Name": "Human-readable name (taxon name or compound label)",
+                                "Identifiers": "External database identifiers (Wikidata QID, NCBI TaxID for taxa)",
+                                "Compounds": "(Biological tree only) Array of compounds found in this taxon",
+                                "Descriptors": "(Chemical tree only) Chemical structure representations",
+                                "Children": "Array of child nodes (same structure, recursive)",
+                            },
+                            "descriptors_fields": {
+                                "InChIKey": "IUPAC International Chemical Identifier Key",
+                                "SMILES": "Simplified Molecular Input Line Entry System (isomeric preferred over canonical)",
+                                "SMARTS": "SMILES Arbitrary Target Specification (substructure patterns)",
+                                "CXSMILES": "ChemAxon Extended SMILES",
+                            },
+                        },
+                        "notes": [
+                            "Descriptor values are strings when single, arrays when multiple values exist (very rare).",
+                            "All nodes are sorted alphabetically by Name.",
+                            "Only nodes with InChIKey associations (directly or via descendants) are included.",
+                            "Data queried from Wikidata via QLever SPARQL endpoint.",
+                        ],
+                        "usage_example": {
+                            "python": "data = json.load(open('file.json')); roots = data['tree']",
+                            "jq": "jq '.tree[] | .Name' file.json",
+                        },
+                    },
                     "metadata": {
                         "name": f"LOTUS {tree_type.title()} Tree",
                         "description": (
@@ -1594,12 +1663,6 @@ Examples:
                             "sparql_pattern": METADATA["constraints"][
                                 "biological_tree" if is_biological else "chemical_tree"
                             ],
-                        },
-                        "schema": {
-                            "node_structure": "{Name, Identifiers, Compounds|Descriptors?, Children?}",
-                            "identifiers": ["Wikidata_QID"]
-                            + (["NCBI_TaxID"] if is_biological else []),
-                            "descriptors": ["InChIKey", "SMILES", "SMARTS", "CXSMILES"],
                         },
                         "statistics": {
                             "root_nodes": len(tree),
