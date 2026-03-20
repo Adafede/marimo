@@ -200,6 +200,39 @@ with app.setup:
     }
     """
 
+    # Reference queries - fetch DOIs and PMIDs for compound-taxon relationships
+    QUERY_REFERENCE_DOI = """
+    PREFIX wikibase: <http://wikiba.se/ontology#>
+    PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+    PREFIX p: <http://www.wikidata.org/prop/>
+    PREFIX ps: <http://www.wikidata.org/prop/statement/>
+    PREFIX prov: <http://www.w3.org/ns/prov#>
+    PREFIX pr: <http://www.wikidata.org/prop/reference/>
+    SELECT DISTINCT ?compound ?taxon ?reference ?doi WHERE {
+      ?compound wdt:P235 ?inchikey .
+      ?compound p:P703 ?statement .
+      ?statement ps:P703 ?taxon .
+      ?statement prov:wasDerivedFrom/pr:P248 ?reference .
+      ?reference wdt:P356 ?doi .
+    }
+    """
+
+    QUERY_REFERENCE_PMID = """
+    PREFIX wikibase: <http://wikiba.se/ontology#>
+    PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+    PREFIX p: <http://www.wikidata.org/prop/>
+    PREFIX ps: <http://www.wikidata.org/prop/statement/>
+    PREFIX prov: <http://www.w3.org/ns/prov#>
+    PREFIX pr: <http://www.wikidata.org/prop/reference/>
+    SELECT DISTINCT ?compound ?taxon ?reference ?pmid WHERE {
+      ?compound wdt:P235 ?inchikey .
+      ?compound p:P703 ?statement .
+      ?statement ps:P703 ?taxon .
+      ?statement prov:wasDerivedFrom/pr:P248 ?reference .
+      ?reference wdt:P698 ?pmid .
+    }
+    """
+
     # ========================================================================
     # HELPER FUNCTIONS
     # ========================================================================
@@ -246,6 +279,18 @@ with app.setup:
             "compound": pl.Utf8,
             "compound_label": pl.Utf8,
             "lang": pl.Utf8,
+        },
+        "reference_doi": {
+            "compound": pl.Utf8,
+            "taxon": pl.Utf8,
+            "reference": pl.Utf8,
+            "doi": pl.Utf8,
+        },
+        "reference_pmid": {
+            "compound": pl.Utf8,
+            "taxon": pl.Utf8,
+            "reference": pl.Utf8,
+            "pmid": pl.Utf8,
         },
     }
 
@@ -296,6 +341,8 @@ with app.setup:
         compound_cxsmiles: pl.LazyFrame
         compound_parent: pl.LazyFrame
         compound_label: pl.LazyFrame
+        reference_doi: pl.LazyFrame
+        reference_pmid: pl.LazyFrame
 
     @dataclass
     class Identifiers:
@@ -457,6 +504,16 @@ with app.setup:
                 QUERY_COMPOUND_PARENT,
                 "Fetching compound-parent pairs (under chemical compound)...",
             ),
+            (
+                "reference_doi",
+                QUERY_REFERENCE_DOI,
+                "Fetching reference DOIs...",
+            ),
+            (
+                "reference_pmid",
+                QUERY_REFERENCE_PMID,
+                "Fetching reference PMIDs...",
+            ),
         ]
 
         results = {}
@@ -522,6 +579,67 @@ with app.setup:
     def process_compound_smiles(lf: pl.LazyFrame, col: str) -> pl.LazyFrame:
         """Process compound SMILES pairs."""
         return lf.pipe(extract_qids_from_lazyframe, "compound")
+
+    def process_reference_doi(lf: pl.LazyFrame) -> pl.LazyFrame:
+        """Process reference DOI data."""
+        return (
+            lf.pipe(extract_qids_from_lazyframe, "compound")
+            .pipe(extract_qids_from_lazyframe, "taxon")
+            .pipe(extract_qids_from_lazyframe, "reference")
+        )
+
+    def process_reference_pmid(lf: pl.LazyFrame) -> pl.LazyFrame:
+        """Process reference PMID data."""
+        return (
+            lf.pipe(extract_qids_from_lazyframe, "compound")
+            .pipe(extract_qids_from_lazyframe, "taxon")
+            .pipe(extract_qids_from_lazyframe, "reference")
+        )
+
+    def build_reference_map(
+        reference_doi_df: pl.DataFrame,
+        reference_pmid_df: pl.DataFrame,
+    ) -> dict[str, dict[str, dict]]:
+        """
+        Build a nested mapping: compound -> taxon -> {reference_qid: {doi, pmid}}.
+
+        This allows looking up references for a specific compound-taxon pair.
+        """
+        reference_map: dict[str, dict[str, dict]] = {}
+
+        # Process DOI references
+        if len(reference_doi_df) > 0:
+            for row in reference_doi_df.iter_rows(named=True):
+                compound = row["compound"]
+                taxon = row["taxon"]
+                ref_qid = row["reference"]
+                doi = row["doi"]
+
+                if compound not in reference_map:
+                    reference_map[compound] = {}
+                if taxon not in reference_map[compound]:
+                    reference_map[compound][taxon] = {}
+                if ref_qid not in reference_map[compound][taxon]:
+                    reference_map[compound][taxon][ref_qid] = {}
+                reference_map[compound][taxon][ref_qid]["DOI"] = doi
+
+        # Process PMID references
+        if len(reference_pmid_df) > 0:
+            for row in reference_pmid_df.iter_rows(named=True):
+                compound = row["compound"]
+                taxon = row["taxon"]
+                ref_qid = row["reference"]
+                pmid = row["pmid"]
+
+                if compound not in reference_map:
+                    reference_map[compound] = {}
+                if taxon not in reference_map[compound]:
+                    reference_map[compound][taxon] = {}
+                if ref_qid not in reference_map[compound][taxon]:
+                    reference_map[compound][taxon][ref_qid] = {}
+                reference_map[compound][taxon][ref_qid]["PMID"] = pmid
+
+        return reference_map
 
     def combine_smiles(
         smiles_iso: pl.LazyFrame,
@@ -697,6 +815,7 @@ with app.setup:
         compounds_with_taxa: set[str],
         descriptor_map: dict[str, Descriptors],
         label_map: dict[str, str],
+        reference_map: dict[str, dict[str, dict]] | None = None,
     ) -> list[dict]:
         """
         Build biological tree JSON for PubChem.
@@ -713,11 +832,12 @@ with app.setup:
             compounds_with_taxa: Set of compound QIDs that have InChIKeys+taxa
             descriptor_map: Unified mapping of compound QID to Descriptors
             label_map: Mapping of compound QID to label
+            reference_map: Nested mapping compound -> taxon -> {ref_qid: {DOI, PMID}}
 
         Returns a hierarchical tree structure where each taxon node contains:
         - Name: Taxonomic name
         - Identifiers: NCBI TaxID and Wikidata QID
-        - Compounds: List of compounds found in this taxon
+        - Compounds: List of compounds found in this taxon (with optional References)
         - Children: List of child taxon nodes
         """
         # Step 1: Get all taxa that directly have compounds
@@ -818,6 +938,21 @@ with app.setup:
                     desc_dict = descriptors.to_dict()
                     if desc_dict:
                         compound_dict["Descriptors"] = desc_dict
+                # Add references for this specific compound-taxon pair
+                if reference_map and qid in reference_map:
+                    taxon_refs = reference_map[qid].get(taxon_qid)
+                    if taxon_refs:
+                        refs_list = []
+                        for ref_qid, ref_data in taxon_refs.items():
+                            ref_entry = {"Wikidata_QID": ref_qid}
+                            ref_entry.update(ref_data)
+                            refs_list.append(ref_entry)
+                        if refs_list:
+                            # Sort references by DOI then PMID for consistent output
+                            compound_dict["References"] = sorted(
+                                refs_list,
+                                key=lambda r: (r.get("DOI", ""), r.get("PMID", "")),
+                            )
                 compounds_list.append(compound_dict)
 
             # Build children (only for children in relevant_taxa)
@@ -1115,14 +1250,19 @@ with app.setup:
             "TaxonName": {
               "children": {
                 "ChildTaxonName": {...},
-                "NCBI_ID": {"organism_name": ["TaxonName"]}
+                "NCBI_ID": {
+                  "organism_name": ["TaxonName"],
+                  "compounds": {
+                    "InChIKey1": {"references": [{"DOI": "...", "PMID": "..."}]},
+                    "InChIKey2": {"references": [...]}
+                  }
+                }
               }
             }
           }
         }
 
-        Note: InChIKeys are NOT included in the biological tree.
-        The biological tree only contains the biological hierarchy.
+        Compounds are keyed by InChIKey and include their references.
         """
         if not nodes:
             return {}
@@ -1134,6 +1274,7 @@ with app.setup:
             identifiers = node.get("Identifiers", {})
             ncbi_id = identifiers.get("NCBI_TaxID")
             children = node.get("Children", [])
+            compounds = node.get("Compounds", [])
 
             # Build this node's content
             node_content = {}
@@ -1148,7 +1289,61 @@ with app.setup:
             if ncbi_id:
                 if "children" not in node_content:
                     node_content["children"] = {}
-                node_content["children"][ncbi_id] = {"organism_name": [name]}
+                ncbi_entry = {"organism_name": [name]}
+
+                # Add compounds with their InChIKeys and references
+                # Aggregate references when the same InChIKey appears multiple times
+                if compounds:
+                    compounds_dict: dict[str, dict] = {}
+                    for compound in compounds:
+                        descriptors = compound.get("Descriptors", {})
+                        inchikey = descriptors.get("InChIKey")
+                        references = compound.get("References", [])
+
+                        if inchikey:
+                            # Handle both single InChIKey and list of InChIKeys
+                            inchikeys = (
+                                [inchikey] if isinstance(inchikey, str) else inchikey
+                            )
+                            for ik in inchikeys:
+                                # Aggregate references for this InChIKey
+                                if ik not in compounds_dict:
+                                    compounds_dict[ik] = {"_refs_set": set()}
+
+                                if references:
+                                    for ref in references:
+                                        # Create a hashable key for deduplication
+                                        doi = ref.get("DOI")
+                                        pmid = ref.get("PMID")
+                                        ref_key = (doi, pmid)
+
+                                        if (
+                                            ref_key
+                                            not in compounds_dict[ik]["_refs_set"]
+                                        ):
+                                            compounds_dict[ik]["_refs_set"].add(ref_key)
+                                            if "references" not in compounds_dict[ik]:
+                                                compounds_dict[ik]["references"] = []
+                                            ref_entry = {}
+                                            if doi:
+                                                ref_entry["DOI"] = doi
+                                            if pmid:
+                                                ref_entry["PMID"] = pmid
+                                            if ref_entry:
+                                                compounds_dict[ik]["references"].append(
+                                                    ref_entry
+                                                )
+
+                    # Clean up internal tracking sets before output
+                    for ik in compounds_dict:
+                        compounds_dict[ik].pop("_refs_set", None)
+                        if not compounds_dict[ik]:
+                            compounds_dict[ik] = {}
+
+                    if compounds_dict:
+                        ncbi_entry["compounds"] = compounds_dict
+
+                node_content["children"][ncbi_id] = ncbi_entry
 
             result["children"][name] = node_content if node_content else {}
 
@@ -1296,6 +1491,8 @@ def fetch_data(run_button):
             ),
             compound_parent=process_compound_parent(data.compound_parent),
             compound_label=process_compound_label(data.compound_label),
+            reference_doi=process_reference_doi(data.reference_doi),
+            reference_pmid=process_reference_pmid(data.reference_pmid),
         )
 
     with mo.status.spinner("Computing statistics..."):
@@ -1439,6 +1636,12 @@ def build_trees(build_trees_btn, data):
         taxon_parent_df = data.taxon_parent.collect()
         taxon_name_df = data.taxon_name.collect()
 
+    with mo.status.spinner("Building reference map..."):
+        reference_doi_df = data.reference_doi.collect()
+        reference_pmid_df = data.reference_pmid.collect()
+        reference_map = build_reference_map(reference_doi_df, reference_pmid_df)
+        del reference_doi_df, reference_pmid_df
+
     with mo.status.spinner("Building biological tree..."):
         biological_tree = build_biological_tree(
             compound_taxon_df,
@@ -1448,9 +1651,10 @@ def build_trees(build_trees_btn, data):
             compounds_with_taxa,
             descriptor_map,
             label_map,
+            reference_map,
         )
         # Free taxon DataFrames after biological tree is built
-        del taxon_ncbi_df, taxon_parent_df, taxon_name_df
+        del taxon_ncbi_df, taxon_parent_df, taxon_name_df, reference_map
 
     # Step 7: Build chemical tree
     with mo.status.spinner("Loading compound parent data..."):
@@ -1534,7 +1738,8 @@ def download_buttons(biological_tree, chemical_tree):
                         "Name": "Human-readable name (taxon name or compound label)",
                         "Identifiers": "External database identifiers (Wikidata QID, NCBI TaxID for taxa)",
                         "Compounds": "(Biological tree only) Array of compounds found in this taxon",
-                        "Descriptors": "(Chemical tree only) Chemical structure representations",
+                        "Descriptors": "Chemical structure representations (InChIKey, SMILES, etc.)",
+                        "References": "(Biological tree compounds only) Literature references for compound-taxon association",
                         "Children": "Array of child nodes (same structure, recursive)",
                     },
                     "descriptors_fields": {
@@ -1542,6 +1747,11 @@ def download_buttons(biological_tree, chemical_tree):
                         "SMILES": "Simplified Molecular Input Line Entry System (isomeric preferred over canonical)",
                         "SMARTS": "SMILES Arbitrary Target Specification (substructure patterns)",
                         "CXSMILES": "ChemAxon Extended SMILES",
+                    },
+                    "reference_fields": {
+                        "Wikidata_QID": "QID of the reference article in Wikidata",
+                        "DOI": "Digital Object Identifier of the reference",
+                        "PMID": "PubMed ID of the reference",
                     },
                 },
                 "notes": [
@@ -1740,6 +1950,8 @@ Examples:
                 ),
                 compound_parent=process_compound_parent(data.compound_parent),
                 compound_label=process_compound_label(data.compound_label),
+                reference_doi=process_reference_doi(data.reference_doi),
+                reference_pmid=process_reference_pmid(data.reference_pmid),
             )
 
             if args.verbose:
@@ -1810,6 +2022,18 @@ Examples:
             taxon_parent_df = data.taxon_parent.collect()
             taxon_name_df = data.taxon_name.collect()
 
+            # Build reference map for compound-taxon pairs
+            if args.verbose:
+                print("  Building reference map...", file=sys.stderr)
+            reference_doi_df = data.reference_doi.collect()
+            reference_pmid_df = data.reference_pmid.collect()
+            reference_map = build_reference_map(reference_doi_df, reference_pmid_df)
+            if args.verbose:
+                print(
+                    f"  Compounds with references: {len(reference_map):,}",
+                    file=sys.stderr,
+                )
+
             biological_tree = build_biological_tree(
                 compound_taxon_df,
                 taxon_ncbi_df,
@@ -1818,6 +2042,7 @@ Examples:
                 compounds_with_taxa,
                 descriptor_map,
                 label_map,
+                reference_map,
             )
 
             if args.verbose:
@@ -1862,7 +2087,8 @@ Examples:
                                 "Name": "Human-readable name (taxon name or compound label)",
                                 "Identifiers": "External database identifiers (Wikidata QID, NCBI TaxID for taxa)",
                                 "Compounds": "(Biological tree only) Array of compounds found in this taxon",
-                                "Descriptors": "(Chemical tree only) Chemical structure representations",
+                                "Descriptors": "Chemical structure representations (InChIKey, SMILES, etc.)",
+                                "References": "(Biological tree compounds only) Literature references for compound-taxon association",
                                 "Children": "Array of child nodes (same structure, recursive)",
                             },
                             "descriptors_fields": {
@@ -1870,6 +2096,11 @@ Examples:
                                 "SMILES": "Simplified Molecular Input Line Entry System (isomeric preferred over canonical)",
                                 "SMARTS": "SMILES Arbitrary Target Specification (substructure patterns)",
                                 "CXSMILES": "ChemAxon Extended SMILES",
+                            },
+                            "reference_fields": {
+                                "Wikidata_QID": "QID of the reference article in Wikidata",
+                                "DOI": "Digital Object Identifier of the reference",
+                                "PMID": "PubMed ID of the reference",
                             },
                         },
                         "notes": [
