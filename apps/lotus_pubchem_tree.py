@@ -1331,7 +1331,7 @@ with app.setup:
                                                 ref_entry["PMID"] = pmid
                                             if ref_entry:
                                                 compounds_dict[ik]["references"].append(
-                                                    ref_entry
+                                                    ref_entry,
                                                 )
 
                     # Clean up internal tracking sets before output
