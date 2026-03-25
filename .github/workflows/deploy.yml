@@ -65,4 +65,4 @@ jobs:
       # Deploy the site to GitHub Pages using the official action
       - name: 🚀 Deploy to GitHub Pages
         id: deployment                 # ID used to reference this step's outputs
-        uses: actions/deploy-pages@v4  # GitHub's official Pages deployment action
+        uses: actions/deploy-pages@v5  # GitHub's official Pages deployment action
