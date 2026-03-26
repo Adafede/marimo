@@ -3,7 +3,7 @@
 # dependencies = [
 #     "great-tables==0.21.0",
 #     "marimo",
-#     "polars==1.39.2",
+#     "polars==1.39.3",
 #     "rdflib==7.1.0",
 # ]
 # [tool.marimo.runtime]

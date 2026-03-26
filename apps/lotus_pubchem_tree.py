@@ -2,7 +2,7 @@
 # requires-python = "==3.13.*"
 # dependencies = [
 #     "marimo",
-#     "polars==1.39.2",
+#     "polars==1.39.3",
 # ]
 # [tool.marimo.runtime]
 # output_max_bytes = 1_073_741_824
