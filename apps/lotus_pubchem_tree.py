@@ -1257,6 +1257,7 @@ with app.setup:
         npclassifier_df: pl.DataFrame,
         smiles_to_inchikey: dict[str, list[str]],
         smiles_to_qid: dict[str, str] | None = None,
+        compound_label_df: pl.DataFrame | None = None,
         compounds_with_taxa: set[str] | None = None,
     ) -> list[dict]:
         """
@@ -1268,12 +1269,23 @@ with app.setup:
             npclassifier_df: DataFrame with SMILES and NPClassifier annotations
             smiles_to_inchikey: Mapping from SMILES to list of InChIKeys
             smiles_to_qid: Mapping from SMILES to Wikidata QID
+            compound_label_df: DataFrame with compound labels (optional)
             compounds_with_taxa: Optional set of compound QIDs with taxa (not used here)
 
         Returns:
             Hierarchical tree structure compatible with the existing format
         """
         smiles_to_qid = smiles_to_qid or {}
+
+        # Build label map from compound_label_df if provided
+        label_map = {}
+        if compound_label_df is not None and len(compound_label_df) > 0:
+            label_map = dict(
+                zip(
+                    compound_label_df["compound"].to_list(),
+                    compound_label_df["compound_label"].to_list(),
+                ),
+            )
 
         if len(npclassifier_df) == 0:
             return []
@@ -1353,10 +1365,14 @@ with app.setup:
                             qid = smiles_to_qid.get(smi)
                             if inchikeys:
                                 for ik in inchikeys:
+                                    # Use compound label if available, otherwise fall back to InChIKey
+                                    compound_name = (
+                                        label_map.get(qid, ik) if qid else ik
+                                    )
                                     node_identifiers = {"QID": qid} if qid else {}
                                     superclass_node["Children"].append(
                                         {
-                                            "Name": ik,
+                                            "Name": compound_name,
                                             "Identifiers": node_identifiers,
                                             "Descriptors": {
                                                 "InChIKey": ik,
@@ -1376,10 +1392,14 @@ with app.setup:
                             qid = smiles_to_qid.get(smi)
                             if inchikeys:
                                 for ik in inchikeys:
+                                    # Use compound label if available, otherwise fall back to InChIKey
+                                    compound_name = (
+                                        label_map.get(qid, ik) if qid else ik
+                                    )
                                     node_identifiers = {"QID": qid} if qid else {}
                                     class_node["Children"].append(
                                         {
-                                            "Name": ik,
+                                            "Name": compound_name,
                                             "Identifiers": node_identifiers,
                                             "Descriptors": {
                                                 "InChIKey": ik,
@@ -1444,7 +1464,7 @@ with app.setup:
                   "children": {
                     "Class": {
                       "children": {
-                        "INCHIKEY-...": {"QID": "Q..."}
+                        "INCHIKEY-...": {"Name": "compound label", "QID": "Q..."}
                       }
                     }
                   }
@@ -1453,6 +1473,9 @@ with app.setup:
             }
           }
         }
+
+        Leaf keys remain InChIKeys. The leaf "Name" field stores the
+        human-readable compound label when available.
         """
         if not tree:
             return {}
@@ -1468,14 +1491,21 @@ with app.setup:
             if children:
                 result["children"] = {}
                 for child in children:
-                    child_name = child.get("Name", "Unknown")
-                    result["children"][child_name] = convert_node(child)
+                    child_descriptors = child.get("Descriptors", {})
+                    child_inchikey = child_descriptors.get("InChIKey")
+                    child_key = (
+                        child_inchikey
+                        if isinstance(child_inchikey, str) and child_inchikey
+                        else child.get("Name", "Unknown")
+                    )
+                    result["children"][child_key] = convert_node(child)
             elif descriptors.get("InChIKey"):
-                # Leaf node - include Wikidata QID if available
+                # Leaf node - include Name and Wikidata QID if available
+                leaf_content = {"Name": name}
                 qid = identifiers.get("QID")
                 if qid:
-                    return {"QID": qid}
-                return {}
+                    leaf_content["QID"] = qid
+                return leaf_content
 
             return result
 
@@ -1577,13 +1607,14 @@ with app.setup:
             if ncbi_id:
                 if "children" not in node_content:
                     node_content["children"] = {}
-                ncbi_entry = {"organism_name": [name]}
+                ncbi_entry: dict[str, object] = {"organism_name": [name]}
 
                 # Add compounds with their InChIKeys, Wikidata QIDs, and references
                 # Aggregate references when the same InChIKey appears multiple times
                 if compounds:
                     compounds_dict: dict[str, dict] = {}
                     for compound in compounds:
+                        compound_name = compound.get("Name")
                         compound_identifiers = compound.get("Identifiers", {})
                         compound_qid = compound_identifiers.get("QID")
                         descriptors = compound.get("Descriptors", {})
@@ -1599,6 +1630,8 @@ with app.setup:
                                 # Aggregate references for this InChIKey
                                 if ik not in compounds_dict:
                                     compounds_dict[ik] = {"_refs_set": set()}
+                                    if compound_name:
+                                        compounds_dict[ik]["Name"] = compound_name
                                     # Add Wikidata QID for the compound
                                     if compound_qid:
                                         compounds_dict[ik]["QID"] = compound_qid
@@ -1683,19 +1716,23 @@ with app.setup:
                 if "children" in child_result:
                     node_content["children"] = child_result["children"]
 
-            # If this node has an InChIKey, add it as a leaf with QID
+            # If this node has an InChIKey, add it as a leaf with QID and compound name
             inchikey = descriptors.get("InChIKey")
             if inchikey:
                 if isinstance(inchikey, list):
                     for ik in inchikey:
                         if "children" not in node_content:
                             node_content["children"] = {}
-                        leaf_content = {"QID": qid} if qid else {}
+                        leaf_content = {"Name": name}
+                        if qid:
+                            leaf_content["QID"] = qid
                         node_content["children"][ik] = leaf_content
                 else:
                     if "children" not in node_content:
                         node_content["children"] = {}
-                    leaf_content = {"QID": qid} if qid else {}
+                    leaf_content = {"Name": name}
+                    if qid:
+                        leaf_content["QID"] = qid
                     node_content["children"][inchikey] = leaf_content
 
             result["children"][name] = node_content if node_content else {}
@@ -1767,7 +1804,7 @@ def fetch_data(run_button):
         def progress_callback(msg):
             _spinner.update(msg)
 
-        data = fetch_all_data(CONFIG["qlever_endpoint"], progress_callback)
+        data = fetch_all_data(cast(str, CONFIG["qlever_endpoint"]), progress_callback)
 
     with mo.status.spinner("Processing data..."):
         data = LOTUSData(
@@ -1990,6 +2027,7 @@ def build_trees(build_trees_btn, data):
                 npclassifier_df,
                 smiles_to_inchikey,
                 smiles_to_qid,
+                compound_label_df,
             )
         del npclassifier_df
     else:
@@ -2074,12 +2112,12 @@ def display_previews(biological_tree, chemical_tree, npclassifier_tree):
         [
             mo.callout(
                 mo.md(f"""
-    **Preview is truncated for performance.** Showing ~{total_shown:,} nodes out of {total_nodes:,} total.
-    Download the JSON files for the complete trees.
+**Preview is truncated for performance.** Showing ~{total_shown:,} nodes out of {total_nodes:,} total.
+Download the JSON files for the complete trees.
             """),
                 kind="info",
             ),
-            mo.ui.tabs(tabs_dict),
+            mo.ui.tabs(cast(dict[str, object], tabs_dict)),
         ],
     )
     return
@@ -2364,7 +2402,10 @@ Examples:
             if args.verbose:
                 print("Fetching data from Wikidata...", file=sys.stderr)
 
-            data = fetch_all_data(CONFIG["qlever_endpoint"], progress_callback)
+            data = fetch_all_data(
+                cast(str, CONFIG["qlever_endpoint"]),
+                progress_callback,
+            )
 
             if args.verbose:
                 print("\nProcessing data...", file=sys.stderr)
@@ -2531,6 +2572,7 @@ Examples:
                     npclassifier_df,
                     smiles_to_inchikey,
                     smiles_to_qid,
+                    compound_label_df,
                 )
                 if args.verbose:
                     npc_nodes = count_tree_nodes(npclassifier_tree)
