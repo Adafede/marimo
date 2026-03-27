@@ -279,7 +279,7 @@ def _controls():
 
 
 @app.cell
-def _load_smiles():
+def _load_smiles(file_input, parse_smiles_file):
     if file_input.value:
         _raw = file_input.value[0].contents.decode("utf-8", errors="replace")
         smiles_list = parse_smiles_file(_raw)
@@ -295,7 +295,7 @@ def _load_cache_cell():
 
 
 @app.cell
-def _status():
+def _status(smiles_list, cache, mo, CACHE_PATH):
     if not smiles_list:
         mo.md("Upload a SMILES file to get started.")
     else:
@@ -309,7 +309,7 @@ def _status():
 
 
 @app.cell
-def _run_button():
+def _run_button(smiles_list, mo):
     mo.stop(not smiles_list)
     run_btn = mo.ui.run_button(label="Classify")
     run_btn
@@ -317,7 +317,17 @@ def _run_button():
 
 
 @app.cell
-def _run_classify():
+def _run_classify(
+    smiles_list,
+    run_btn,
+    cache,
+    workers_slider,
+    retries_slider,
+    save_every_slider,
+    classify_batch,
+    mo,
+    CACHE_PATH,
+):
     mo.stop(not smiles_list or not run_btn.value)
     _new = [s for s in smiles_list if s not in cache]
 
@@ -336,7 +346,7 @@ def _run_classify():
 
 
 @app.cell
-def _results_table():
+def _results_table(smiles_list, run_btn, results, mo):
     mo.stop(not smiles_list or not run_btn.value)
     import polars as pl
 
@@ -360,7 +370,7 @@ def _results_table():
 
 
 @app.cell
-def _pathway_chart():
+def _pathway_chart(smiles_list, run_btn, results_df, pl, mo):
     mo.stop(not smiles_list or not run_btn.value)
     import altair as alt
 
@@ -383,7 +393,7 @@ def _pathway_chart():
 
 
 @app.cell
-def _download():
+def _download(smiles_list, run_btn, results_df, mo):
     mo.stop(not smiles_list or not run_btn.value)
     mo.download(
         data=results_df.write_csv().encode(),
