@@ -82,6 +82,7 @@ with app.setup:
         "qlever_endpoint": "https://qlever.dev/api/wikidata",
         "pubchem_endpoint": "https://qlever.dev/api/pubchem",
         "npclassifier_cache_url": "https://adafede.github.io/marimo/apps/public/npclassifier/npclassifier_cache.csv",
+        "classyfire_cache_url": "https://adafede.github.io/marimo/apps/public/classyfire/classyfire_cache.csv",
         "ott_cache_url": "https://adafede.github.io/marimo/apps/public/ott/ott.tsv",
     }
 
@@ -668,13 +669,10 @@ with app.setup:
 
     def fetch_classyfire_cache(url: str | None = None) -> pl.DataFrame:
         """
-        Fetch ClassyFire cache from remote URL.
+        Fetch ClassyFire cache from remote URL or local file.
         Expected columns: inchikey, chemontid, kingdom, superclass, class, direct_parent
-
-        TODO: Set CONFIG["classyfire_cache_url"] to enable fetching.
         """
-        url = url or CONFIG.get("classyfire_cache_url")
-        if not url:
+        def _empty_classyfire_df() -> pl.DataFrame:
             return pl.DataFrame(
                 schema={
                     "inchikey": pl.Utf8,
@@ -685,8 +683,80 @@ with app.setup:
                     "direct_parent": pl.Utf8,
                 },
             )
-        # TODO: Implement actual fetching when URL is available
-        return pl.DataFrame()
+
+        configured = url or cast(str | None, CONFIG.get("classyfire_cache_url"))
+        candidates = [
+            c for c in [configured, "apps/public/classyfire/classyfire_cache.csv"] if c
+        ]
+
+        for source in candidates:
+            try:
+                if source.startswith("http://") or source.startswith("https://"):
+                    df = pl.read_csv(source)
+                else:
+                    if not Path(source).exists():
+                        continue
+                    df = pl.read_csv(source)
+
+                if len(df) == 0:
+                    continue
+
+                cols = set(df.columns)
+                mapped = df.select(
+                    [
+                        (
+                            pl.col("inchikey")
+                            if "inchikey" in cols
+                            else pl.col("structure_inchikey")
+                        )
+                        .cast(pl.Utf8)
+                        .alias("inchikey"),
+                        (
+                            pl.col("chemontid")
+                            if "chemontid" in cols
+                            else pl.col("structure_taxonomy_classyfire_chemontid")
+                        )
+                        .cast(pl.Utf8)
+                        .alias("chemontid"),
+                        (
+                            pl.col("kingdom")
+                            if "kingdom" in cols
+                            else pl.col("structure_taxonomy_classyfire_01kingdom")
+                        )
+                        .cast(pl.Utf8)
+                        .alias("kingdom"),
+                        (
+                            pl.col("superclass")
+                            if "superclass" in cols
+                            else pl.col("structure_taxonomy_classyfire_02superclass")
+                        )
+                        .cast(pl.Utf8)
+                        .alias("superclass"),
+                        (
+                            pl.col("class")
+                            if "class" in cols
+                            else pl.col("structure_taxonomy_classyfire_03class")
+                        )
+                        .cast(pl.Utf8)
+                        .alias("class"),
+                        (
+                            pl.col("direct_parent")
+                            if "direct_parent" in cols
+                            else pl.col("structure_taxonomy_classyfire_04directparent")
+                        )
+                        .cast(pl.Utf8)
+                        .alias("direct_parent"),
+                    ],
+                ).unique(subset=["inchikey"])
+
+                return normalize_blank_strings(mapped)
+            except Exception as e:
+                print(
+                    f"Warning: Could not read ClassyFire cache from {source}: {e}",
+                    file=sys.stderr,
+                )
+
+        return _empty_classyfire_df()
 
     def fetch_ott_taxonomy_cache(url: str | None = None) -> pl.DataFrame:
         """
