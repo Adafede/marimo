@@ -30,8 +30,11 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 Usage:
-    # Remote CLI export (auto-installs deps, fetches, builds, saves)
+    # Remote CLI export (auto-installs deps, fetches, builds, saves) - default compact PubChem format
     uv run https://adafede.github.io/marimo/apps/lotus_pubchem_tree.py export -o ./output -v
+
+    # Remote CLI export with full (detailed with metadata) format
+    uv run https://adafede.github.io/marimo/apps/lotus_pubchem_tree.py export -o ./output -v --format full
 
     # Remote GUI (interactive)
     uvx marimo run https://adafede.github.io/marimo/apps/lotus_pubchem_tree.py
@@ -1997,8 +2000,8 @@ def display_previews(biological_tree, chemical_tree, npclassifier_tree):
                 mo.callout(
                     mo.md("""
     **Note:** The Wikidata-based chemical tree relies on P279 (subclass of) relationships,
-    which are currently sparse for natural products. We recommend using the NPClassifier-based
-    tree below for a more comprehensive chemical classification.
+    which are currently sparse for natural products. Use the NPClassifier-based tree below
+    for a more comprehensive chemical classification.
                 """),
                     kind="warn",
                 ),
@@ -2012,7 +2015,7 @@ def display_previews(biological_tree, chemical_tree, npclassifier_tree):
             [
                 mo.callout(
                     mo.md("""
-    ✅ **Recommended:** This tree uses [NPClassifier](https://npclassifier.gnps2.org/) for
+    This tree uses [NPClassifier](https://npclassifier.gnps2.org/) for
     chemical classification. NPClassifier provides a comprehensive pathway → superclass → class
     hierarchy specifically designed for natural products.
                 """),
@@ -2146,55 +2149,55 @@ def download_buttons(biological_tree, chemical_tree, npclassifier_tree):
             "tree": tree,
         }
 
-    # Full format (with metadata)
-    biological_output = build_tree_output("biological", biological_tree)
-    chemical_output = build_tree_output("chemical", chemical_tree)
-    biological_json = json.dumps(biological_output, indent=2)
-    chemical_json = json.dumps(chemical_output, indent=2)
-
-    # NPClassifier tree
-    npclassifier_json = ""
-    npclassifier_pubchem_json = ""
-    if npclassifier_tree:
-        npclassifier_output = build_tree_output(
-            "chemical",
-            npclassifier_tree,
-            source="npclassifier",
-        )
-        npclassifier_json = json.dumps(npclassifier_output, indent=2)
-        npclassifier_pubchem = npclassifier_tree_to_pubchem(npclassifier_tree)
-        npclassifier_pubchem_json = json.dumps(npclassifier_pubchem, indent=2)
-
-    # PubChem format (compact, name-as-key)
+    # PubChem format (default, compact name-as-key)
     biological_pubchem = tree_to_pubchem_format(biological_tree, "biological")
     chemical_pubchem = tree_to_pubchem_format(chemical_tree, "chemical")
     biological_pubchem_json = json.dumps(biological_pubchem, indent=2)
     chemical_pubchem_json = json.dumps(chemical_pubchem, indent=2)
 
+    # NPClassifier tree (PubChem compact format)
+    npclassifier_pubchem_json = ""
+    npclassifier_full_json = ""
+    if npclassifier_tree:
+        npclassifier_pubchem = npclassifier_tree_to_pubchem(npclassifier_tree)
+        npclassifier_pubchem_json = json.dumps(npclassifier_pubchem, indent=2)
+        npclassifier_output = build_tree_output(
+            "chemical",
+            npclassifier_tree,
+            source="npclassifier",
+        )
+        npclassifier_full_json = json.dumps(npclassifier_output, indent=2)
+
+    # Full format (detailed with metadata)
+    biological_output = build_tree_output("biological", biological_tree)
+    chemical_output = build_tree_output("chemical", chemical_tree)
+    biological_full_json = json.dumps(biological_output, indent=2)
+    chemical_full_json = json.dumps(chemical_output, indent=2)
+
     download_elements = [
         mo.md("## Download Trees"),
         mo.callout(
             mo.md("""
-    ⚠️ **Chemical Tree Options:**
-    - **Wikidata-based**: Uses P279 (subclass of) relationships from Wikidata. Currently sparse for natural products.
-    - **NPClassifier-based** (recommended): Uses NPClassifier's pathway → superclass → class hierarchy, specifically designed for natural products.
+**Chemical Tree Options:**
+- **Wikidata-based**: Uses P279 (subclass of) relationships from Wikidata. Currently sparse for natural products.
+- **NPClassifier-based**: Uses NPClassifier's pathway → superclass → class hierarchy, specifically designed for natural products.
             """),
             kind="info",
         ),
-        mo.md("### Full Format (with metadata)"),
+        mo.md("### PubChem Format (default, compact)"),
         mo.hstack(
             [
                 mo.download(
                     label="Biological Tree JSON",
                     filename=f"{date_str}_lotus_biological_tree.json",
                     mimetype="application/json",
-                    data=lambda: biological_json.encode("utf-8"),
+                    data=lambda: biological_pubchem_json.encode("utf-8"),
                 ),
                 mo.download(
                     label="Chemical Tree (Wikidata) JSON",
                     filename=f"{date_str}_lotus_chemical_tree_wikidata.json",
                     mimetype="application/json",
-                    data=lambda: chemical_json.encode("utf-8"),
+                    data=lambda: chemical_pubchem_json.encode("utf-8"),
                 ),
             ]
             + (
@@ -2203,7 +2206,7 @@ def download_buttons(biological_tree, chemical_tree, npclassifier_tree):
                         label="Chemical Tree JSON",
                         filename=f"{date_str}_lotus_chemical_tree.json",
                         mimetype="application/json",
-                        data=lambda: npclassifier_json.encode("utf-8"),
+                        data=lambda: npclassifier_pubchem_json.encode("utf-8"),
                     ),
                 ]
                 if npclassifier_tree
@@ -2211,29 +2214,29 @@ def download_buttons(biological_tree, chemical_tree, npclassifier_tree):
             ),
             gap=2,
         ),
-        mo.md("### PubChem Format (compact, name-as-key)"),
+        mo.md("### Full Format (detailed with metadata)"),
         mo.hstack(
             [
                 mo.download(
-                    label="Biological Tree (PubChem)",
-                    filename=f"{date_str}_lotus_biological_tree_pubchem.json",
+                    label="Biological Tree (Full)",
+                    filename=f"{date_str}_lotus_biological_tree_full.json",
                     mimetype="application/json",
-                    data=lambda: biological_pubchem_json.encode("utf-8"),
+                    data=lambda: biological_full_json.encode("utf-8"),
                 ),
                 mo.download(
-                    label="Chemical Tree Wikidata (PubChem)",
-                    filename=f"{date_str}_lotus_chemical_tree_wikidata_pubchem.json",
+                    label="Chemical Tree Wikidata (Full)",
+                    filename=f"{date_str}_lotus_chemical_tree_wikidata_full.json",
                     mimetype="application/json",
-                    data=lambda: chemical_pubchem_json.encode("utf-8"),
+                    data=lambda: chemical_full_json.encode("utf-8"),
                 ),
             ]
             + (
                 [
                     mo.download(
-                        label="Chemical Tree (PubChem)",
-                        filename=f"{date_str}_lotus_chemical_tree_pubchem.json",
+                        label="Chemical Tree (Full)",
+                        filename=f"{date_str}_lotus_chemical_tree_full.json",
                         mimetype="application/json",
-                        data=lambda: npclassifier_pubchem_json.encode("utf-8"),
+                        data=lambda: npclassifier_full_json.encode("utf-8"),
                     ),
                 ]
                 if npclassifier_tree
@@ -2276,7 +2279,7 @@ def main():
             epilog="""
 Examples:
   uv run lotus_pubchem_tree.py export -o ./output -v
-  uv run lotus_pubchem_tree.py export -o ./output -v --format pubchem
+  uv run lotus_pubchem_tree.py export -o ./output -v --format full
             """,
             formatter_class=argparse.RawDescriptionHelpFormatter,
         )
@@ -2291,9 +2294,9 @@ Examples:
         parser.add_argument(
             "--format",
             "-f",
-            choices=["full", "pubchem"],
-            default="full",
-            help="Output format: 'full' (detailed with metadata) or 'pubchem' (compact, name-as-key)",
+            choices=["pubchem", "full"],
+            default="pubchem",
+            help="Output format: 'pubchem' (default, compact name-as-key) or 'full' (detailed with metadata)",
         )
         args = parser.parse_args()
 
@@ -2618,8 +2621,20 @@ Examples:
             )
 
             # Choose format based on --format option
-            if args.format == "pubchem":
-                # PubChem format: compact, name-as-key structure
+            if args.format == "full":
+                # Full format: detailed with metadata
+                biological_final = biological_output
+                chemical_wikidata_final = chemical_wikidata_output
+                npclassifier_final = npclassifier_output
+
+                biological_path = output_dir / f"{date_str}_lotus_biological_tree.json"
+                # NPClassifier is the main chemical tree
+                chemical_path = output_dir / f"{date_str}_lotus_chemical_tree.json"
+                chemical_wikidata_path = (
+                    output_dir / f"{date_str}_lotus_chemical_tree_wikidata.json"
+                )
+            else:
+                # PubChem format (default): compact, name-as-key structure
                 if args.verbose:
                     print("\nConverting to PubChem format...", file=sys.stderr)
                 biological_final = tree_to_pubchem_format(biological_tree, "biological")
@@ -2632,22 +2647,6 @@ Examples:
                     if npclassifier_tree
                     else None
                 )
-
-                biological_path = (
-                    output_dir / f"{date_str}_lotus_biological_tree_pubchem.json"
-                )
-                # NPClassifier is the main chemical tree
-                chemical_path = (
-                    output_dir / f"{date_str}_lotus_chemical_tree_pubchem.json"
-                )
-                chemical_wikidata_path = (
-                    output_dir / f"{date_str}_lotus_chemical_tree_wikidata_pubchem.json"
-                )
-            else:
-                # Full format: detailed with metadata
-                biological_final = biological_output
-                chemical_wikidata_final = chemical_wikidata_output
-                npclassifier_final = npclassifier_output
 
                 biological_path = output_dir / f"{date_str}_lotus_biological_tree.json"
                 # NPClassifier is the main chemical tree
@@ -2679,7 +2678,7 @@ Examples:
                 chemical_path.write_text(json.dumps(npclassifier_final, indent=2))
                 if args.verbose:
                     print(
-                        f"  ✓ {chemical_path} (NPClassifier - recommended)",
+                        f"  ✓ {chemical_path} (NPClassifier)",
                         file=sys.stderr,
                     )
                 else:
