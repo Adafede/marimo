@@ -672,6 +672,7 @@ with app.setup:
         Fetch ClassyFire cache from remote URL or local file.
         Expected columns: inchikey, chemontid, kingdom, superclass, class, direct_parent
         """
+
         def _empty_classyfire_df() -> pl.DataFrame:
             return pl.DataFrame(
                 schema={
@@ -684,7 +685,7 @@ with app.setup:
                 },
             )
 
-        configured = url or cast(str | None, CONFIG.get("classyfire_cache_url"))
+        configured = url or CONFIG.get("classyfire_cache_url")
         candidates = [
             c for c in [configured, "apps/public/classyfire/classyfire_cache.csv"] if c
         ]
@@ -802,7 +803,7 @@ with app.setup:
                 },
             )
 
-        configured = url or cast(str | None, CONFIG.get("ott_cache_url"))
+        configured = url or CONFIG.get("ott_cache_url")
         candidates = [c for c in [configured, "apps/public/ott/ott.tsv"] if c]
 
         for source in candidates:
@@ -2047,11 +2048,11 @@ def fetch_data(run_button):
             extract_qids_from_lazyframe(data.compound_cid, "compound"),
         )
         # Get all unique InChIKeys from compound_taxon_reference (with QIDs extracted)
-        triplets_df = collect_df(
+        _triplets_df = collect_df(
             extract_qids_from_lazyframe(data.compound_taxon_reference, "compound"),
         )
         all_inchikeys = (
-            triplets_df.select("compound_inchikey").unique().to_series().to_list()
+            _triplets_df.select("compound_inchikey").unique().to_series().to_list()
         )
         unique_smiles = (
             pl.concat(
@@ -2120,7 +2121,7 @@ def fetch_data(run_button):
     # Get SMILES for compounds that don't have PubChem data
     # First, find compounds (by InChIKey) without PubChem matches
     compounds_needing_rdkit = (
-        triplets_df.filter(
+        _triplets_df.filter(
             ~pl.col("compound_inchikey").is_in(list(matched_inchikeys_final)),
         )
         .select("compound")
@@ -2164,16 +2165,23 @@ def fetch_data(run_button):
 
 
 @app.cell
-def display_stats(classyfire_df, data, npclassifier_df, ott_df, pubchem_df, rdkit_df):
+def display_stats(
+    classyfire_df,
+    data,
+    npclassifier_df,
+    ott_df,
+    pubchem_df,
+    rdkit_df,
+):
     mo.stop(data is None)
 
     # Collect stats
-    triplets_df = data.compound_taxon_reference.collect()
-    n_triplets = len(triplets_df)
-    n_compounds = triplets_df.select(pl.col("compound").n_unique()).item()
-    n_taxa = triplets_df.select(pl.col("taxon").n_unique()).item()
+    _triplets_df_stats = data.compound_taxon_reference.collect()
+    n_triplets = len(_triplets_df_stats)
+    n_compounds = _triplets_df_stats.select(pl.col("compound").n_unique()).item()
+    n_taxa = _triplets_df_stats.select(pl.col("taxon").n_unique()).item()
     n_refs = (
-        triplets_df.filter(pl.col("reference").is_not_null())
+        _triplets_df_stats.filter(pl.col("reference").is_not_null())
         .select(pl.col("reference").n_unique())
         .item()
     )
