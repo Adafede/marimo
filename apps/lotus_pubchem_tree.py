@@ -357,7 +357,7 @@ with app.setup:
 
         def to_dict(self) -> dict:
             """Convert to dictionary, omitting None fields."""
-            result = {"Wikidata_QID": self.wikidata_qid}
+            result = {"QID": self.wikidata_qid}
             if self.ncbi_taxid:
                 result["NCBI_TaxID"] = self.ncbi_taxid
             return result
@@ -948,7 +948,7 @@ with app.setup:
                     if taxon_refs:
                         refs_list = []
                         for ref_qid, ref_data in taxon_refs.items():
-                            ref_entry = {"Wikidata_QID": ref_qid}
+                            ref_entry = {"QID": ref_qid}
                             ref_entry.update(ref_data)
                             refs_list.append(ref_entry)
                         if refs_list:
@@ -1251,6 +1251,7 @@ with app.setup:
     def build_npclassifier_tree(
         npclassifier_df: pl.DataFrame,
         smiles_to_inchikey: dict[str, list[str]],
+        smiles_to_qid: dict[str, str] | None = None,
         compounds_with_taxa: set[str] | None = None,
     ) -> list[dict]:
         """
@@ -1261,11 +1262,14 @@ with app.setup:
         Args:
             npclassifier_df: DataFrame with SMILES and NPClassifier annotations
             smiles_to_inchikey: Mapping from SMILES to list of InChIKeys
+            smiles_to_qid: Mapping from SMILES to Wikidata QID
             compounds_with_taxa: Optional set of compound QIDs with taxa (not used here)
 
         Returns:
             Hierarchical tree structure compatible with the existing format
         """
+        smiles_to_qid = smiles_to_qid or {}
+
         if len(npclassifier_df) == 0:
             return []
 
@@ -1341,12 +1345,14 @@ with app.setup:
                         smiles_set = tree_data[pathway][superclass][cls]
                         for smi in sorted(smiles_set):
                             inchikeys = smiles_to_inchikey.get(smi, [])
+                            qid = smiles_to_qid.get(smi)
                             if inchikeys:
                                 for ik in inchikeys:
+                                    node_identifiers = {"QID": qid} if qid else {}
                                     superclass_node["Children"].append(
                                         {
                                             "Name": ik,
-                                            "Identifiers": {},
+                                            "Identifiers": node_identifiers,
                                             "Descriptors": {
                                                 "InChIKey": ik,
                                                 "SMILES": smi,
@@ -1362,12 +1368,14 @@ with app.setup:
                         smiles_set = tree_data[pathway][superclass][cls]
                         for smi in sorted(smiles_set):
                             inchikeys = smiles_to_inchikey.get(smi, [])
+                            qid = smiles_to_qid.get(smi)
                             if inchikeys:
                                 for ik in inchikeys:
+                                    node_identifiers = {"QID": qid} if qid else {}
                                     class_node["Children"].append(
                                         {
                                             "Name": ik,
-                                            "Identifiers": {},
+                                            "Identifiers": node_identifiers,
                                             "Descriptors": {
                                                 "InChIKey": ik,
                                                 "SMILES": smi,
@@ -1389,16 +1397,20 @@ with app.setup:
         compound_taxon_df: pl.DataFrame,
         smiles_map: dict[str, list[str]],
         inchikey_map: dict[str, list[str]],
-    ) -> dict[str, list[str]]:
+    ) -> tuple[dict[str, list[str]], dict[str, str]]:
         """
-        Build a mapping from SMILES to InChIKeys.
+        Build mappings from SMILES to InChIKeys and SMILES to Wikidata QID.
 
         This allows linking NPClassifier data (keyed by SMILES) to
-        InChIKeys for the final tree output.
+        InChIKeys and Wikidata QIDs for the final tree output.
+
+        Returns:
+            Tuple of (smiles_to_inchikey, smiles_to_qid)
         """
         smiles_to_inchikey: dict[str, list[str]] = {}
+        smiles_to_qid: dict[str, str] = {}
 
-        # For each compound, map its SMILES to its InChIKeys
+        # For each compound, map its SMILES to its InChIKeys and QID
         for qid, smiles_list in smiles_map.items():
             inchikeys = inchikey_map.get(qid, [])
             if inchikeys:
@@ -1408,8 +1420,11 @@ with app.setup:
                     for ik in inchikeys:
                         if ik not in smiles_to_inchikey[smi]:
                             smiles_to_inchikey[smi].append(ik)
+                    # Also map SMILES to QID (use first QID if multiple)
+                    if smi not in smiles_to_qid:
+                        smiles_to_qid[smi] = qid
 
-        return smiles_to_inchikey
+        return smiles_to_inchikey, smiles_to_qid
 
     def npclassifier_tree_to_pubchem(tree: list[dict]) -> dict:
         """
@@ -1424,7 +1439,7 @@ with app.setup:
                   "children": {
                     "Class": {
                       "children": {
-                        "INCHIKEY-...": []
+                        "INCHIKEY-...": {"QID": "Q..."}
                       }
                     }
                   }
@@ -1439,6 +1454,7 @@ with app.setup:
 
         def convert_node(node: dict) -> dict:
             name = node.get("Name", "Unknown")
+            identifiers = node.get("Identifiers", {})
             children = node.get("Children", [])
             descriptors = node.get("Descriptors", {})
 
@@ -1450,8 +1466,11 @@ with app.setup:
                     child_name = child.get("Name", "Unknown")
                     result["children"][child_name] = convert_node(child)
             elif descriptors.get("InChIKey"):
-                # Leaf node - just empty array
-                return []
+                # Leaf node - include Wikidata QID if available
+                qid = identifiers.get("QID")
+                if qid:
+                    return {"QID": qid}
+                return {}
 
             return result
 
@@ -1506,13 +1525,14 @@ with app.setup:
         {
           "children": {
             "TaxonName": {
+              "QID": "Q...",
               "children": {
                 "ChildTaxonName": {...},
                 "NCBI_ID": {
                   "organism_name": ["TaxonName"],
                   "compounds": {
-                    "InChIKey1": {"references": [{"DOI": "...", "PMID": "..."}]},
-                    "InChIKey2": {"references": [...]}
+                    "InChIKey1": {"QID": "Q...", "references": [{"DOI": "...", "PMID": "..."}]},
+                    "InChIKey2": {"QID": "Q...", "references": [...]}
                   }
                 }
               }
@@ -1520,7 +1540,7 @@ with app.setup:
           }
         }
 
-        Compounds are keyed by InChIKey and include their references.
+        Compounds are keyed by InChIKey and include their Wikidata QID and references.
         """
         if not nodes:
             return {}
@@ -1530,12 +1550,17 @@ with app.setup:
         for node in nodes:
             name = node.get("Name", "Unknown")
             identifiers = node.get("Identifiers", {})
+            taxon_qid = identifiers.get("QID")
             ncbi_id = identifiers.get("NCBI_TaxID")
             children = node.get("Children", [])
             compounds = node.get("Compounds", [])
 
             # Build this node's content
             node_content = {}
+
+            # Add taxon Wikidata QID
+            if taxon_qid:
+                node_content["QID"] = taxon_qid
 
             # Recursively convert children
             if children:
@@ -1549,11 +1574,13 @@ with app.setup:
                     node_content["children"] = {}
                 ncbi_entry = {"organism_name": [name]}
 
-                # Add compounds with their InChIKeys and references
+                # Add compounds with their InChIKeys, Wikidata QIDs, and references
                 # Aggregate references when the same InChIKey appears multiple times
                 if compounds:
                     compounds_dict: dict[str, dict] = {}
                     for compound in compounds:
+                        compound_identifiers = compound.get("Identifiers", {})
+                        compound_qid = compound_identifiers.get("QID")
                         descriptors = compound.get("Descriptors", {})
                         inchikey = descriptors.get("InChIKey")
                         references = compound.get("References", [])
@@ -1567,6 +1594,9 @@ with app.setup:
                                 # Aggregate references for this InChIKey
                                 if ik not in compounds_dict:
                                     compounds_dict[ik] = {"_refs_set": set()}
+                                    # Add Wikidata QID for the compound
+                                    if compound_qid:
+                                        compounds_dict[ik]["QID"] = compound_qid
 
                                 if references:
                                     for ref in references:
@@ -1615,8 +1645,9 @@ with app.setup:
         {
           "children": {
             "CompoundClassName": {
+              "QID": "Q...",
               "children": {
-                "INCHIKEY-...": []
+                "INCHIKEY-...": {"QID": "Q..."}
               }
             }
           }
@@ -1629,11 +1660,17 @@ with app.setup:
 
         for node in nodes:
             name = node.get("Name", "Unknown")
+            identifiers = node.get("Identifiers", {})
+            qid = identifiers.get("QID")
             descriptors = node.get("Descriptors", {})
             children = node.get("Children", [])
 
             # Build this node's content
             node_content = {}
+
+            # Add Wikidata QID for this node
+            if qid:
+                node_content["QID"] = qid
 
             # Recursively convert children
             if children:
@@ -1641,18 +1678,20 @@ with app.setup:
                 if "children" in child_result:
                     node_content["children"] = child_result["children"]
 
-            # If this node has an InChIKey, add it as a leaf
+            # If this node has an InChIKey, add it as a leaf with QID
             inchikey = descriptors.get("InChIKey")
             if inchikey:
                 if isinstance(inchikey, list):
                     for ik in inchikey:
                         if "children" not in node_content:
                             node_content["children"] = {}
-                        node_content["children"][ik] = []
+                        leaf_content = {"QID": qid} if qid else {}
+                        node_content["children"][ik] = leaf_content
                 else:
                     if "children" not in node_content:
                         node_content["children"] = {}
-                    node_content["children"][inchikey] = []
+                    leaf_content = {"QID": qid} if qid else {}
+                    node_content["children"][inchikey] = leaf_content
 
             result["children"][name] = node_content if node_content else {}
 
@@ -1888,7 +1927,7 @@ def build_trees(build_trees_btn, data):
 
     # Step 5b: Build SMILES to InChIKey mapping for NPClassifier
     with mo.status.spinner("Building SMILES to InChIKey mapping..."):
-        smiles_to_inchikey = build_smiles_to_inchikey_map(
+        smiles_to_inchikey, smiles_to_qid = build_smiles_to_inchikey_map(
             compound_taxon_df,
             smiles_map,
             inchikey_map,
@@ -1945,6 +1984,7 @@ def build_trees(build_trees_btn, data):
             npclassifier_tree = build_npclassifier_tree(
                 npclassifier_df,
                 smiles_to_inchikey,
+                smiles_to_qid,
             )
         del npclassifier_df
     else:
@@ -1960,7 +2000,7 @@ def build_trees(build_trees_btn, data):
     # Free remaining DataFrames
     del compound_taxon_df, compound_parent_df, compound_label_df
     del compounds_with_taxa, descriptor_map, label_map
-    del smiles_map, inchikey_map, smiles_to_inchikey
+    del smiles_map, inchikey_map, smiles_to_inchikey, smiles_to_qid
 
     bio_nodes = count_tree_nodes(biological_tree)
     chem_nodes = count_tree_nodes(chemical_tree)
@@ -2109,7 +2149,7 @@ def download_buttons(biological_tree, chemical_tree, npclassifier_tree):
                         "CXSMILES": "ChemAxon Extended SMILES",
                     },
                     "reference_fields": {
-                        "Wikidata_QID": "QID of the reference article in Wikidata",
+                        "QID": "QID of the reference article in Wikidata",
                         "DOI": "Digital Object Identifier of the reference",
                         "PMID": "PubMed ID of the reference",
                     },
@@ -2178,9 +2218,9 @@ def download_buttons(biological_tree, chemical_tree, npclassifier_tree):
         mo.md("## Download Trees"),
         mo.callout(
             mo.md("""
-**Chemical Tree Options:**
-- **Wikidata-based**: Uses P279 (subclass of) relationships from Wikidata. Currently sparse for natural products.
-- **NPClassifier-based**: Uses NPClassifier's pathway → superclass → class hierarchy, specifically designed for natural products.
+    **Chemical Tree Options:**
+    - **Wikidata-based**: Uses P279 (subclass of) relationships from Wikidata. Currently sparse for natural products.
+    - **NPClassifier-based**: Uses NPClassifier's pathway → superclass → class hierarchy, specifically designed for natural products.
             """),
             kind="info",
         ),
@@ -2467,7 +2507,7 @@ Examples:
             # Build SMILES to InChIKey mapping for NPClassifier
             if args.verbose:
                 print("\nBuilding SMILES to InChIKey mapping...", file=sys.stderr)
-            smiles_to_inchikey = build_smiles_to_inchikey_map(
+            smiles_to_inchikey, smiles_to_qid = build_smiles_to_inchikey_map(
                 compound_taxon_df,
                 smiles_map,
                 inchikey_map,
@@ -2485,6 +2525,7 @@ Examples:
                 npclassifier_tree = build_npclassifier_tree(
                     npclassifier_df,
                     smiles_to_inchikey,
+                    smiles_to_qid,
                 )
                 if args.verbose:
                     npc_nodes = count_tree_nodes(npclassifier_tree)
@@ -2554,7 +2595,7 @@ Examples:
                                 "CXSMILES": "ChemAxon Extended SMILES",
                             },
                             "reference_fields": {
-                                "Wikidata_QID": "QID of the reference article in Wikidata",
+                                "QID": "QID of the reference article in Wikidata",
                                 "DOI": "Digital Object Identifier of the reference",
                                 "PMID": "PubMed ID of the reference",
                             },
