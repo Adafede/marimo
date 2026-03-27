@@ -60,6 +60,7 @@ with app.setup:
     import sys
     from dataclasses import dataclass
     from datetime import datetime
+    from typing import cast
 
     _USE_LOCAL = True
     if _USE_LOCAL:
@@ -416,11 +417,11 @@ with app.setup:
 
         def to_node_dict(
             self,
-            compounds: list[dict] = None,
-            children: list[dict] = None,
+            compounds: list[dict] | None = None,
+            children: list[dict] | None = None,
         ) -> dict:
             """Convert to tree node dictionary. Name first for readability."""
-            node = {
+            node: dict = {
                 "Name": self.name,
                 "Identifiers": self.identifiers.to_dict(),
             }
@@ -540,6 +541,10 @@ with app.setup:
             .alias(col),
         )
 
+    def collect_df(lf: pl.LazyFrame) -> pl.DataFrame:
+        """Collect LazyFrame to DataFrame with proper type casting."""
+        return cast(pl.DataFrame, lf.collect())
+
     def process_compound_taxon(lf: pl.LazyFrame) -> pl.LazyFrame:
         """Process compound-taxon triplets."""
         return lf.pipe(extract_qids_from_lazyframe, "compound").pipe(
@@ -654,8 +659,8 @@ with app.setup:
 
         Returns DataFrame with columns: compound, smiles (as list)
         """
-        iso_df = smiles_iso.collect()
-        can_df = smiles_can.collect()
+        iso_df = collect_df(smiles_iso)
+        can_df = collect_df(smiles_can)
 
         # Handle empty dataframes
         if len(iso_df) == 0 and len(can_df) == 0:
@@ -716,7 +721,7 @@ with app.setup:
         # Build SMARTS mapping (as list)
         smarts_has_data = len(smarts.collect_schema()) > 0
         if smarts_has_data:
-            smarts_collected = smarts.collect()
+            smarts_collected = collect_df(smarts)
             if len(smarts_collected) > 0:
                 smarts_df = smarts_collected.group_by("compound").agg(
                     pl.col("compound_smarts").alias("smarts"),
@@ -737,7 +742,7 @@ with app.setup:
         # Build CXSMILES mapping (as list)
         cxsmiles_has_data = len(cxsmiles.collect_schema()) > 0
         if cxsmiles_has_data:
-            cxsmiles_collected = cxsmiles.collect()
+            cxsmiles_collected = collect_df(cxsmiles)
             if len(cxsmiles_collected) > 0:
                 cxsmiles_df = cxsmiles_collected.group_by("compound").agg(
                     pl.col("compound_cxsmiles").alias("cxsmiles"),
@@ -761,7 +766,7 @@ with app.setup:
         smiles_map: dict,
         smarts_map: dict,
         cxsmiles_map: dict,
-        inchikey_map: dict[str, list[str]] = None,
+        inchikey_map: dict[str, list[str]] | None = None,
     ) -> dict[str, Descriptors]:
         """
         Build a unified mapping from compound QID to Descriptors.
@@ -1120,9 +1125,9 @@ with app.setup:
 
         Returns (display_dict, shown_nodes, total_nodes).
         """
-        max_depth = CONFIG["preview_max_depth"]
-        max_children = CONFIG["preview_max_children"]
-        max_root = CONFIG["preview_max_root_nodes"]
+        max_depth = int(CONFIG["preview_max_depth"])
+        max_children = int(CONFIG["preview_max_children"])
+        max_root = int(CONFIG["preview_max_root_nodes"])
 
         shown_count = 0
 
@@ -1181,12 +1186,12 @@ with app.setup:
 
     def compute_stats(data: LOTUSData) -> DataStats:
         """Compute statistics from the data."""
-        compound_taxon_df = data.compound_taxon.collect()
-        taxon_ncbi_df = data.taxon_ncbi.collect()
-        taxon_parent_df = data.taxon_parent.collect()
-        taxon_name_df = data.taxon_name.collect()
-        compound_parent_df = data.compound_parent.collect()
-        compound_label_df = data.compound_label.collect()
+        compound_taxon_df = collect_df(data.compound_taxon)
+        taxon_ncbi_df = collect_df(data.taxon_ncbi)
+        taxon_parent_df = collect_df(data.taxon_parent)
+        taxon_name_df = collect_df(data.taxon_name)
+        compound_parent_df = collect_df(data.compound_parent)
+        compound_label_df = collect_df(data.compound_label)
 
         return DataStats(
             n_compounds=compound_taxon_df.select(pl.col("compound").n_unique()).item(),
@@ -1216,7 +1221,7 @@ with app.setup:
     # Wikidata's P279 (subclass of) relationships for natural products.
     # ========================================================================
 
-    def fetch_npclassifier_cache(url: str = None) -> pl.DataFrame:
+    def fetch_npclassifier_cache(url: str | None = None) -> pl.DataFrame:
         """
         Fetch NPClassifier cache CSV from remote URL.
 
@@ -1229,7 +1234,7 @@ with app.setup:
         """
         import urllib.request
 
-        url = url or CONFIG["npclassifier_cache_url"]
+        url = url or str(CONFIG["npclassifier_cache_url"])
         try:
             with urllib.request.urlopen(url, timeout=60) as resp:
                 csv_bytes = resp.read()
@@ -1875,7 +1880,7 @@ def build_trees(build_trees_btn, data):
 
     # Step 1: Collect compound_taxon first (needed for multiple steps)
     with mo.status.spinner("Loading compound-taxon data..."):
-        compound_taxon_df = data.compound_taxon.collect()
+        compound_taxon_df = collect_df(data.compound_taxon)
 
     # Step 2: Build structure maps (one at a time to save memory)
     with mo.status.spinner("Building SMILES map..."):
@@ -1904,7 +1909,7 @@ def build_trees(build_trees_btn, data):
 
     # Step 3: Build label map
     with mo.status.spinner("Building compound label map..."):
-        compound_label_df = data.compound_label.collect()
+        compound_label_df = collect_df(data.compound_label)
         label_map = dict(
             zip(
                 compound_label_df["compound"].to_list(),
@@ -1938,13 +1943,13 @@ def build_trees(build_trees_btn, data):
 
     # Step 6: Build biological tree
     with mo.status.spinner("Loading taxon data..."):
-        taxon_ncbi_df = data.taxon_ncbi.collect()
-        taxon_parent_df = data.taxon_parent.collect()
-        taxon_name_df = data.taxon_name.collect()
+        taxon_ncbi_df = collect_df(data.taxon_ncbi)
+        taxon_parent_df = collect_df(data.taxon_parent)
+        taxon_name_df = collect_df(data.taxon_name)
 
     with mo.status.spinner("Building reference map..."):
-        reference_doi_df = data.reference_doi.collect()
-        reference_pmid_df = data.reference_pmid.collect()
+        reference_doi_df = collect_df(data.reference_doi)
+        reference_pmid_df = collect_df(data.reference_pmid)
         reference_map = build_reference_map(reference_doi_df, reference_pmid_df)
         del reference_doi_df, reference_pmid_df
 
@@ -1964,7 +1969,7 @@ def build_trees(build_trees_btn, data):
 
     # Step 7: Build Wikidata-based chemical tree
     with mo.status.spinner("Loading compound parent data..."):
-        compound_parent_df = data.compound_parent.collect()
+        compound_parent_df = collect_df(data.compound_parent)
 
     with mo.status.spinner("Building Wikidata chemical tree..."):
         chemical_tree = build_compound_tree(
@@ -2410,8 +2415,8 @@ Examples:
                 data.compound_cxsmiles,
             )
 
-            compound_taxon_df = data.compound_taxon.collect()
-            compound_label_df = data.compound_label.collect()
+            compound_taxon_df = collect_df(data.compound_taxon)
+            compound_label_df = collect_df(data.compound_label)
 
             # Build label map
             label_map = dict(
@@ -2455,15 +2460,15 @@ Examples:
             if args.verbose:
                 print("\nBuilding biological tree...", file=sys.stderr)
 
-            taxon_ncbi_df = data.taxon_ncbi.collect()
-            taxon_parent_df = data.taxon_parent.collect()
-            taxon_name_df = data.taxon_name.collect()
+            taxon_ncbi_df = collect_df(data.taxon_ncbi)
+            taxon_parent_df = collect_df(data.taxon_parent)
+            taxon_name_df = collect_df(data.taxon_name)
 
             # Build reference map for compound-taxon pairs
             if args.verbose:
                 print("  Building reference map...", file=sys.stderr)
-            reference_doi_df = data.reference_doi.collect()
-            reference_pmid_df = data.reference_pmid.collect()
+            reference_doi_df = collect_df(data.reference_doi)
+            reference_pmid_df = collect_df(data.reference_pmid)
             reference_map = build_reference_map(reference_doi_df, reference_pmid_df)
             if args.verbose:
                 print(
@@ -2490,7 +2495,7 @@ Examples:
             if args.verbose:
                 print("\nBuilding chemical tree...", file=sys.stderr)
 
-            compound_parent_df = data.compound_parent.collect()
+            compound_parent_df = collect_df(data.compound_parent)
 
             chemical_tree = build_compound_tree(
                 compound_parent_df,
