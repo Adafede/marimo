@@ -1517,6 +1517,11 @@ with app.setup:
             else:
                 result_no_ott = no_wikidata_ott
 
+            # Ensure identical schemas before concat; helper right-side key
+            # columns can differ by branch depending on join keys.
+            result_with_ott = result_with_ott.drop(["_ott_id_key"], strict=False)
+            result_no_ott = result_no_ott.drop(["_ott_id_key"], strict=False)
+
             # Combine both results
             result = pl.concat([result_with_ott, result_no_ott]).drop(
                 ["_taxon_name_key", "_taxon_ott_key"],
@@ -2287,10 +2292,10 @@ def main():
                 pl.concat(
                     [
                         smiles_iso_df.select(
-                            pl.col("compound_smiles_iso").alias("smiles")
+                            pl.col("compound_smiles_iso").alias("smiles"),
                         ),
                         smiles_can_df.select(
-                            pl.col("compound_smiles_can").alias("smiles")
+                            pl.col("compound_smiles_can").alias("smiles"),
                         ),
                     ],
                     how="vertical",
