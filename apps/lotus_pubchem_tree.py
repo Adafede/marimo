@@ -80,6 +80,7 @@ with app.setup:
         "preview_max_root_nodes": 30,
         "preview_max_children": 20,
         "preview_max_depth": 3,
+        "npclassifier_cache_url": "https://adafede.github.io/marimo/apps/public/npclassifier/npclassifier_cache.csv",
     }
 
     # Metadata for provenance and reproducibility
@@ -1205,6 +1206,260 @@ with app.setup:
         return count
 
     # ========================================================================
+    # NPCLASSIFIER CHEMICAL TREE
+    # ========================================================================
+    # NPClassifier provides an alternative chemical classification based on
+    # pathway → superclass → class hierarchy. This is more accepted than
+    # Wikidata's P279 (subclass of) relationships for natural products.
+    # ========================================================================
+
+    def fetch_npclassifier_cache(url: str = None) -> pl.DataFrame:
+        """
+        Fetch NPClassifier cache CSV from remote URL.
+
+        The cache contains SMILES with their NPClassifier annotations:
+        - pathway: Top-level classification (e.g., "Terpenoids", "Alkaloids")
+        - superclass: Mid-level (e.g., "Sesquiterpenoids")
+        - class: Specific class (e.g., "Germacrane sesquiterpenoids")
+
+        Multiple values are separated by " $ ".
+        """
+        import urllib.request
+
+        url = url or CONFIG["npclassifier_cache_url"]
+        try:
+            with urllib.request.urlopen(url, timeout=60) as resp:
+                csv_bytes = resp.read()
+            return pl.read_csv(
+                io.BytesIO(csv_bytes),
+                schema_overrides={
+                    "smiles": pl.Utf8,
+                    "pathway": pl.Utf8,
+                    "superclass": pl.Utf8,
+                    "class": pl.Utf8,
+                    "isglycoside": pl.Utf8,
+                    "error": pl.Utf8,
+                },
+            )
+        except Exception as e:
+            print(f"Warning: Could not fetch NPClassifier cache: {e}", file=sys.stderr)
+            return pl.DataFrame()
+
+    def build_npclassifier_tree(
+        npclassifier_df: pl.DataFrame,
+        smiles_to_inchikey: dict[str, list[str]],
+        compounds_with_taxa: set[str] | None = None,
+    ) -> list[dict]:
+        """
+        Build chemical tree based on NPClassifier hierarchy.
+
+        The NPClassifier hierarchy is: pathway → superclass → class → InChIKey
+
+        Args:
+            npclassifier_df: DataFrame with SMILES and NPClassifier annotations
+            smiles_to_inchikey: Mapping from SMILES to list of InChIKeys
+            compounds_with_taxa: Optional set of compound QIDs with taxa (not used here)
+
+        Returns:
+            Hierarchical tree structure compatible with the existing format
+        """
+        if len(npclassifier_df) == 0:
+            return []
+
+        # Filter out rows with errors or empty classifications
+        valid_df = npclassifier_df.filter(
+            (pl.col("error").is_null() | (pl.col("error") == ""))
+            & (pl.col("pathway").is_not_null())
+            & (pl.col("pathway") != ""),
+        )
+
+        if len(valid_df) == 0:
+            return []
+
+        # Build the tree structure: pathway -> superclass -> class -> SMILES
+        # Using nested dicts for efficient building
+        tree_data: dict = {}  # pathway -> superclass -> class -> set[smiles]
+
+        for row in valid_df.iter_rows(named=True):
+            smiles = row["smiles"]
+            pathways = row["pathway"].split(" $ ") if row["pathway"] else []
+            superclasses = row["superclass"].split(" $ ") if row["superclass"] else []
+            classes = row["class"].split(" $ ") if row["class"] else []
+
+            # Handle multiple classifications per SMILES
+            # Create all pathway-superclass-class combinations
+            for pathway in pathways:
+                pathway = pathway.strip()
+                if not pathway:
+                    continue
+                if pathway not in tree_data:
+                    tree_data[pathway] = {}
+
+                # Match superclasses and classes (they should correspond)
+                for i, superclass in enumerate(superclasses):
+                    superclass = superclass.strip()
+                    if not superclass:
+                        continue
+                    if superclass not in tree_data[pathway]:
+                        tree_data[pathway][superclass] = {}
+
+                    # Get corresponding class (if exists)
+                    if i < len(classes):
+                        cls = classes[i].strip()
+                        if cls:
+                            if cls not in tree_data[pathway][superclass]:
+                                tree_data[pathway][superclass][cls] = set()
+                            tree_data[pathway][superclass][cls].add(smiles)
+                    else:
+                        # No class, add directly to superclass
+                        if "_unclassified" not in tree_data[pathway][superclass]:
+                            tree_data[pathway][superclass]["_unclassified"] = set()
+                        tree_data[pathway][superclass]["_unclassified"].add(smiles)
+
+        # Convert to the standard tree format
+        tree = []
+        for pathway in sorted(tree_data.keys()):
+            pathway_node = {
+                "Name": pathway,
+                "Identifiers": {"NPClassifier_Pathway": pathway},
+                "Children": [],
+            }
+
+            for superclass in sorted(tree_data[pathway].keys()):
+                superclass_node = {
+                    "Name": superclass,
+                    "Identifiers": {"NPClassifier_Superclass": superclass},
+                    "Children": [],
+                }
+
+                for cls in sorted(tree_data[pathway][superclass].keys()):
+                    if cls == "_unclassified":
+                        # Add SMILES directly to superclass
+                        smiles_set = tree_data[pathway][superclass][cls]
+                        for smi in sorted(smiles_set):
+                            inchikeys = smiles_to_inchikey.get(smi, [])
+                            if inchikeys:
+                                for ik in inchikeys:
+                                    superclass_node["Children"].append(
+                                        {
+                                            "Name": ik,
+                                            "Identifiers": {},
+                                            "Descriptors": {
+                                                "InChIKey": ik,
+                                                "SMILES": smi,
+                                            },
+                                        },
+                                    )
+                    else:
+                        class_node = {
+                            "Name": cls,
+                            "Identifiers": {"NPClassifier_Class": cls},
+                            "Children": [],
+                        }
+                        smiles_set = tree_data[pathway][superclass][cls]
+                        for smi in sorted(smiles_set):
+                            inchikeys = smiles_to_inchikey.get(smi, [])
+                            if inchikeys:
+                                for ik in inchikeys:
+                                    class_node["Children"].append(
+                                        {
+                                            "Name": ik,
+                                            "Identifiers": {},
+                                            "Descriptors": {
+                                                "InChIKey": ik,
+                                                "SMILES": smi,
+                                            },
+                                        },
+                                    )
+                        if class_node["Children"]:
+                            superclass_node["Children"].append(class_node)
+
+                if superclass_node["Children"]:
+                    pathway_node["Children"].append(superclass_node)
+
+            if pathway_node["Children"]:
+                tree.append(pathway_node)
+
+        return tree
+
+    def build_smiles_to_inchikey_map(
+        compound_taxon_df: pl.DataFrame,
+        smiles_map: dict[str, list[str]],
+        inchikey_map: dict[str, list[str]],
+    ) -> dict[str, list[str]]:
+        """
+        Build a mapping from SMILES to InChIKeys.
+
+        This allows linking NPClassifier data (keyed by SMILES) to
+        InChIKeys for the final tree output.
+        """
+        smiles_to_inchikey: dict[str, list[str]] = {}
+
+        # For each compound, map its SMILES to its InChIKeys
+        for qid, smiles_list in smiles_map.items():
+            inchikeys = inchikey_map.get(qid, [])
+            if inchikeys:
+                for smi in smiles_list:
+                    if smi not in smiles_to_inchikey:
+                        smiles_to_inchikey[smi] = []
+                    for ik in inchikeys:
+                        if ik not in smiles_to_inchikey[smi]:
+                            smiles_to_inchikey[smi].append(ik)
+
+        return smiles_to_inchikey
+
+    def npclassifier_tree_to_pubchem(tree: list[dict]) -> dict:
+        """
+        Convert NPClassifier tree to PubChem format.
+
+        Structure:
+        {
+          "children": {
+            "Pathway": {
+              "children": {
+                "Superclass": {
+                  "children": {
+                    "Class": {
+                      "children": {
+                        "INCHIKEY-...": []
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        """
+        if not tree:
+            return {}
+
+        def convert_node(node: dict) -> dict:
+            name = node.get("Name", "Unknown")
+            children = node.get("Children", [])
+            descriptors = node.get("Descriptors", {})
+
+            result = {}
+
+            if children:
+                result["children"] = {}
+                for child in children:
+                    child_name = child.get("Name", "Unknown")
+                    result["children"][child_name] = convert_node(child)
+            elif descriptors.get("InChIKey"):
+                # Leaf node - just empty array
+                return []
+
+            return result
+
+        pubchem_tree = {"children": {}}
+        for node in tree:
+            name = node.get("Name", "Unknown")
+            pubchem_tree["children"][name] = convert_node(node)
+
+        return pubchem_tree
+
+    # ========================================================================
     # PUBCHEM FORMAT CONVERSION
     # ========================================================================
     # The old PubChem format uses dict-based nesting with names as keys:
@@ -1627,8 +1882,17 @@ def build_trees(build_trees_btn, data):
             cxsmiles_map,
             inchikey_map,
         )
-        # Free the individual maps now that descriptor_map is built
-        del smiles_map, smarts_map, cxsmiles_map, inchikey_map
+
+    # Step 5b: Build SMILES to InChIKey mapping for NPClassifier
+    with mo.status.spinner("Building SMILES to InChIKey mapping..."):
+        smiles_to_inchikey = build_smiles_to_inchikey_map(
+            compound_taxon_df,
+            smiles_map,
+            inchikey_map,
+        )
+
+    # Free the individual maps now that we have what we need
+    del smarts_map, cxsmiles_map
 
     # Step 6: Build biological tree
     with mo.status.spinner("Loading taxon data..."):
@@ -1656,87 +1920,178 @@ def build_trees(build_trees_btn, data):
         # Free taxon DataFrames after biological tree is built
         del taxon_ncbi_df, taxon_parent_df, taxon_name_df, reference_map
 
-    # Step 7: Build chemical tree
+    # Step 7: Build Wikidata-based chemical tree
     with mo.status.spinner("Loading compound parent data..."):
         compound_parent_df = data.compound_parent.collect()
 
-    with mo.status.spinner("Building chemical tree..."):
+    with mo.status.spinner("Building Wikidata chemical tree..."):
         chemical_tree = build_compound_tree(
             compound_parent_df,
             compound_label_df,
             compounds_with_taxa,
             descriptor_map,
         )
-        # Free remaining DataFrames
-        del compound_taxon_df, compound_parent_df, compound_label_df
-        del compounds_with_taxa, descriptor_map, label_map
+
+    # Step 8: Build NPClassifier-based chemical tree
+    with mo.status.spinner("Fetching NPClassifier cache..."):
+        npclassifier_df = fetch_npclassifier_cache()
+
+    npclassifier_tree = []
+    if len(npclassifier_df) > 0:
+        with mo.status.spinner("Building NPClassifier chemical tree..."):
+            npclassifier_tree = build_npclassifier_tree(
+                npclassifier_df,
+                smiles_to_inchikey,
+            )
+        del npclassifier_df
+    else:
+        mo.output.append(
+            mo.callout(
+                mo.md(
+                    "Could not fetch NPClassifier cache. NPClassifier tree will not be available."
+                ),
+                kind="warn",
+            ),
+        )
+
+    # Free remaining DataFrames
+    del compound_taxon_df, compound_parent_df, compound_label_df
+    del compounds_with_taxa, descriptor_map, label_map
+    del smiles_map, inchikey_map, smiles_to_inchikey
 
     bio_nodes = count_tree_nodes(biological_tree)
     chem_nodes = count_tree_nodes(chemical_tree)
+    npc_nodes = count_tree_nodes(npclassifier_tree) if npclassifier_tree else 0
 
     _output = [
         mo.md(f"""
     ## Trees Built
 
     - **Biological Tree**: {len(biological_tree)} root nodes, {bio_nodes:,} total nodes
-    - **Chemical Tree**: {len(chemical_tree)} root nodes, {chem_nodes:,} total nodes
-            """),
+    - **Chemical Tree (Wikidata)**: {len(chemical_tree)} root nodes, {chem_nodes:,} total nodes
+    - **Chemical Tree (NPClassifier)**: {len(npclassifier_tree)} root nodes, {npc_nodes:,} total nodes
+        """),
     ]
 
     mo.vstack(_output)
-    return biological_tree, chemical_tree
+    return biological_tree, chemical_tree, npclassifier_tree
 
 
 @app.cell
-def display_previews(biological_tree, chemical_tree):
+def display_previews(biological_tree, chemical_tree, npclassifier_tree):
     mo.stop(biological_tree is None or chemical_tree is None)
 
     bio_display, bio_shown, bio_total = tree_to_display(biological_tree)
     chem_display, chem_shown, chem_total = tree_to_display(chemical_tree)
+    npc_display, npc_shown, npc_total = (
+        tree_to_display(npclassifier_tree) if npclassifier_tree else ({}, 0, 0)
+    )
+
+    total_shown = bio_shown + chem_shown + npc_shown
+    total_nodes = bio_total + chem_total + npc_total
+
+    tabs_dict = {
+        f"Biological Tree ({bio_total:,} nodes)": mo.tree(bio_display),
+        f"Chemical Tree - Wikidata ({chem_total:,} nodes)": mo.vstack(
+            [
+                mo.callout(
+                    mo.md("""
+    **Note:** The Wikidata-based chemical tree relies on P279 (subclass of) relationships,
+    which are currently sparse for natural products. We recommend using the NPClassifier-based
+    tree below for a more comprehensive chemical classification.
+                """),
+                    kind="warn",
+                ),
+                mo.tree(chem_display),
+            ]
+        ),
+    }
+
+    if npclassifier_tree:
+        tabs_dict[f"Chemical Tree - NPClassifier ({npc_total:,} nodes)"] = mo.vstack(
+            [
+                mo.callout(
+                    mo.md("""
+    ✅ **Recommended:** This tree uses [NPClassifier](https://npclassifier.gnps2.org/) for
+    chemical classification. NPClassifier provides a comprehensive pathway → superclass → class
+    hierarchy specifically designed for natural products.
+                """),
+                    kind="success",
+                ),
+                mo.tree(npc_display),
+            ]
+        )
 
     mo.vstack(
         [
             mo.callout(
                 mo.md(f"""
-            **Preview is truncated for performance.** Showing ~{bio_shown + chem_shown:,} nodes out of {bio_total + chem_total:,} total.
-            Download the JSON files for the complete trees.
+    **Preview is truncated for performance.** Showing ~{total_shown:,} nodes out of {total_nodes:,} total.
+    Download the JSON files for the complete trees.
             """),
                 kind="info",
             ),
-            mo.ui.tabs(
-                {
-                    f"Biological Tree ({bio_total:,} nodes)": mo.tree(bio_display),
-                    f"Chemical Tree ({chem_total:,} nodes)": mo.tree(chem_display),
-                },
-            ),
+            mo.ui.tabs(tabs_dict),
         ],
     )
     return
 
 
 @app.cell
-def download_buttons(biological_tree, chemical_tree):
+def download_buttons(biological_tree, chemical_tree, npclassifier_tree):
     mo.stop(biological_tree is None or chemical_tree is None)
 
     date_str = datetime.now().strftime("%Y%m%d")
     generated_at = datetime.now().isoformat()
 
-    def build_tree_output(tree_type: str, tree: list[dict]) -> dict:
+    def build_tree_output(
+        tree_type: str, tree: list[dict], source: str = "wikidata"
+    ) -> dict:
         """Build complete output with rich metadata."""
         is_biological = tree_type == "biological"
+        is_npclassifier = source == "npclassifier"
+
+        if is_npclassifier:
+            overview = "This JSON contains a hierarchical tree of chemical compounds classified using NPClassifier (pathway → superclass → class)."
+            description = (
+                "NPClassifier-based hierarchical classification of natural products"
+            )
+            root_info = "NPClassifier pathways"
+            notes = [
+                "NPClassifier provides a comprehensive classification for natural products.",
+                "Hierarchy: pathway → superclass → class → InChIKey",
+                "Multiple classifications are possible for a single compound.",
+                "See https://npclassifier.gnps2.org/ for more information.",
+            ]
+        elif is_biological:
+            overview = "This JSON contains a hierarchical tree of biological taxa with their associated natural product compounds."
+            description = "Hierarchical taxonomy of biological organisms with associated natural product compounds"
+            root_info = "Biota (Q2382443)"
+            notes = [
+                "Descriptor values are strings when single, arrays when multiple values exist (very rare).",
+                "All nodes are sorted alphabetically by Name.",
+                "Only nodes with InChIKey associations (directly or via descendants) are included.",
+                "Data queried from Wikidata via QLever SPARQL endpoint.",
+            ]
+        else:
+            overview = "This JSON contains a hierarchical tree of chemical compound classes with structural descriptors."
+            description = "Hierarchical classification of chemical compounds with structural descriptors"
+            root_info = "chemical compound (Q11173)"
+            notes = [
+                "Note: Wikidata P279 (subclass of) relationships are sparse for natural products.",
+                "Consider using the NPClassifier-based tree for better coverage.",
+                "Descriptor values are strings when single, arrays when multiple values exist (very rare).",
+                "All nodes are sorted alphabetically by Name.",
+            ]
 
         return {
             "_documentation": {
-                "overview": (
-                    "This JSON contains a hierarchical tree of biological taxa with their associated natural product compounds."
-                    if is_biological
-                    else "This JSON contains a hierarchical tree of chemical compound classes with structural descriptors."
-                ),
+                "overview": overview,
                 "structure": {
                     "tree": "Array of root nodes. Each node is an object with Name, Identifiers, and optional Children.",
                     "node_fields": {
                         "Name": "Human-readable name (taxon name or compound label)",
-                        "Identifiers": "External database identifiers (Wikidata QID, NCBI TaxID for taxa)",
+                        "Identifiers": "External database identifiers (Wikidata QID, NCBI TaxID for taxa, NPClassifier levels)",
                         "Compounds": "(Biological tree only) Array of compounds found in this taxon",
                         "Descriptors": "Chemical structure representations (InChIKey, SMILES, etc.)",
                         "References": "(Biological tree compounds only) Literature references for compound-taxon association",
@@ -1754,20 +2109,12 @@ def download_buttons(biological_tree, chemical_tree):
                         "PMID": "PubMed ID of the reference",
                     },
                 },
-                "notes": [
-                    "Descriptor values are strings when single, arrays when multiple values exist (very rare).",
-                    "All nodes are sorted alphabetically by Name.",
-                    "Only nodes with InChIKey associations (directly or via descendants) are included.",
-                    "Data queried from Wikidata via QLever SPARQL endpoint.",
-                ],
+                "notes": notes,
             },
             "metadata": {
-                "name": f"LOTUS {tree_type.title()} Tree",
-                "description": (
-                    "Hierarchical taxonomy of biological organisms with associated natural product compounds"
-                    if is_biological
-                    else "Hierarchical classification of chemical compounds with structural descriptors"
-                ),
+                "name": f"LOTUS {tree_type.title()} Tree"
+                + (" (NPClassifier)" if is_npclassifier else ""),
+                "description": description,
                 "version": CONFIG["app_version"],
                 "generated": generated_at,
                 "generator": CONFIG["app_name"],
@@ -1775,19 +2122,19 @@ def download_buttons(biological_tree, chemical_tree):
                     "name": METADATA["project"],
                     "url": METADATA["project_url"],
                     "wikidata_item": METADATA["wikidata_item"],
-                    "endpoint": CONFIG["qlever_endpoint"],
+                    "endpoint": CONFIG["qlever_endpoint"]
+                    if not is_npclassifier
+                    else CONFIG["npclassifier_cache_url"],
+                    "classification": "NPClassifier"
+                    if is_npclassifier
+                    else "Wikidata P279",
                 },
                 "license": {
                     "data": METADATA["license_data"],
                     "code": METADATA["license_code"],
                 },
                 "constraints": {
-                    "root": "Biota (Q2382443)"
-                    if is_biological
-                    else "chemical compound (Q11173)",
-                    "sparql_pattern": METADATA["constraints"][
-                        "biological_tree" if is_biological else "chemical_tree"
-                    ],
+                    "root": root_info,
                 },
                 "statistics": {
                     "root_nodes": len(tree),
@@ -1803,53 +2150,96 @@ def download_buttons(biological_tree, chemical_tree):
     biological_json = json.dumps(biological_output, indent=2)
     chemical_json = json.dumps(chemical_output, indent=2)
 
+    # NPClassifier tree
+    npclassifier_json = ""
+    npclassifier_pubchem_json = ""
+    if npclassifier_tree:
+        npclassifier_output = build_tree_output(
+            "chemical", npclassifier_tree, source="npclassifier"
+        )
+        npclassifier_json = json.dumps(npclassifier_output, indent=2)
+        npclassifier_pubchem = npclassifier_tree_to_pubchem(npclassifier_tree)
+        npclassifier_pubchem_json = json.dumps(npclassifier_pubchem, indent=2)
+
     # PubChem format (compact, name-as-key)
     biological_pubchem = tree_to_pubchem_format(biological_tree, "biological")
     chemical_pubchem = tree_to_pubchem_format(chemical_tree, "chemical")
     biological_pubchem_json = json.dumps(biological_pubchem, indent=2)
     chemical_pubchem_json = json.dumps(chemical_pubchem, indent=2)
 
-    mo.vstack(
-        [
-            mo.md("## Download Trees"),
-            mo.md("### Full Format (with metadata)"),
-            mo.hstack(
+    download_elements = [
+        mo.md("## Download Trees"),
+        mo.callout(
+            mo.md("""
+    ⚠️ **Chemical Tree Options:**
+    - **Wikidata-based**: Uses P279 (subclass of) relationships from Wikidata. Currently sparse for natural products.
+    - **NPClassifier-based** (recommended): Uses NPClassifier's pathway → superclass → class hierarchy, specifically designed for natural products.
+            """),
+            kind="info",
+        ),
+        mo.md("### Full Format (with metadata)"),
+        mo.hstack(
+            [
+                mo.download(
+                    label="Biological Tree JSON",
+                    filename=f"{date_str}_lotus_biological_tree.json",
+                    mimetype="application/json",
+                    data=lambda: biological_json.encode("utf-8"),
+                ),
+                mo.download(
+                    label="Chemical Tree (Wikidata) JSON",
+                    filename=f"{date_str}_lotus_chemical_tree_wikidata.json",
+                    mimetype="application/json",
+                    data=lambda: chemical_json.encode("utf-8"),
+                ),
+            ]
+            + (
                 [
                     mo.download(
-                        label="Biological Tree JSON",
-                        filename=f"{date_str}_lotus_biological_tree.json",
+                        label="Chemical Tree (NPClassifier) JSON ✅",
+                        filename=f"{date_str}_lotus_chemical_tree_npclassifier.json",
                         mimetype="application/json",
-                        data=lambda: biological_json.encode("utf-8"),
+                        data=lambda: npclassifier_json.encode("utf-8"),
                     ),
-                    mo.download(
-                        label="Chemical Tree JSON",
-                        filename=f"{date_str}_lotus_chemical_tree.json",
-                        mimetype="application/json",
-                        data=lambda: chemical_json.encode("utf-8"),
-                    ),
-                ],
-                gap=2,
+                ]
+                if npclassifier_tree
+                else []
             ),
-            mo.md("### PubChem Format (compact, name-as-key)"),
-            mo.hstack(
+            gap=2,
+        ),
+        mo.md("### PubChem Format (compact, name-as-key)"),
+        mo.hstack(
+            [
+                mo.download(
+                    label="Biological Tree (PubChem)",
+                    filename=f"{date_str}_lotus_biological_tree_pubchem.json",
+                    mimetype="application/json",
+                    data=lambda: biological_pubchem_json.encode("utf-8"),
+                ),
+                mo.download(
+                    label="Chemical Tree Wikidata (PubChem)",
+                    filename=f"{date_str}_lotus_chemical_tree_wikidata_pubchem.json",
+                    mimetype="application/json",
+                    data=lambda: chemical_pubchem_json.encode("utf-8"),
+                ),
+            ]
+            + (
                 [
                     mo.download(
-                        label="Biological Tree (PubChem)",
-                        filename=f"{date_str}_lotus_biological_tree_pubchem.json",
+                        label="Chemical Tree NPClassifier (PubChem) ✅",
+                        filename=f"{date_str}_lotus_chemical_tree_npclassifier_pubchem.json",
                         mimetype="application/json",
-                        data=lambda: biological_pubchem_json.encode("utf-8"),
+                        data=lambda: npclassifier_pubchem_json.encode("utf-8"),
                     ),
-                    mo.download(
-                        label="Chemical Tree (PubChem)",
-                        filename=f"{date_str}_lotus_chemical_tree_pubchem.json",
-                        mimetype="application/json",
-                        data=lambda: chemical_pubchem_json.encode("utf-8"),
-                    ),
-                ],
-                gap=2,
+                ]
+                if npclassifier_tree
+                else []
             ),
-        ],
-    )
+            gap=2,
+        ),
+    ]
+
+    mo.vstack(download_elements)
     return
 
 
