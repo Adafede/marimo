@@ -2112,8 +2112,8 @@ def display_previews(biological_tree, chemical_tree, npclassifier_tree):
         [
             mo.callout(
                 mo.md(f"""
-**Preview is truncated for performance.** Showing ~{total_shown:,} nodes out of {total_nodes:,} total.
-Download the JSON files for the complete trees.
+    **Preview is truncated for performance.** Showing ~{total_shown:,} nodes out of {total_nodes:,} total.
+    Download the JSON files for the complete trees.
             """),
                 kind="info",
             ),
