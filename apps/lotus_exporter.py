@@ -56,6 +56,7 @@ with app.setup:
     import io
     import sys
     import gzip
+    from pathlib import Path
     from dataclasses import dataclass
     from datetime import datetime
     from typing import cast
@@ -81,6 +82,7 @@ with app.setup:
         "qlever_endpoint": "https://qlever.dev/api/wikidata",
         "pubchem_endpoint": "https://qlever.dev/api/pubchem",
         "npclassifier_cache_url": "https://adafede.github.io/marimo/apps/public/npclassifier/npclassifier_cache.csv",
+        "ott_cache_url": "https://adafede.github.io/marimo/apps/public/ott/ott.tsv",
     }
 
     METADATA = {
@@ -109,9 +111,7 @@ with app.setup:
       ?compound wdt:P235 ?compound_inchikey .
       ?compound p:P703 ?statement .
       ?statement ps:P703 ?taxon .
-      OPTIONAL {
-        ?statement prov:wasDerivedFrom/pr:P248 ?reference .
-      }
+      ?statement prov:wasDerivedFrom/pr:P248 ?reference .
     }
     """
 
@@ -155,6 +155,13 @@ with app.setup:
     PREFIX wdt: <http://www.wikidata.org/prop/direct/>
     SELECT DISTINCT ?taxon ?taxon_ncbi WHERE {
       ?taxon wdt:P685 ?taxon_ncbi .
+    }
+    """
+
+    QUERY_TAXON_OTT = """
+    PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+    SELECT DISTINCT ?taxon ?taxon_ott WHERE {
+      ?taxon wdt:P9157 ?taxon_ott .
     }
     """
 
@@ -277,14 +284,14 @@ with app.setup:
     """
 
     # PubChem SPARQL query template for fetching compound data (batched with VALUES)
-    # Fetches: CID, InChIKey, mass, SMILES (isomeric), connectivity SMILES (2D), names
+    # Fetches: CID, InChIKey, mass, SMILES (isomeric), connectivity SMILES (2D), names, stereo counts
     # The {cid_values} placeholder is replaced with VALUES clause for each batch
     QUERY_PUBCHEM_COMPOUNDS_TEMPLATE = """
     PREFIX compound: <http://rdf.ncbi.nlm.nih.gov/pubchem/compound/>
     PREFIX vocab: <http://rdf.ncbi.nlm.nih.gov/pubchem/vocabulary#>
     PREFIX dcterms: <http://purl.org/dc/terms/>
     PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
-    SELECT ?cid ?inchikey ?mono_isotopic_weight ?smiles ?connectivity_smiles ?common_name ?iupac_name WHERE {{
+    SELECT ?cid ?inchikey ?mono_isotopic_weight ?smiles ?connectivity_smiles ?common_name ?iupac_name ?iupac_inchi ?molecular_formula ?xlogp3 ?defined_atom_stereo_count ?defined_bond_stereo_count ?undefined_atom_stereo_count ?undefined_bond_stereo_count WHERE {{
       VALUES ?cid {{ {cid_values} }}
       ?cpd dcterms:identifier ?cid ;
            vocab:inchikey ?inchikey .
@@ -293,6 +300,13 @@ with app.setup:
       OPTIONAL {{ ?cpd vocab:connectivity_smiles ?connectivity_smiles . }}
       OPTIONAL {{ ?cpd skos:prefLabel ?common_name . }}
       OPTIONAL {{ ?cpd vocab:preferred_iupac_name ?iupac_name . }}
+      OPTIONAL {{ ?cpd vocab:iupac_inchi ?iupac_inchi . }}
+      OPTIONAL {{ ?cpd vocab:molecular_formula ?molecular_formula . }}
+      OPTIONAL {{ ?cpd vocab:xlogp3 ?xlogp3 . }}
+      OPTIONAL {{ ?cpd vocab:defined_atom_stereo_count ?defined_atom_stereo_count . }}
+      OPTIONAL {{ ?cpd vocab:defined_bond_stereo_count ?defined_bond_stereo_count . }}
+      OPTIONAL {{ ?cpd vocab:undefined_atom_stereo_count ?undefined_atom_stereo_count . }}
+      OPTIONAL {{ ?cpd vocab:undefined_bond_stereo_count ?undefined_bond_stereo_count . }}
     }}
     """
 
@@ -302,7 +316,7 @@ with app.setup:
     PREFIX vocab: <http://rdf.ncbi.nlm.nih.gov/pubchem/vocabulary#>
     PREFIX dcterms: <http://purl.org/dc/terms/>
     PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
-    SELECT ?cid ?inchikey ?mono_isotopic_weight ?smiles ?connectivity_smiles ?common_name ?iupac_name WHERE {{
+    SELECT ?cid ?inchikey ?mono_isotopic_weight ?smiles ?connectivity_smiles ?common_name ?iupac_name ?iupac_inchi ?molecular_formula ?xlogp3 ?defined_atom_stereo_count ?defined_bond_stereo_count ?undefined_atom_stereo_count ?undefined_bond_stereo_count WHERE {{
       VALUES ?inchikey {{ {inchikey_values} }}
       ?cpd vocab:inchikey ?inchikey ;
            dcterms:identifier ?cid .
@@ -311,6 +325,13 @@ with app.setup:
       OPTIONAL {{ ?cpd vocab:connectivity_smiles ?connectivity_smiles . }}
       OPTIONAL {{ ?cpd skos:prefLabel ?common_name . }}
       OPTIONAL {{ ?cpd vocab:preferred_iupac_name ?iupac_name . }}
+      OPTIONAL {{ ?cpd vocab:iupac_inchi ?iupac_inchi . }}
+      OPTIONAL {{ ?cpd vocab:molecular_formula ?molecular_formula . }}
+      OPTIONAL {{ ?cpd vocab:xlogp3 ?xlogp3 . }}
+      OPTIONAL {{ ?cpd vocab:defined_atom_stereo_count ?defined_atom_stereo_count . }}
+      OPTIONAL {{ ?cpd vocab:defined_bond_stereo_count ?defined_bond_stereo_count . }}
+      OPTIONAL {{ ?cpd vocab:undefined_atom_stereo_count ?undefined_atom_stereo_count . }}
+      OPTIONAL {{ ?cpd vocab:undefined_bond_stereo_count ?undefined_bond_stereo_count . }}
     }}
     """
 
@@ -435,7 +456,7 @@ with app.setup:
             .drop("old_validation")
         )
 
-        return result
+        return normalize_blank_strings(result)
 
     def compute_changes(
         new_df: pl.DataFrame,
@@ -557,6 +578,7 @@ with app.setup:
         # Taxon metadata
         taxon_name: pl.LazyFrame
         taxon_ncbi: pl.LazyFrame
+        taxon_ott: pl.LazyFrame
         taxon_gbif: pl.LazyFrame
         taxon_parent: pl.LazyFrame
         taxon_rank: pl.LazyFrame
@@ -594,6 +616,7 @@ with app.setup:
             ("compound_cid", QUERY_COMPOUND_CID, "Fetching PubChem CIDs..."),
             ("taxon_name", QUERY_TAXON_NAME, "Fetching taxon names..."),
             ("taxon_ncbi", QUERY_TAXON_NCBI, "Fetching NCBI taxonomy IDs..."),
+            ("taxon_ott", QUERY_TAXON_OTT, "Fetching OTT IDs..."),
             ("taxon_gbif", QUERY_TAXON_GBIF, "Fetching GBIF IDs..."),
             ("taxon_parent", QUERY_TAXON_PARENT, "Fetching taxon parents..."),
             ("taxon_rank", QUERY_TAXON_RANK, "Fetching taxon ranks..."),
@@ -667,16 +690,16 @@ with app.setup:
 
     def fetch_ott_taxonomy_cache(url: str | None = None) -> pl.DataFrame:
         """
-        Fetch Open Tree of Life (OTT) taxonomy cache from remote URL.
-        Expected columns: ncbi_id, ott_id, domain, kingdom, phylum, class, order, family, tribe, genus, species, varietas
+        Fetch Open Tree of Life (OTT) taxonomy cache from remote URL or local file.
+        Expected columns: organism_name, organism_taxonomy_ottid, organism_taxonomy_01domain, etc.
 
-        TODO: Set CONFIG["ott_cache_url"] to enable fetching.
+        Maps to: organism_name, ott_id, domain, kingdom, phylum, class, order, family, tribe, genus, species, varietas
         """
         url = url or CONFIG.get("ott_cache_url")
         if not url:
             return pl.DataFrame(
                 schema={
-                    "ncbi_id": pl.Utf8,
+                    "organism_name": pl.Utf8,
                     "ott_id": pl.Utf8,
                     "domain": pl.Utf8,
                     "kingdom": pl.Utf8,
@@ -690,8 +713,137 @@ with app.setup:
                     "varietas": pl.Utf8,
                 },
             )
-        # TODO: Implement actual fetching when URL is available
-        return pl.DataFrame()
+
+        def _empty_ott_df() -> pl.DataFrame:
+            return pl.DataFrame(
+                schema={
+                    "organism_name": pl.Utf8,
+                    "ott_id": pl.Utf8,
+                    "domain": pl.Utf8,
+                    "kingdom": pl.Utf8,
+                    "phylum": pl.Utf8,
+                    "class": pl.Utf8,
+                    "order": pl.Utf8,
+                    "family": pl.Utf8,
+                    "tribe": pl.Utf8,
+                    "genus": pl.Utf8,
+                    "species": pl.Utf8,
+                    "varietas": pl.Utf8,
+                },
+            )
+
+        configured = url or cast(str | None, CONFIG.get("ott_cache_url"))
+        candidates = [c for c in [configured, "apps/public/ott/ott.tsv"] if c]
+
+        for source in candidates:
+            try:
+                if source.startswith("http://") or source.startswith("https://"):
+                    df = pl.read_csv(source, separator="\t")
+                else:
+                    if not Path(source).exists():
+                        continue
+                    df = pl.read_csv(source, separator="\t")
+
+                if len(df) == 0:
+                    continue
+
+                cols = set(df.columns)
+                mapped = df.select(
+                    [
+                        (
+                            pl.col("organism_name")
+                            if "organism_name" in cols
+                            else pl.col("taxon_name")
+                        )
+                        .cast(pl.Utf8)
+                        .alias("organism_name"),
+                        (
+                            pl.col("organism_taxonomy_ottid")
+                            if "organism_taxonomy_ottid" in cols
+                            else pl.col("ott_id")
+                        )
+                        .cast(pl.Utf8)
+                        .alias("ott_id"),
+                        (
+                            pl.col("organism_taxonomy_01domain")
+                            if "organism_taxonomy_01domain" in cols
+                            else pl.col("domain")
+                        )
+                        .cast(pl.Utf8)
+                        .alias("domain"),
+                        (
+                            pl.col("organism_taxonomy_02kingdom")
+                            if "organism_taxonomy_02kingdom" in cols
+                            else pl.col("kingdom")
+                        )
+                        .cast(pl.Utf8)
+                        .alias("kingdom"),
+                        (
+                            pl.col("organism_taxonomy_03phylum")
+                            if "organism_taxonomy_03phylum" in cols
+                            else pl.col("phylum")
+                        )
+                        .cast(pl.Utf8)
+                        .alias("phylum"),
+                        (
+                            pl.col("organism_taxonomy_04class")
+                            if "organism_taxonomy_04class" in cols
+                            else pl.col("class")
+                        )
+                        .cast(pl.Utf8)
+                        .alias("class"),
+                        (
+                            pl.col("organism_taxonomy_05order")
+                            if "organism_taxonomy_05order" in cols
+                            else pl.col("order")
+                        )
+                        .cast(pl.Utf8)
+                        .alias("order"),
+                        (
+                            pl.col("organism_taxonomy_06family")
+                            if "organism_taxonomy_06family" in cols
+                            else pl.col("family")
+                        )
+                        .cast(pl.Utf8)
+                        .alias("family"),
+                        (
+                            pl.col("organism_taxonomy_07tribe")
+                            if "organism_taxonomy_07tribe" in cols
+                            else pl.col("tribe")
+                        )
+                        .cast(pl.Utf8)
+                        .alias("tribe"),
+                        (
+                            pl.col("organism_taxonomy_08genus")
+                            if "organism_taxonomy_08genus" in cols
+                            else pl.col("genus")
+                        )
+                        .cast(pl.Utf8)
+                        .alias("genus"),
+                        (
+                            pl.col("organism_taxonomy_09species")
+                            if "organism_taxonomy_09species" in cols
+                            else pl.col("species")
+                        )
+                        .cast(pl.Utf8)
+                        .alias("species"),
+                        (
+                            pl.col("organism_taxonomy_10varietas")
+                            if "organism_taxonomy_10varietas" in cols
+                            else pl.col("varietas")
+                        )
+                        .cast(pl.Utf8)
+                        .alias("varietas"),
+                    ],
+                )
+                return normalize_blank_strings(mapped)
+            except Exception as e:
+                print(
+                    f"Warning: Could not read OTT cache from {source}: {e}",
+                    file=sys.stderr,
+                )
+
+        return _empty_ott_df()
 
     def compute_rdkit_properties(smiles_list: list[str]) -> pl.DataFrame:
         """
@@ -845,6 +997,13 @@ with app.setup:
             "pubchem_smiles_2d": pl.Utf8,
             "common_name": pl.Utf8,
             "iupac_name": pl.Utf8,
+            "pubchem_inchi": pl.Utf8,
+            "pubchem_formula": pl.Utf8,
+            "pubchem_xlogp3": pl.Utf8,
+            "pubchem_defined_atom_stereo_count": pl.Utf8,
+            "pubchem_defined_bond_stereo_count": pl.Utf8,
+            "pubchem_undefined_atom_stereo_count": pl.Utf8,
+            "pubchem_undefined_bond_stereo_count": pl.Utf8,
         }
 
         if not cid_list:
@@ -890,6 +1049,21 @@ with app.setup:
                             pl.col("connectivity_smiles").alias("pubchem_smiles_2d"),
                             pl.col("common_name"),
                             pl.col("iupac_name"),
+                            pl.col("iupac_inchi").alias("pubchem_inchi"),
+                            pl.col("molecular_formula").alias("pubchem_formula"),
+                            pl.col("xlogp3").alias("pubchem_xlogp3"),
+                            pl.col("defined_atom_stereo_count").alias(
+                                "pubchem_defined_atom_stereo_count",
+                            ),
+                            pl.col("defined_bond_stereo_count").alias(
+                                "pubchem_defined_bond_stereo_count",
+                            ),
+                            pl.col("undefined_atom_stereo_count").alias(
+                                "pubchem_undefined_atom_stereo_count",
+                            ),
+                            pl.col("undefined_bond_stereo_count").alias(
+                                "pubchem_undefined_bond_stereo_count",
+                            ),
                         ],
                     )
                     all_results.append(batch_df)
@@ -932,6 +1106,13 @@ with app.setup:
             "pubchem_smiles_2d": pl.Utf8,
             "common_name": pl.Utf8,
             "iupac_name": pl.Utf8,
+            "pubchem_inchi": pl.Utf8,
+            "pubchem_formula": pl.Utf8,
+            "pubchem_xlogp3": pl.Utf8,
+            "pubchem_defined_atom_stereo_count": pl.Utf8,
+            "pubchem_defined_bond_stereo_count": pl.Utf8,
+            "pubchem_undefined_atom_stereo_count": pl.Utf8,
+            "pubchem_undefined_bond_stereo_count": pl.Utf8,
         }
 
         if not inchikey_list:
@@ -977,6 +1158,21 @@ with app.setup:
                             pl.col("connectivity_smiles").alias("pubchem_smiles_2d"),
                             pl.col("common_name"),
                             pl.col("iupac_name"),
+                            pl.col("iupac_inchi").alias("pubchem_inchi"),
+                            pl.col("molecular_formula").alias("pubchem_formula"),
+                            pl.col("xlogp3").alias("pubchem_xlogp3"),
+                            pl.col("defined_atom_stereo_count").alias(
+                                "pubchem_defined_atom_stereo_count",
+                            ),
+                            pl.col("defined_bond_stereo_count").alias(
+                                "pubchem_defined_bond_stereo_count",
+                            ),
+                            pl.col("undefined_atom_stereo_count").alias(
+                                "pubchem_undefined_atom_stereo_count",
+                            ),
+                            pl.col("undefined_bond_stereo_count").alias(
+                                "pubchem_undefined_bond_stereo_count",
+                            ),
                         ],
                     )
                     all_results.append(batch_df)
@@ -1004,6 +1200,18 @@ with app.setup:
         if formula is None:
             return None
         return formula.translate(SUBSCRIPT_TO_NORMAL)
+
+    def normalize_blank_strings(df: pl.DataFrame) -> pl.DataFrame:
+        """Trim UTF-8 values and convert empty/whitespace-only cells to null."""
+        utf8_cols = [name for name, dtype in df.schema.items() if dtype == pl.Utf8]
+        if not utf8_cols:
+            return df
+        return df.with_columns(
+            [
+                pl.col(col).str.strip_chars().replace("", None).alias(col)
+                for col in utf8_cols
+            ],
+        )
 
     def extract_qids_from_lazyframe(lf: pl.LazyFrame, col: str) -> pl.LazyFrame:
         """Extract QIDs from Wikidata URLs in a column."""
@@ -1136,6 +1344,9 @@ with app.setup:
         taxon_ncbi_df = collect_df(
             extract_qids_from_lazyframe(data.taxon_ncbi, "taxon"),
         )
+        taxon_ott_df = collect_df(
+            extract_qids_from_lazyframe(data.taxon_ott, "taxon"),
+        )
         taxon_gbif_df = collect_df(
             extract_qids_from_lazyframe(data.taxon_gbif, "taxon"),
         )
@@ -1158,6 +1369,7 @@ with app.setup:
                 how="left",
             )
             .join(taxon_ncbi_df.select(["taxon", "taxon_ncbi"]), on="taxon", how="left")
+            .join(taxon_ott_df.select(["taxon", "taxon_ott"]), on="taxon", how="left")
             .join(taxon_gbif_df.select(["taxon", "taxon_gbif"]), on="taxon", how="left")
         )
 
@@ -1173,6 +1385,12 @@ with app.setup:
             result.join(smiles_iso_df, on="compound", how="left")
             .join(smiles_can_df, on="compound", how="left")
             .join(cid_df, on="compound", how="left")
+            .with_columns(
+                pl.coalesce(
+                    pl.col("compound_smiles_iso"),
+                    pl.col("compound_smiles_can"),
+                ).alias("_rdkit_join_smiles"),
+            )
         )
 
         # Join NPClassifier data via SMILES (isomeric first, then canonical)
@@ -1230,11 +1448,31 @@ with app.setup:
                 ],
             )
 
-        # Join OTT taxonomy via NCBI ID
+        # Join OTT taxonomy via organism_name with smart fallback logic
         if len(ott_df) > 0:
+            result = result.with_columns(
+                [
+                    pl.col("taxon_name")
+                    .cast(pl.Utf8)
+                    .str.strip_chars()
+                    .alias("_taxon_name_key"),
+                    pl.col("taxon_ott")
+                    .cast(pl.Utf8)
+                    .str.strip_chars()
+                    .alias("_taxon_ott_key"),
+                ],
+            )
+
             ott_renamed = ott_df.select(
                 [
-                    pl.col("ncbi_id"),
+                    pl.col("organism_name")
+                    .cast(pl.Utf8)
+                    .str.strip_chars()
+                    .alias("_ott_name_key"),
+                    pl.col("ott_id")
+                    .cast(pl.Utf8)
+                    .str.strip_chars()
+                    .alias("_ott_id_key"),
                     pl.col("ott_id"),
                     pl.col("domain").alias("ott_domain"),
                     pl.col("kingdom").alias("ott_kingdom"),
@@ -1248,11 +1486,41 @@ with app.setup:
                     pl.col("varietas").alias("ott_varietas"),
                 ],
             )
-            result = result.join(
-                ott_renamed,
-                left_on="taxon_ncbi",
-                right_on="ncbi_id",
-                how="left",
+
+            # Strategy: join in two phases
+            # Phase 1: Join rows where both taxon_ott exists in original DF - join by organism_name AND ott_id
+            # Phase 2: For rows without match, join by organism_name only
+
+            # Identify rows that have ott_id from Wikidata
+            has_wikidata_ott = result.filter(pl.col("_taxon_ott_key").is_not_null())
+            no_wikidata_ott = result.filter(pl.col("_taxon_ott_key").is_null())
+
+            # Phase 1: Join on both organism_name and ott_id
+            if len(has_wikidata_ott) > 0:
+                result_with_ott = has_wikidata_ott.join(
+                    ott_renamed,
+                    left_on=["_taxon_name_key", "_taxon_ott_key"],
+                    right_on=["_ott_name_key", "_ott_id_key"],
+                    how="left",
+                )
+            else:
+                result_with_ott = has_wikidata_ott
+
+            # Phase 2: Join on organism_name only for rows without Wikidata ott_id
+            if len(no_wikidata_ott) > 0:
+                result_no_ott = no_wikidata_ott.join(
+                    ott_renamed,
+                    left_on="_taxon_name_key",
+                    right_on="_ott_name_key",
+                    how="left",
+                )
+            else:
+                result_no_ott = no_wikidata_ott
+
+            # Combine both results
+            result = pl.concat([result_with_ott, result_no_ott]).drop(
+                ["_taxon_name_key", "_taxon_ott_key"],
+                strict=False,
             )
         else:
             result = result.with_columns(
@@ -1292,6 +1560,21 @@ with app.setup:
                     pl.col("pubchem_smiles_2d").alias("_pk_smiles_2d"),
                     pl.col("common_name").alias("_pk_common_name"),
                     pl.col("iupac_name").alias("_pk_iupac_name"),
+                    pl.col("pubchem_inchi").alias("_pk_inchi"),
+                    pl.col("pubchem_formula").alias("_pk_formula"),
+                    pl.col("pubchem_xlogp3").alias("_pk_xlogp3"),
+                    pl.col("pubchem_defined_atom_stereo_count").alias(
+                        "_pk_defined_atom_stereo_count",
+                    ),
+                    pl.col("pubchem_defined_bond_stereo_count").alias(
+                        "_pk_defined_bond_stereo_count",
+                    ),
+                    pl.col("pubchem_undefined_atom_stereo_count").alias(
+                        "_pk_undefined_atom_stereo_count",
+                    ),
+                    pl.col("pubchem_undefined_bond_stereo_count").alias(
+                        "_pk_undefined_bond_stereo_count",
+                    ),
                 ],
             ).unique(subset=["_pk_inchikey"])
 
@@ -1319,13 +1602,37 @@ with app.setup:
                         pl.col("pubchem_smiles_2d"),
                         pl.col("_pk_smiles_2d"),
                     ).alias("pubchem_smiles_2d"),
-                    pl.coalesce(
-                        pl.col("common_name"),
-                        pl.col("_pk_common_name"),
-                    ).alias("common_name"),
+                    pl.coalesce(pl.col("common_name"), pl.col("_pk_common_name")).alias(
+                        "common_name",
+                    ),
                     pl.coalesce(pl.col("iupac_name"), pl.col("_pk_iupac_name")).alias(
                         "iupac_name",
                     ),
+                    pl.coalesce(pl.col("pubchem_inchi"), pl.col("_pk_inchi")).alias(
+                        "pubchem_inchi",
+                    ),
+                    pl.coalesce(pl.col("pubchem_formula"), pl.col("_pk_formula")).alias(
+                        "pubchem_formula",
+                    ),
+                    pl.coalesce(pl.col("pubchem_xlogp3"), pl.col("_pk_xlogp3")).alias(
+                        "pubchem_xlogp3",
+                    ),
+                    pl.coalesce(
+                        pl.col("pubchem_defined_atom_stereo_count"),
+                        pl.col("_pk_defined_atom_stereo_count"),
+                    ).alias("pubchem_defined_atom_stereo_count"),
+                    pl.coalesce(
+                        pl.col("pubchem_defined_bond_stereo_count"),
+                        pl.col("_pk_defined_bond_stereo_count"),
+                    ).alias("pubchem_defined_bond_stereo_count"),
+                    pl.coalesce(
+                        pl.col("pubchem_undefined_atom_stereo_count"),
+                        pl.col("_pk_undefined_atom_stereo_count"),
+                    ).alias("pubchem_undefined_atom_stereo_count"),
+                    pl.coalesce(
+                        pl.col("pubchem_undefined_bond_stereo_count"),
+                        pl.col("_pk_undefined_bond_stereo_count"),
+                    ).alias("pubchem_undefined_bond_stereo_count"),
                 ],
             ).drop(
                 [
@@ -1334,6 +1641,13 @@ with app.setup:
                     "_pk_smiles_2d",
                     "_pk_common_name",
                     "_pk_iupac_name",
+                    "_pk_inchi",
+                    "_pk_formula",
+                    "_pk_xlogp3",
+                    "_pk_defined_atom_stereo_count",
+                    "_pk_defined_bond_stereo_count",
+                    "_pk_undefined_atom_stereo_count",
+                    "_pk_undefined_bond_stereo_count",
                 ],
             )
         else:
@@ -1345,6 +1659,13 @@ with app.setup:
                     pl.lit(None).alias("pubchem_smiles_2d"),
                     pl.lit(None).alias("common_name"),
                     pl.lit(None).alias("iupac_name"),
+                    pl.lit(None).alias("pubchem_inchi"),
+                    pl.lit(None).alias("pubchem_formula"),
+                    pl.lit(None).alias("pubchem_xlogp3"),
+                    pl.lit(None).alias("pubchem_defined_atom_stereo_count"),
+                    pl.lit(None).alias("pubchem_defined_bond_stereo_count"),
+                    pl.lit(None).alias("pubchem_undefined_atom_stereo_count"),
+                    pl.lit(None).alias("pubchem_undefined_bond_stereo_count"),
                 ],
             )
 
@@ -1365,7 +1686,7 @@ with app.setup:
             )
             result = result.join(
                 rdkit_renamed,
-                left_on="compound_smiles_iso",
+                left_on="_rdkit_join_smiles",
                 right_on="smiles",
                 how="left",
             )
@@ -1386,6 +1707,70 @@ with app.setup:
         # Add manual_validation column
         result = result.with_columns(pl.lit("NA").alias("manual_validation"))
 
+        # Harmonize stereocenter counts: PubChem (atom+bond) -> fallback RDKit
+        result = result.with_columns(
+            [
+                pl.when(
+                    pl.any_horizontal(
+                        [
+                            pl.col("pubchem_defined_atom_stereo_count").is_not_null(),
+                            pl.col("pubchem_defined_bond_stereo_count").is_not_null(),
+                            pl.col("pubchem_undefined_atom_stereo_count").is_not_null(),
+                            pl.col("pubchem_undefined_bond_stereo_count").is_not_null(),
+                        ],
+                    ),
+                )
+                .then(
+                    pl.sum_horizontal(
+                        [
+                            pl.col("pubchem_defined_atom_stereo_count").cast(
+                                pl.Int64,
+                                strict=False,
+                            ),
+                            pl.col("pubchem_defined_bond_stereo_count").cast(
+                                pl.Int64,
+                                strict=False,
+                            ),
+                            pl.col("pubchem_undefined_atom_stereo_count").cast(
+                                pl.Int64,
+                                strict=False,
+                            ),
+                            pl.col("pubchem_undefined_bond_stereo_count").cast(
+                                pl.Int64,
+                                strict=False,
+                            ),
+                        ],
+                    ).cast(pl.Utf8),
+                )
+                .otherwise(pl.lit(None))
+                .alias("pubchem_stereo_total"),
+                pl.when(
+                    pl.any_horizontal(
+                        [
+                            pl.col("pubchem_undefined_atom_stereo_count").is_not_null(),
+                            pl.col("pubchem_undefined_bond_stereo_count").is_not_null(),
+                        ],
+                    ),
+                )
+                .then(
+                    pl.sum_horizontal(
+                        [
+                            pl.col("pubchem_undefined_atom_stereo_count").cast(
+                                pl.Int64,
+                                strict=False,
+                            ),
+                            pl.col("pubchem_undefined_bond_stereo_count").cast(
+                                pl.Int64,
+                                strict=False,
+                            ),
+                        ],
+                    ).cast(pl.Utf8),
+                )
+                .otherwise(pl.lit(None))
+                .alias("pubchem_stereo_unspecified"),
+            ],
+        )
+
         # Select final columns in expected order (matching old Zenodo format)
         # Priority: PubChem > RDKit > Wikidata
         result = result.select(
@@ -1400,15 +1785,19 @@ with app.setup:
                     pl.col("rdkit_inchikey"),
                     pl.col("compound_inchikey"),
                 ).alias("structure_inchikey"),
-                # InChI: RDKit only (PubChem doesn't provide InChI)
-                pl.col("rdkit_inchi").alias("structure_inchi"),
+                # InChI: PubChem > RDKit
+                pl.coalesce(pl.col("pubchem_inchi"), pl.col("rdkit_inchi")).alias(
+                    "structure_inchi",
+                ),
                 # SMILES: PubChem > Wikidata isomeric
                 pl.coalesce(
                     pl.col("pubchem_smiles"),
                     pl.col("compound_smiles_iso"),
+                    pl.col("compound_smiles_can"),
+                    pl.col("_rdkit_join_smiles"),
                 ).alias("structure_smiles"),
                 # Molecular formula: RDKit only, normalized to remove subscript digits
-                pl.col("rdkit_formula")
+                pl.coalesce(pl.col("pubchem_formula"), pl.col("rdkit_formula"))
                 .map_elements(normalize_formula, return_dtype=pl.Utf8)
                 .alias("structure_molecular_formula"),
                 # Mass: PubChem > RDKit
@@ -1416,8 +1805,10 @@ with app.setup:
                     pl.col("pubchem_mass"),
                     pl.col("rdkit_mass"),
                 ).alias("structure_exact_mass"),
-                # XLogP: RDKit only (PubChem doesn't provide this in basic SPARQL)
-                pl.col("rdkit_xlogp").alias("structure_xlogp"),
+                # XLogP: PubChem xlogp3 > RDKit
+                pl.coalesce(pl.col("pubchem_xlogp3"), pl.col("rdkit_xlogp")).alias(
+                    "structure_xlogp",
+                ),
                 # 2D SMILES: PubChem connectivity > RDKit > Wikidata canonical
                 pl.coalesce(
                     pl.col("pubchem_smiles_2d"),
@@ -1427,9 +1818,15 @@ with app.setup:
                 pl.col("compound_cid").alias("structure_cid"),
                 pl.col("iupac_name").alias("structure_nameIupac"),
                 pl.col("common_name").alias("structure_nameTraditional"),
-                # Stereocenters: RDKit only
-                pl.col("rdkit_stereo_total").alias("structure_stereocenters_total"),
-                pl.col("rdkit_stereo_unspec").alias(
+                # Stereocenters: PubChem (defined+undefined atom/bond) > RDKit
+                pl.coalesce(
+                    pl.col("pubchem_stereo_total"),
+                    pl.col("rdkit_stereo_total"),
+                ).alias("structure_stereocenters_total"),
+                pl.coalesce(
+                    pl.col("pubchem_stereo_unspecified"),
+                    pl.col("rdkit_stereo_unspec"),
+                ).alias(
                     "structure_stereocenters_unspecified",
                 ),
                 # NPClassifier taxonomy
@@ -1457,7 +1854,9 @@ with app.setup:
                 pl.col("taxon_name").alias("organism_name"),
                 pl.col("taxon_gbif").alias("organism_taxonomy_gbifid"),
                 pl.col("taxon_ncbi").alias("organism_taxonomy_ncbiid"),
-                pl.col("ott_id").alias("organism_taxonomy_ottid"),
+                pl.coalesce(pl.col("taxon_ott"), pl.col("ott_id")).alias(
+                    "organism_taxonomy_ottid",
+                ),
                 # OTT taxonomy hierarchy
                 pl.col("ott_domain").alias("organism_taxonomy_01domain"),
                 pl.col("ott_kingdom").alias("organism_taxonomy_02kingdom"),
@@ -1484,7 +1883,7 @@ with app.setup:
             ],
         )
 
-        return result
+        return normalize_blank_strings(result)
 
 
 @app.cell
@@ -1566,6 +1965,9 @@ def fetch_data(run_button):
         smiles_iso_df = collect_df(
             extract_qids_from_lazyframe(data.compound_smiles_iso, "compound"),
         )
+        smiles_can_df = collect_df(
+            extract_qids_from_lazyframe(data.compound_smiles_can, "compound"),
+        )
         cid_df = collect_df(
             extract_qids_from_lazyframe(data.compound_cid, "compound"),
         )
@@ -1577,7 +1979,17 @@ def fetch_data(run_button):
             triplets_df.select("compound_inchikey").unique().to_series().to_list()
         )
         unique_smiles = (
-            smiles_iso_df.select("compound_smiles_iso").unique().to_series().to_list()
+            pl.concat(
+                [
+                    smiles_iso_df.select(pl.col("compound_smiles_iso").alias("smiles")),
+                    smiles_can_df.select(pl.col("compound_smiles_can").alias("smiles")),
+                ],
+                how="vertical",
+            )
+            .unique()
+            .drop_nulls()
+            .to_series()
+            .to_list()
         )
         unique_cids = (
             cid_df.select("compound_cid").unique().drop_nulls().to_series().to_list()
@@ -1640,14 +2052,23 @@ def fetch_data(run_button):
         .unique()
     )
 
-    # Then get their SMILES
+    # Then get SMILES (isomeric preferred, canonical fallback)
     smiles_needing_rdkit = (
-        smiles_iso_df.join(
-            compounds_needing_rdkit,
-            on="compound",
-            how="inner",
+        pl.concat(
+            [
+                smiles_iso_df.join(
+                    compounds_needing_rdkit,
+                    on="compound",
+                    how="inner",
+                ).select(pl.col("compound_smiles_iso").alias("smiles")),
+                smiles_can_df.join(
+                    compounds_needing_rdkit,
+                    on="compound",
+                    how="inner",
+                ).select(pl.col("compound_smiles_can").alias("smiles")),
+            ],
+            how="vertical",
         )
-        .select("compound_smiles_iso")
         .unique()
         .drop_nulls()
         .to_series()
@@ -1849,6 +2270,9 @@ def main():
             smiles_iso_df = collect_df(
                 extract_qids_from_lazyframe(data.compound_smiles_iso, "compound"),
             )
+            smiles_can_df = collect_df(
+                extract_qids_from_lazyframe(data.compound_smiles_can, "compound"),
+            )
             cid_df = collect_df(
                 extract_qids_from_lazyframe(data.compound_cid, "compound"),
             )
@@ -1860,8 +2284,19 @@ def main():
                 .to_list()
             )
             unique_smiles = (
-                smiles_iso_df.select("compound_smiles_iso")
+                pl.concat(
+                    [
+                        smiles_iso_df.select(
+                            pl.col("compound_smiles_iso").alias("smiles")
+                        ),
+                        smiles_can_df.select(
+                            pl.col("compound_smiles_can").alias("smiles")
+                        ),
+                    ],
+                    how="vertical",
+                )
                 .unique()
+                .drop_nulls()
                 .to_series()
                 .to_list()
             )
@@ -1953,12 +2388,21 @@ def main():
             )
 
             smiles_needing_rdkit = (
-                smiles_iso_df.join(
-                    compounds_needing_rdkit,
-                    on="compound",
-                    how="inner",
+                pl.concat(
+                    [
+                        smiles_iso_df.join(
+                            compounds_needing_rdkit,
+                            on="compound",
+                            how="inner",
+                        ).select(pl.col("compound_smiles_iso").alias("smiles")),
+                        smiles_can_df.join(
+                            compounds_needing_rdkit,
+                            on="compound",
+                            how="inner",
+                        ).select(pl.col("compound_smiles_can").alias("smiles")),
+                    ],
+                    how="vertical",
                 )
-                .select("compound_smiles_iso")
                 .unique()
                 .drop_nulls()
                 .to_series()
@@ -2028,6 +2472,15 @@ def main():
                 pubchem_df,
                 rdkit_df,
             )
+            if len(old_frozen_df) > 0:
+                frozen_metadata_df = inherit_manual_validation(
+                    frozen_metadata_df,
+                    old_frozen_df,
+                )
+
+            # Final cleanup: trim and nullify blank/whitespace UTF-8 values
+            frozen_df = normalize_blank_strings(frozen_df)
+            frozen_metadata_df = normalize_blank_strings(frozen_metadata_df)
 
             if args.verbose:
                 print("\nWriting output files...", file=sys.stderr)
