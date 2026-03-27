@@ -32,16 +32,20 @@ with app.setup:
     @dataclass
     class Settings:
         smiles_file: str = field(
-            default="", metadata={"help": "Path to input file with one SMILES per line"}
+            default="",
+            metadata={"help": "Path to input file with one SMILES per line"},
         )
         workers: int = field(
-            default=8, metadata={"help": "Number of parallel HTTP workers"}
+            default=8,
+            metadata={"help": "Number of parallel HTTP workers"},
         )
         retries: int = field(
-            default=3, metadata={"help": "Max retries per SMILES on transient errors"}
+            default=3,
+            metadata={"help": "Max retries per SMILES on transient errors"},
         )
         save_every: int = field(
-            default=50, metadata={"help": "Flush cache to disk every N new results"}
+            default=50,
+            metadata={"help": "Flush cache to disk every N new results"},
         )
 
     _parser = ArgumentParser()
@@ -95,8 +99,8 @@ def save_cache(cache: dict, cache_path: Path = CACHE_PATH) -> None:
                     _esc(_join("class_results")),
                     _esc(str(r.get("isglycoside", ""))),
                     _esc(str(r.get("error", ""))),
-                ]
-            )
+                ],
+            ),
         )
     tmp_csv.write_text("\n".join(lines))
     tmp_csv.replace(csv_path)
@@ -157,7 +161,8 @@ def parse_smiles_file(text: str) -> list[str]:
 @app.function
 def classify_one(smiles: str, retries: int = 3) -> tuple[str, dict]:
     url = "https://npclassifier.gnps2.org/classify?smiles=" + urllib.parse.quote(
-        smiles, safe=""
+        smiles,
+        safe="",
     )
     last_err = ""
     for attempt in range(retries):
@@ -258,13 +263,17 @@ def _controls():
     workers_slider = mo.ui.slider(1, 20, value=settings.workers, label="Workers")
     retries_slider = mo.ui.slider(1, 5, value=settings.retries, label="Retries")
     save_every_slider = mo.ui.slider(
-        10, 200, step=10, value=settings.save_every, label="Save every N"
+        10,
+        200,
+        step=10,
+        value=settings.save_every,
+        label="Save every N",
     )
     mo.vstack(
         [
             file_input,
             mo.hstack([workers_slider, retries_slider, save_every_slider]),
-        ]
+        ],
     )
     return file_input, retries_slider, save_every_slider, workers_slider
 
@@ -294,7 +303,7 @@ def _status():
         mo.md(
             f"**{len(smiles_list)} SMILES** loaded — "
             f"**{len(smiles_list) - _n_new}** cached, **{_n_new}** to fetch. "
-            f"Cache: `{CACHE_PATH.resolve()}` ({len(cache)} entries)"
+            f"Cache: `{CACHE_PATH.resolve()}` ({len(cache)} entries)",
         )
     return
 
@@ -342,7 +351,7 @@ def _results_table():
                 "class": ", ".join(_r.get("class_results", [])),
                 "isglycoside": _r.get("isglycoside", ""),
                 "error": _r.get("error", ""),
-            }
+            },
         )
 
     results_df = pl.DataFrame(_rows)
@@ -396,7 +405,7 @@ if __name__ == "__main__":
     _cache = load_cache(CACHE_PATH)
     _new = [s for s in _smiles if s not in _cache]
     print(
-        f"[npclassifier] {len(_smiles)} SMILES | {len(_cache)} cached | {len(_new)} to fetch"
+        f"[npclassifier] {len(_smiles)} SMILES | {len(_cache)} cached | {len(_new)} to fetch",
     )
 
     class _Counter:
