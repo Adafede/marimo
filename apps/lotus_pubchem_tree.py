@@ -1948,7 +1948,7 @@ def build_trees(build_trees_btn, data):
         mo.output.append(
             mo.callout(
                 mo.md(
-                    "Could not fetch NPClassifier cache. NPClassifier tree will not be available."
+                    "Could not fetch NPClassifier cache. NPClassifier tree will not be available.",
                 ),
                 kind="warn",
             ),
@@ -2003,7 +2003,7 @@ def display_previews(biological_tree, chemical_tree, npclassifier_tree):
                     kind="warn",
                 ),
                 mo.tree(chem_display),
-            ]
+            ],
         ),
     }
 
@@ -2019,7 +2019,7 @@ def display_previews(biological_tree, chemical_tree, npclassifier_tree):
                     kind="success",
                 ),
                 mo.tree(npc_display),
-            ]
+            ],
         )
 
     mo.vstack(
@@ -2045,7 +2045,9 @@ def download_buttons(biological_tree, chemical_tree, npclassifier_tree):
     generated_at = datetime.now().isoformat()
 
     def build_tree_output(
-        tree_type: str, tree: list[dict], source: str = "wikidata"
+        tree_type: str,
+        tree: list[dict],
+        source: str = "wikidata",
     ) -> dict:
         """Build complete output with rich metadata."""
         is_biological = tree_type == "biological"
@@ -2155,7 +2157,9 @@ def download_buttons(biological_tree, chemical_tree, npclassifier_tree):
     npclassifier_pubchem_json = ""
     if npclassifier_tree:
         npclassifier_output = build_tree_output(
-            "chemical", npclassifier_tree, source="npclassifier"
+            "chemical",
+            npclassifier_tree,
+            source="npclassifier",
         )
         npclassifier_json = json.dumps(npclassifier_output, indent=2)
         npclassifier_pubchem = npclassifier_tree_to_pubchem(npclassifier_tree)
@@ -2196,8 +2200,8 @@ def download_buttons(biological_tree, chemical_tree, npclassifier_tree):
             + (
                 [
                     mo.download(
-                        label="Chemical Tree (NPClassifier) JSON ✅",
-                        filename=f"{date_str}_lotus_chemical_tree_npclassifier.json",
+                        label="Chemical Tree JSON",
+                        filename=f"{date_str}_lotus_chemical_tree.json",
                         mimetype="application/json",
                         data=lambda: npclassifier_json.encode("utf-8"),
                     ),
@@ -2226,8 +2230,8 @@ def download_buttons(biological_tree, chemical_tree, npclassifier_tree):
             + (
                 [
                     mo.download(
-                        label="Chemical Tree NPClassifier (PubChem) ✅",
-                        filename=f"{date_str}_lotus_chemical_tree_npclassifier_pubchem.json",
+                        label="Chemical Tree (PubChem)",
+                        filename=f"{date_str}_lotus_chemical_tree_pubchem.json",
                         mimetype="application/json",
                         data=lambda: npclassifier_pubchem_json.encode("utf-8"),
                     ),
@@ -2457,25 +2461,84 @@ Examples:
                 print(f"  Root nodes: {len(chemical_tree)}", file=sys.stderr)
                 print(f"  Total nodes: {chem_nodes:,}", file=sys.stderr)
 
+            # Build SMILES to InChIKey mapping for NPClassifier
+            if args.verbose:
+                print("\nBuilding SMILES to InChIKey mapping...", file=sys.stderr)
+            smiles_to_inchikey = build_smiles_to_inchikey_map(
+                compound_taxon_df,
+                smiles_map,
+                inchikey_map,
+            )
+
+            # Build NPClassifier tree
+            if args.verbose:
+                print("\nFetching NPClassifier cache...", file=sys.stderr)
+            npclassifier_df = fetch_npclassifier_cache()
+
+            npclassifier_tree = []
+            if len(npclassifier_df) > 0:
+                if args.verbose:
+                    print("Building NPClassifier chemical tree...", file=sys.stderr)
+                npclassifier_tree = build_npclassifier_tree(
+                    npclassifier_df,
+                    smiles_to_inchikey,
+                )
+                if args.verbose:
+                    npc_nodes = count_tree_nodes(npclassifier_tree)
+                    print(f"  Root nodes: {len(npclassifier_tree)}", file=sys.stderr)
+                    print(f"  Total nodes: {npc_nodes:,}", file=sys.stderr)
+            else:
+                if args.verbose:
+                    print("  Could not fetch NPClassifier cache", file=sys.stderr)
+
             date_str = datetime.now().strftime("%Y%m%d")
             generated_at = datetime.now().isoformat()
 
-            def build_cli_tree_output(tree_type: str, tree: list[dict]) -> dict:
+            def build_cli_tree_output(
+                tree_type: str,
+                tree: list[dict],
+                source: str = "wikidata",
+            ) -> dict:
                 """Build complete output with rich metadata for CLI."""
                 is_biological = tree_type == "biological"
+                is_npclassifier = source == "npclassifier"
+
+                if is_npclassifier:
+                    overview = "This JSON contains a hierarchical tree of chemical compounds classified using NPClassifier (pathway → superclass → class)."
+                    description = "NPClassifier-based hierarchical classification of natural products"
+                    notes = [
+                        "NPClassifier provides a comprehensive classification for natural products.",
+                        "Hierarchy: pathway → superclass → class → InChIKey",
+                        "Multiple classifications are possible for a single compound.",
+                        "See https://npclassifier.gnps2.org/ for more information.",
+                    ]
+                elif is_biological:
+                    overview = "This JSON contains a hierarchical tree of biological taxa with their associated natural product compounds."
+                    description = "Hierarchical taxonomy of biological organisms with associated natural product compounds"
+                    notes = [
+                        "Descriptor values are strings when single, arrays when multiple values exist (very rare).",
+                        "All nodes are sorted alphabetically by Name.",
+                        "Only nodes with InChIKey associations (directly or via descendants) are included.",
+                        "Data queried from Wikidata via QLever SPARQL endpoint.",
+                    ]
+                else:
+                    overview = "This JSON contains a hierarchical tree of chemical compound classes with structural descriptors based on Wikidata P279 relationships."
+                    description = "Wikidata-based hierarchical classification of chemical compounds"
+                    notes = [
+                        "Note: Wikidata P279 (subclass of) relationships are sparse for natural products.",
+                        "Consider using the NPClassifier-based tree (lotus_chemical_tree.json) for better coverage.",
+                        "Descriptor values are strings when single, arrays when multiple values exist (very rare).",
+                        "All nodes are sorted alphabetically by Name.",
+                    ]
 
                 return {
                     "_documentation": {
-                        "overview": (
-                            "This JSON contains a hierarchical tree of biological taxa with their associated natural product compounds."
-                            if is_biological
-                            else "This JSON contains a hierarchical tree of chemical compound classes with structural descriptors."
-                        ),
+                        "overview": overview,
                         "structure": {
                             "tree": "Array of root nodes. Each node is an object with Name, Identifiers, and optional Children.",
                             "node_fields": {
                                 "Name": "Human-readable name (taxon name or compound label)",
-                                "Identifiers": "External database identifiers (Wikidata QID, NCBI TaxID for taxa)",
+                                "Identifiers": "External database identifiers (Wikidata QID, NCBI TaxID for taxa, NPClassifier levels)",
                                 "Compounds": "(Biological tree only) Array of compounds found in this taxon",
                                 "Descriptors": "Chemical structure representations (InChIKey, SMILES, etc.)",
                                 "References": "(Biological tree compounds only) Literature references for compound-taxon association",
@@ -2493,20 +2556,16 @@ Examples:
                                 "PMID": "PubMed ID of the reference",
                             },
                         },
-                        "notes": [
-                            "Descriptor values are strings when single, arrays when multiple values exist (very rare).",
-                            "All nodes are sorted alphabetically by Name.",
-                            "Only nodes with InChIKey associations (directly or via descendants) are included.",
-                            "Data queried from Wikidata via QLever SPARQL endpoint.",
-                        ],
+                        "notes": notes,
                     },
                     "metadata": {
-                        "name": f"LOTUS {tree_type.title()} Tree",
-                        "description": (
-                            "Hierarchical taxonomy of biological organisms with associated natural product compounds"
-                            if is_biological
-                            else "Hierarchical classification of chemical compounds with structural descriptors"
+                        "name": f"LOTUS {tree_type.title()} Tree"
+                        + (
+                            " (NPClassifier)"
+                            if is_npclassifier
+                            else (" (Wikidata)" if not is_biological else "")
                         ),
+                        "description": description,
                         "version": CONFIG["app_version"],
                         "generated": generated_at,
                         "generator": CONFIG["app_name"],
@@ -2514,7 +2573,12 @@ Examples:
                             "name": METADATA["project"],
                             "url": METADATA["project_url"],
                             "wikidata_item": METADATA["wikidata_item"],
-                            "endpoint": CONFIG["qlever_endpoint"],
+                            "endpoint": CONFIG["qlever_endpoint"]
+                            if not is_npclassifier
+                            else CONFIG["npclassifier_cache_url"],
+                            "classification": "NPClassifier"
+                            if is_npclassifier
+                            else "Wikidata",
                         },
                         "license": {
                             "data": METADATA["license_data"],
@@ -2523,10 +2587,11 @@ Examples:
                         "constraints": {
                             "root": "Biota (Q2382443)"
                             if is_biological
-                            else "chemical compound (Q11173)",
-                            "sparql_pattern": METADATA["constraints"][
-                                "biological_tree" if is_biological else "chemical_tree"
-                            ],
+                            else (
+                                "NPClassifier pathways"
+                                if is_npclassifier
+                                else "chemical compound (Q11173)"
+                            ),
                         },
                         "statistics": {
                             "root_nodes": len(tree),
@@ -2537,7 +2602,20 @@ Examples:
                 }
 
             biological_output = build_cli_tree_output("biological", biological_tree)
-            chemical_output = build_cli_tree_output("chemical", chemical_tree)
+            chemical_wikidata_output = build_cli_tree_output(
+                "chemical",
+                chemical_tree,
+                source="wikidata",
+            )
+            npclassifier_output = (
+                build_cli_tree_output(
+                    "chemical",
+                    npclassifier_tree,
+                    source="npclassifier",
+                )
+                if npclassifier_tree
+                else None
+            )
 
             # Choose format based on --format option
             if args.format == "pubchem":
@@ -2545,33 +2623,76 @@ Examples:
                 if args.verbose:
                     print("\nConverting to PubChem format...", file=sys.stderr)
                 biological_final = tree_to_pubchem_format(biological_tree, "biological")
-                chemical_final = tree_to_pubchem_format(chemical_tree, "chemical")
+                chemical_wikidata_final = tree_to_pubchem_format(
+                    chemical_tree,
+                    "chemical",
+                )
+                npclassifier_final = (
+                    npclassifier_tree_to_pubchem(npclassifier_tree)
+                    if npclassifier_tree
+                    else None
+                )
+
                 biological_path = (
                     output_dir / f"{date_str}_lotus_biological_tree_pubchem.json"
                 )
+                # NPClassifier is the main chemical tree
                 chemical_path = (
                     output_dir / f"{date_str}_lotus_chemical_tree_pubchem.json"
+                )
+                chemical_wikidata_path = (
+                    output_dir / f"{date_str}_lotus_chemical_tree_wikidata_pubchem.json"
                 )
             else:
                 # Full format: detailed with metadata
                 biological_final = biological_output
-                chemical_final = chemical_output
+                chemical_wikidata_final = chemical_wikidata_output
+                npclassifier_final = npclassifier_output
+
                 biological_path = output_dir / f"{date_str}_lotus_biological_tree.json"
+                # NPClassifier is the main chemical tree
                 chemical_path = output_dir / f"{date_str}_lotus_chemical_tree.json"
+                chemical_wikidata_path = (
+                    output_dir / f"{date_str}_lotus_chemical_tree_wikidata.json"
+                )
 
             if args.verbose:
                 print("\nWriting output files...", file=sys.stderr)
 
             biological_path.write_text(json.dumps(biological_final, indent=2))
-            chemical_path.write_text(json.dumps(chemical_final, indent=2))
-
             if args.verbose:
                 print(f"  ✓ {biological_path}", file=sys.stderr)
-                print(f"  ✓ {chemical_path}", file=sys.stderr)
-                print("\nDone!", file=sys.stderr)
             else:
                 print(biological_path)
-                print(chemical_path)
+
+            # Write Wikidata chemical tree
+            chemical_wikidata_path.write_text(
+                json.dumps(chemical_wikidata_final, indent=2),
+            )
+            if args.verbose:
+                print(f"  ✓ {chemical_wikidata_path}", file=sys.stderr)
+            else:
+                print(chemical_wikidata_path)
+
+            # Write NPClassifier chemical tree as the main chemical tree
+            if npclassifier_final:
+                chemical_path.write_text(json.dumps(npclassifier_final, indent=2))
+                if args.verbose:
+                    print(
+                        f"  ✓ {chemical_path} (NPClassifier - recommended)",
+                        file=sys.stderr,
+                    )
+                else:
+                    print(chemical_path)
+            else:
+                if args.verbose:
+                    print(
+                        "  NPClassifier tree not available, main chemical tree not written",
+                        file=sys.stderr,
+                    )
+
+            if args.verbose:
+                print("\nDone!", file=sys.stderr)
 
         except Exception as e:
             print(f"Error: {e}", file=sys.stderr)
