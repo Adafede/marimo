@@ -1,0 +1,419 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#     "marimo>=0.16.5",
+#     "simple-parsing==0.1.8",
+#     "polars==1.39.3",
+#     "altair==6.0.0",
+# ]
+# ///
+import marimo
+
+__generated_with = "0.16.5"
+app = marimo.App(width="full")
+
+with app.setup:
+    import json
+    import signal
+    import sys
+    import time
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from dataclasses import dataclass, field
+    from pathlib import Path
+
+    import marimo as mo
+    from simple_parsing import ArgumentParser
+
+    CACHE_PATH = Path("apps/public/npclassifier/npclassifier_cache.json")
+
+    @dataclass
+    class Settings:
+        smiles_file: str = field(
+            default="", metadata={"help": "Path to input file with one SMILES per line"}
+        )
+        workers: int = field(
+            default=8, metadata={"help": "Number of parallel HTTP workers"}
+        )
+        retries: int = field(
+            default=3, metadata={"help": "Max retries per SMILES on transient errors"}
+        )
+        save_every: int = field(
+            default=50, metadata={"help": "Flush cache to disk every N new results"}
+        )
+
+    _parser = ArgumentParser()
+    _parser.add_arguments(Settings, dest="settings")
+
+    def _parse_args() -> Settings:
+        if mo.running_in_notebook():
+            return Settings()
+        return _parser.parse_args().settings
+
+    settings = _parse_args()
+
+
+@app.function
+def load_cache(cache_path: Path = CACHE_PATH) -> dict:
+    if cache_path.exists():
+        try:
+            return json.loads(cache_path.read_text())
+        except Exception:
+            pass
+    return {}
+
+
+@app.function
+def save_cache(cache: dict, cache_path: Path = CACHE_PATH) -> None:
+    """Atomic write via tmp-file rename. Skips 5xx errors so transient failures aren't persisted.
+    Also writes a CSV sidecar next to the JSON file."""
+    clean = {k: v for k, v in cache.items() if not is_server_error(v)}
+
+    tmp = cache_path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(clean, indent=2))
+    tmp.replace(cache_path)
+
+    csv_path = cache_path.with_suffix(".csv")
+    tmp_csv = csv_path.with_suffix(".tmp")
+    lines = ["smiles,pathway,superclass,class,isglycoside,error"]
+    for smi, r in clean.items():
+
+        def _join(key):
+            return " $ ".join(r.get(key, []))
+
+        def _esc(s):
+            return f'"{s}"' if "," in s or '"' in s else s
+
+        lines.append(
+            ",".join(
+                [
+                    _esc(smi),
+                    _esc(_join("pathway_results")),
+                    _esc(_join("superclass_results")),
+                    _esc(_join("class_results")),
+                    _esc(str(r.get("isglycoside", ""))),
+                    _esc(str(r.get("error", ""))),
+                ]
+            )
+        )
+    tmp_csv.write_text("\n".join(lines))
+    tmp_csv.replace(csv_path)
+
+
+@app.function
+def is_server_error(result: dict) -> bool:
+    err = result.get("error", "")
+    return isinstance(err, str) and err.startswith("HTTP 5")
+
+
+@app.function
+def parse_smiles_file(text: str) -> list[str]:
+    import re
+
+    _chem = re.compile(r"[CNOSPFBrIcnops(\[=@#]")
+    _HEADERS = {
+        "smiles",
+        "smile",
+        "structure",
+        "inchi",
+        "inchikey",
+        "id",
+        "name",
+        "cid",
+        "cas",
+        "formula",
+        "mw",
+        "mol",
+        "compound",
+    }
+
+    result = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split("\t")
+        if len(parts) == 1:
+            smi = parts[0].strip()
+        else:
+            smi = next(
+                (
+                    p.strip()
+                    for p in parts
+                    if _chem.search(p) and p.strip().lower() not in _HEADERS
+                ),
+                None,
+            )
+            if smi is None:
+                continue
+        if smi.lower() in _HEADERS or not _chem.search(smi):
+            continue
+        result.append(smi)
+    return result
+
+
+@app.function
+def classify_one(smiles: str, retries: int = 3) -> tuple[str, dict]:
+    url = "https://npclassifier.gnps2.org/classify?smiles=" + urllib.parse.quote(
+        smiles, safe=""
+    )
+    last_err = ""
+    for attempt in range(retries):
+        try:
+            req = urllib.request.Request(url, headers={"Accept": "application/json"})
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                return smiles, json.loads(resp.read().decode())
+        except urllib.error.HTTPError as e:
+            if 400 <= e.code < 500:
+                return smiles, {"error": f"HTTP {e.code}"}
+            last_err = f"HTTP {e.code}"
+        except urllib.error.URLError as e:
+            last_err = f"URLError: {e.reason}"
+        except TimeoutError:
+            last_err = "timeout"
+        except Exception as e:
+            last_err = str(e)
+        if attempt < retries - 1:
+            time.sleep(2**attempt)
+    return smiles, {"error": last_err}
+
+
+@app.function
+def classify_batch(
+    smiles_list: list[str],
+    cache: dict,
+    cache_path: Path = CACHE_PATH,
+    *,
+    workers: int = 8,
+    retries: int = 3,
+    save_every: int = 50,
+    progress_cb=None,
+) -> dict:
+    to_fetch = [s for s in smiles_list if s not in cache]
+    if not to_fetch:
+        return cache
+
+    import threading
+
+    _interrupted = False
+    in_main = threading.current_thread() is threading.main_thread()
+
+    def _flush_and_exit(signum, frame):
+        nonlocal _interrupted
+        _interrupted = True
+        save_cache(cache, cache_path)
+        print(
+            f"\n[npclassifier] interrupted — {len(cache)} entries saved to {cache_path}",
+            file=sys.stderr,
+        )
+        sys.exit(0)
+
+    if in_main:
+        prev_sigint = signal.signal(signal.SIGINT, _flush_and_exit)
+        prev_sigterm = signal.signal(signal.SIGTERM, _flush_and_exit)
+
+    try:
+        pending = 0
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {pool.submit(classify_one, s, retries): s for s in to_fetch}
+            for future in as_completed(futures):
+                if _interrupted:
+                    break
+                smi, result = future.result()
+                cache[smi] = result
+                pending += 1
+                if progress_cb is not None:
+                    progress_cb(increment=1)
+                if pending >= save_every:
+                    save_cache(cache, cache_path)
+                    pending = 0
+    finally:
+        save_cache(cache, cache_path)
+        if in_main:
+            signal.signal(signal.SIGINT, prev_sigint)
+            signal.signal(signal.SIGTERM, prev_sigterm)
+
+    return cache
+
+
+# ── Notebook UI ───────────────────────────────────────────────────────────────
+
+
+@app.cell
+def _show_header():
+    mo.md(f"""
+    # 🌿 NP Classifier — Batch SMILES Annotator
+
+    Upload a file with one SMILES per line (or pass `--smiles_file` on the CLI).
+    Results are cached at **`{CACHE_PATH}`** — any SMILES classified before won't be re-fetched.
+    """)
+    return
+
+
+@app.cell
+def _controls():
+    file_input = mo.ui.file(label="SMILES file (.txt, one per line)", multiple=False)
+    workers_slider = mo.ui.slider(1, 20, value=settings.workers, label="Workers")
+    retries_slider = mo.ui.slider(1, 5, value=settings.retries, label="Retries")
+    save_every_slider = mo.ui.slider(
+        10, 200, step=10, value=settings.save_every, label="Save every N"
+    )
+    mo.vstack(
+        [
+            file_input,
+            mo.hstack([workers_slider, retries_slider, save_every_slider]),
+        ]
+    )
+    return file_input, retries_slider, save_every_slider, workers_slider
+
+
+@app.cell
+def _load_smiles():
+    if file_input.value:
+        _raw = file_input.value[0].contents.decode("utf-8", errors="replace")
+        smiles_list = parse_smiles_file(_raw)
+    else:
+        smiles_list = []
+    return (smiles_list,)
+
+
+@app.cell
+def _load_cache_cell():
+    cache = load_cache(CACHE_PATH)
+    return (cache,)
+
+
+@app.cell
+def _status():
+    if not smiles_list:
+        mo.md("Upload a SMILES file to get started.")
+    else:
+        _n_new = len([s for s in smiles_list if s not in cache])
+        mo.md(
+            f"**{len(smiles_list)} SMILES** loaded — "
+            f"**{len(smiles_list) - _n_new}** cached, **{_n_new}** to fetch. "
+            f"Cache: `{CACHE_PATH.resolve()}` ({len(cache)} entries)"
+        )
+    return
+
+
+@app.cell
+def _run_button():
+    mo.stop(not smiles_list)
+    run_btn = mo.ui.run_button(label="Classify")
+    run_btn
+    return (run_btn,)
+
+
+@app.cell
+def _run_classify():
+    mo.stop(not smiles_list or not run_btn.value)
+    _new = [s for s in smiles_list if s not in cache]
+
+    with mo.status.progress_bar(total=len(_new) or 1, title="Classifying…") as _pb:
+        results = classify_batch(
+            smiles_list,
+            cache,
+            CACHE_PATH,
+            workers=workers_slider.value,
+            retries=retries_slider.value,
+            save_every=save_every_slider.value,
+            progress_cb=lambda increment: _pb.update(increment=increment),
+        )
+    mo.md(f"Done. Cache holds **{len(results)}** entries → `{CACHE_PATH.resolve()}`")
+    return (results,)
+
+
+@app.cell
+def _results_table():
+    mo.stop(not smiles_list or not run_btn.value)
+    import polars as pl
+
+    _rows = []
+    for _smi in smiles_list:
+        _r = results.get(_smi, {})
+        _rows.append(
+            {
+                "smiles": _smi,
+                "pathway": ", ".join(_r.get("pathway_results", [])),
+                "superclass": ", ".join(_r.get("superclass_results", [])),
+                "class": ", ".join(_r.get("class_results", [])),
+                "isglycoside": _r.get("isglycoside", ""),
+                "error": _r.get("error", ""),
+            }
+        )
+
+    results_df = pl.DataFrame(_rows)
+    mo.ui.table(results_df, show_download=True)
+    return pl, results_df
+
+
+@app.cell
+def _pathway_chart():
+    mo.stop(not smiles_list or not run_btn.value)
+    import altair as alt
+
+    _counts = (
+        results_df.filter(pl.col("pathway") != "")
+        .with_columns(pl.col("pathway").str.split(", ").alias("pw"))
+        .explode("pw")
+        .rename({"pw": "Pathway"})
+        .group_by("Pathway")
+        .agg(pl.len().alias("Count"))
+        .sort("Count", descending=True)
+    )
+    alt.Chart(_counts).mark_bar().encode(
+        x=alt.X("Count:Q"),
+        y=alt.Y("Pathway:N", sort="-x"),
+        color=alt.Color("Pathway:N", legend=None),
+        tooltip=["Pathway", "Count"],
+    ).properties(title="Pathway Distribution", width=600, height=300)
+    return (alt,)
+
+
+@app.cell
+def _download():
+    mo.stop(not smiles_list or not run_btn.value)
+    mo.download(
+        data=results_df.write_csv().encode(),
+        filename="npclassifier_results.csv",
+        mimetype="text/csv",
+        label="⬇️ Download results CSV",
+    )
+    return
+
+
+# ── CLI entry point ───────────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    if not settings.smiles_file:
+        print("error: --smiles_file is required in CLI mode.", file=sys.stderr)
+        sys.exit(1)
+
+    _smiles = parse_smiles_file(Path(settings.smiles_file).read_text())
+    _cache = load_cache(CACHE_PATH)
+    _new = [s for s in _smiles if s not in _cache]
+    print(
+        f"[npclassifier] {len(_smiles)} SMILES | {len(_cache)} cached | {len(_new)} to fetch"
+    )
+
+    class _Counter:
+        n = 0
+
+        def tick(self, increment=1):
+            self.n += increment
+            print(f"\r[npclassifier] {self.n}/{len(_new)}", end="", flush=True)
+
+    _counter = _Counter()
+    _cache = classify_batch(
+        _smiles,
+        _cache,
+        CACHE_PATH,
+        workers=settings.workers,
+        retries=settings.retries,
+        save_every=settings.save_every,
+        progress_cb=_counter.tick,
+    )
+    print(f"\n[npclassifier] done — {len(_cache)} entries in {CACHE_PATH.resolve()}")
