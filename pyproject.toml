@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Minimal, reusable utilities for marimo applications"
 requires-python = ">=3.13"
 dependencies = [
-  "aiohttp>=3.13.3",
+  "aiohttp>=3.13.4",
   "altair>=6.0.0",
   "cmcrameri>=1.9",
   "epam-indigo>=1.40.0",
@@ -12,7 +12,7 @@ dependencies = [
   "maplib>=0.20.0",
   "marimo>=0.21.1",
   "networkx>=3.6.1",
-  "numpy>=2.4.3",
+  "numpy>=2.4.4",
   "polars>=1.39.3",
   "pyarrow>=23.0.1",
   "pydantic-ai>=1.73.0",
