@@ -7,9 +7,10 @@
 #     "altair==6.0.0",
 # ]
 # ///
+
 import marimo
 
-__generated_with = "0.16.5"
+__generated_with = "0.18.1"
 app = marimo.App(width="full")
 
 with app.setup:
@@ -280,12 +281,112 @@ def _controls():
 
 @app.cell
 def _load_smiles(file_input, parse_smiles_file):
+    import csv
+    import re
+
+    parse_details = {"mode": "none", "column": "", "delimiter": ""}
+    smiles_list = []
+
     if file_input.value:
         _raw = file_input.value[0].contents.decode("utf-8", errors="replace")
-        smiles_list = parse_smiles_file(_raw)
-    else:
-        smiles_list = []
-    return (smiles_list,)
+        _lines = [line for line in _raw.splitlines() if line.strip()]
+        _chem = re.compile(r"[CNOSPFBrIcnops()\[\]=@#\\/0-9+-]")
+        _headers = {
+            "smiles",
+            "smile",
+            "smiles_can",
+            "smiles_canonical",
+            "canonical_smiles",
+            "smiles_iso",
+            "smiles_isomeric",
+            "isomeric_smiles",
+            "structure",
+            "compound_smiles",
+        }
+
+        def _smiles_like(value: str) -> bool:
+            _v = value.strip()
+            if not _v or " " in _v or _v.lower() in _headers:
+                return False
+            if _v.startswith("http"):
+                return False
+            return bool(_chem.search(_v))
+
+        def _pick_delimiter(sample_lines: list[str]) -> str:
+            _candidates = ["\t", ",", ";", "|"]
+            _scores = {
+                d: sum(line.count(d) for line in sample_lines[:50])
+                / max(len(sample_lines[:50]), 1)
+                for d in _candidates
+            }
+            _best = max(_scores, key=_scores.get)
+            return _best if _scores[_best] >= 0.5 else ""
+
+        _delimiter = _pick_delimiter(_lines)
+        parse_details = {"mode": "line", "column": "", "delimiter": _delimiter}
+
+        if _delimiter:
+            _rows = list(csv.reader(_lines, delimiter=_delimiter))
+            _width = max((len(r) for r in _rows), default=0)
+            _rows = [
+                r + [""] * (_width - len(r))
+                for r in _rows
+                if any(cell.strip() for cell in r)
+            ]
+
+            if _rows and _width > 1:
+                _header = [cell.strip() for cell in _rows[0]]
+                _header_lc = [cell.lower() for cell in _header]
+                _has_named_smiles = any(
+                    h in _headers or "smiles" in h or h.endswith("_smi")
+                    for h in _header_lc
+                )
+                _data_rows = _rows[1:] if _has_named_smiles else _rows
+
+                _best_idx = None
+                _best_score = float("-inf")
+                for _idx in range(_width):
+                    _name = _header_lc[_idx] if _idx < len(_header_lc) else ""
+                    _values = [
+                        row[_idx].strip()
+                        for row in _data_rows[:300]
+                        if _idx < len(row) and row[_idx].strip()
+                    ]
+                    if not _values:
+                        continue
+                    _like = sum(_smiles_like(v) for v in _values)
+                    _ratio = _like / len(_values)
+                    _score = _ratio * 10
+                    if _name in _headers:
+                        _score += 8
+                    elif "smiles" in _name:
+                        _score += 6
+                    elif "smi" in _name or "structure" in _name:
+                        _score += 3
+                    if _score > _best_score:
+                        _best_score = _score
+                        _best_idx = _idx
+
+                if _best_idx is not None and _best_score >= 4:
+                    smiles_list = [
+                        row[_best_idx].strip()
+                        for row in _data_rows
+                        if _best_idx < len(row) and _smiles_like(row[_best_idx])
+                    ]
+                    parse_details = {
+                        "mode": "column",
+                        "column": (
+                            _header[_best_idx]
+                            if _best_idx < len(_header)
+                            else f"col_{_best_idx + 1}"
+                        ),
+                        "delimiter": _delimiter,
+                    }
+
+        if not smiles_list:
+            smiles_list = parse_smiles_file(_raw)
+
+    return parse_details, smiles_list
 
 
 @app.cell
@@ -295,21 +396,31 @@ def _load_cache_cell():
 
 
 @app.cell
-def _status(smiles_list, cache, mo, CACHE_PATH):
+def _status(cache, parse_details, smiles_list):
     if not smiles_list:
-        mo.md("Upload a SMILES file to get started.")
+        _status_md = mo.md("Upload a SMILES file to get started.")
     else:
         _n_new = len([s for s in smiles_list if s not in cache])
-        mo.md(
+        _mode = parse_details.get("mode", "line")
+        _column = parse_details.get("column", "")
+        _delimiter = parse_details.get("delimiter", "")
+        _source = "Detected SMILES column"
+        if _mode != "column":
+            _source = "Used line-based parser"
+        _delimiter_label = "tab" if _delimiter == "\t" else (_delimiter or "none")
+        _details = f"{_source}: `{_column or 'n/a'}` (delimiter: `{_delimiter_label}`)."
+        _status_md = mo.md(
             f"**{len(smiles_list)} SMILES** loaded — "
             f"**{len(smiles_list) - _n_new}** cached, **{_n_new}** to fetch. "
-            f"Cache: `{CACHE_PATH.resolve()}` ({len(cache)} entries)",
+            f"Cache: `{CACHE_PATH.resolve()}` ({len(cache)} entries).\n\n"
+            f"{_details}",
         )
+    _status_md
     return
 
 
 @app.cell
-def _run_button(smiles_list, mo):
+def _run_button(smiles_list):
     mo.stop(not smiles_list)
     run_btn = mo.ui.run_button(label="Classify")
     run_btn
@@ -318,15 +429,12 @@ def _run_button(smiles_list, mo):
 
 @app.cell
 def _run_classify(
-    smiles_list,
-    run_btn,
     cache,
-    workers_slider,
     retries_slider,
+    run_btn,
     save_every_slider,
-    classify_batch,
-    mo,
-    CACHE_PATH,
+    smiles_list,
+    workers_slider,
 ):
     mo.stop(not smiles_list or not run_btn.value)
     _new = [s for s in smiles_list if s not in cache]
@@ -346,7 +454,7 @@ def _run_classify(
 
 
 @app.cell
-def _results_table(smiles_list, run_btn, results, mo):
+def _results_table(results, run_btn, smiles_list):
     mo.stop(not smiles_list or not run_btn.value)
     import polars as pl
 
@@ -370,7 +478,7 @@ def _results_table(smiles_list, run_btn, results, mo):
 
 
 @app.cell
-def _pathway_chart(smiles_list, run_btn, results_df, pl, mo):
+def _pathway_chart(pl, results_df, run_btn, smiles_list):
     mo.stop(not smiles_list or not run_btn.value)
     import altair as alt
 
@@ -389,11 +497,11 @@ def _pathway_chart(smiles_list, run_btn, results_df, pl, mo):
         color=alt.Color("Pathway:N", legend=None),
         tooltip=["Pathway", "Count"],
     ).properties(title="Pathway Distribution", width=600, height=300)
-    return (alt,)
+    return
 
 
 @app.cell
-def _download(smiles_list, run_btn, results_df, mo):
+def _download(results_df, run_btn, smiles_list):
     mo.stop(not smiles_list or not run_btn.value)
     mo.download(
         data=results_df.write_csv().encode(),
