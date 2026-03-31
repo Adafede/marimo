@@ -319,7 +319,7 @@ def _load_smiles(file_input, parse_smiles_file):
                 / max(len(sample_lines[:50]), 1)
                 for d in _candidates
             }
-            _best = max(_scores, key=_scores.get)
+            _best = max(_scores, key=lambda k: _scores[k])
             return _best if _scores[_best] >= 0.5 else ""
 
         _delimiter = _pick_delimiter(_lines)

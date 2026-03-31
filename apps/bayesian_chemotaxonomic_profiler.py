@@ -560,7 +560,7 @@ def read_table(
 
     try:
         if (not IS_PYODIDE) and os.path.exists(p):
-            lf = pl.scan_csv(p, sep=separator, rechunk=False)
+            lf = pl.scan_csv(p, separator=separator, rechunk=False)
             if expected:
                 lf = lf.select(list(expected))
             df = lf.collect(engine="streaming")
@@ -638,7 +638,7 @@ def build_compound_scaffold_table(
 
     # Filter fragments_str BEFORE exploding
     # This reduces the explosion size
-    def filter_valid_fragments(fragments_str: str) -> str:
+    def filter_valid_fragments(fragments_str: str) -> str | None:
         """Keep only valid fragments in comma-separated string."""
         if not fragments_str:
             return ""
@@ -776,7 +776,7 @@ def run_hierarchical_analysis(
     taxon_lineage: pl.DataFrame,
     taxon_name: pl.DataFrame,
     taxon_rank: pl.DataFrame | None = None,
-    cfg: Final[TypedDict] = None,
+    cfg: EnrichmentConfigDict | dict | None = None,
 ) -> pl.LazyFrame:
     """
     Memory-optimized Bayesian enrichment analysis.
@@ -797,13 +797,18 @@ def run_hierarchical_analysis(
             cfg = DEFAULT_CONFIG
         except NameError:
             cfg = {
-                "filtering": {"min_frequency_scaffold": 2, "min_frequency_taxa": 2},
+                "filtering": {
+                    "min_frequency_scaffold": 2,
+                    "min_frequency_taxa": 2,
+                    "include_compounds_as_scaffolds": True,
+                },
                 "stats": {
                     "continuity_correction": 0.5,
                     "min_theta_0": 1e-6,
                     "ci_prob": 0.89,
                     "rope_half_width": 0.1,
                     "min_ess": 3,
+                    "phylo_decay_rate": 0.5,
                 },
                 "priors": {
                     "prior_strength": 1.0,
@@ -1831,7 +1836,7 @@ def apply_config():
 @app.cell
 def load_data_wd(effective_config):
     with mo.status.spinner("Fetching data from Wikidata..."):
-        compound_taxon = parse_sparql_response(
+        compound_taxon: pl.DataFrame = parse_sparql_response(
             execute_with_retry(
                 query="""
             PREFIX wdt: <http://www.wikidata.org/prop/direct/>
@@ -1871,7 +1876,7 @@ def load_data_wd(effective_config):
             .lazy()
         )
         _compound_ids = compound_taxon.select(pl.col("compound")).unique()
-        compound_smiles = compound_smiles.join(
+        compound_smiles: pl.DataFrame = compound_smiles.join(
             _compound_ids.lazy(),
             on="compound",
             how="inner",
