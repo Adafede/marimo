@@ -4,13 +4,13 @@ version = "0.1.0"
 description = "Minimal, reusable utilities for marimo applications"
 requires-python = ">=3.13"
 dependencies = [
-  "aiohttp>=3.13.4",
+  "aiohttp>=3.13.5",
   "altair>=6.0.0",
   "cmcrameri>=1.9",
   "epam-indigo>=1.40.0",
   "fsspec>=2026.3.0",
   "maplib>=0.20.0",
-  "marimo>=0.21.1",
+  "marimo>=0.22.0",
   "matchms>=0.21.1",
   "networkx>=3.6.1",
   "numpy>=2.4.4",
