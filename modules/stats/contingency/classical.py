@@ -169,12 +169,12 @@ def false_negative_rate(
 
 
 def likelihood_ratio_positive(
-    sens: np.ndarray | float = None,
-    fpr: np.ndarray | float = None,
-    a: np.ndarray | int = None,
-    b: np.ndarray | int = None,
-    c: np.ndarray | int = None,
-    d: np.ndarray | int = None,
+    sens: np.ndarray | float | None = None,
+    fpr: np.ndarray | float | None = None,
+    a: np.ndarray | int | None = None,
+    b: np.ndarray | int | None = None,
+    c: np.ndarray | int | None = None,
+    d: np.ndarray | int | None = None,
     continuity_correction: float = 0.5,
 ) -> np.ndarray | float:
     """

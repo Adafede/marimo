@@ -19,6 +19,7 @@ with app.setup:
     from collections import defaultdict
     from itertools import cycle
     from dataclasses import dataclass
+    from typing import Any
 
     @dataclass
     class MockInput:
@@ -61,10 +62,10 @@ with app.setup:
             """,
         )
         rdkit_available = False
-        parse_smarts = None
-        find_mcs = None
-        parse_smiles_list = None
-        depict_with_highlights = None
+        parse_smarts: Any = None
+        find_mcs: Any = None
+        parse_smiles_list: Any = None
+        depict_with_highlights: Any = None
 
 
 @app.cell

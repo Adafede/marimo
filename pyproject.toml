@@ -16,7 +16,7 @@ dependencies = [
   "numpy>=2.4.4",
   "polars>=1.39.3",
   "pyarrow>=23.0.1",
-  "pydantic-ai>=1.73.0",
+  "pydantic-ai>=1.74.0",
   "rdflib>=7.6.0",
   "rdkit>=2025.9.6",
   "requests>=2.33.1",
@@ -33,6 +33,9 @@ lotus_wikidata_explorer = "apps.lotus_wikidata_explorer:main"
 dev = [
   "pre-commit>=4.5.1",
 ]
+
+[tool.deptry]
+package_module_name_map = { "epam-indigo" = "indigo" }
 
 [tool.setuptools.packages.find]
 

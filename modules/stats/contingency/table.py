@@ -60,9 +60,9 @@ def diversity_weight(
 
 def contingency_table_2x2(
     a_raw: np.ndarray | int,
-    feature_total: np.ndarray | int,
-    group_total: np.ndarray | int,
-    universe_size: int,
+    feature_total: np.ndarray | int | None,
+    group_total: np.ndarray | int | None,
+    universe_size: int | None,
     a_weight: np.ndarray | float | None = None,
 ) -> dict[str, np.ndarray | int]:
     """
@@ -124,9 +124,9 @@ def contingency_table_2x2(
 def contingency_from_presence(
     feature_in_group: np.ndarray | int,
     n_sources: np.ndarray | int | None = None,
-    feature_total: np.ndarray | int = None,
-    group_total: np.ndarray | int = None,
-    universe_size: int = None,
+    feature_total: np.ndarray | int | None = None,
+    group_total: np.ndarray | int | None = None,
+    universe_size: int | None = None,
     apply_diversity_weight: bool = True,
 ) -> dict[str, np.ndarray | int]:
     """

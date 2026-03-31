@@ -967,8 +967,8 @@ with app.setup:
 
                 # Compute properties
                 molecular_formula = rdMolDescriptors.CalcMolFormula(mol)
-                exact_mass = Descriptors.ExactMolWt(mol)  # ty: ignore[unresolved-attribute]
-                xlogp = Descriptors.MolLogP(mol)  # ty: ignore[unresolved-attribute]
+                exact_mass = Descriptors.ExactMolWt(mol)
+                xlogp = Descriptors.MolLogP(mol)
 
                 # Compute InChI and InChIKey
                 try:
@@ -2054,19 +2054,6 @@ def fetch_data(run_button):
         all_inchikeys = (
             _triplets_df.select("compound_inchikey").unique().to_series().to_list()
         )
-        unique_smiles = (
-            pl.concat(
-                [
-                    smiles_iso_df.select(pl.col("compound_smiles_iso").alias("smiles")),
-                    smiles_can_df.select(pl.col("compound_smiles_can").alias("smiles")),
-                ],
-                how="vertical",
-            )
-            .unique()
-            .drop_nulls()
-            .to_series()
-            .to_list()
-        )
         unique_cids = (
             cid_df.select("compound_cid").unique().drop_nulls().to_series().to_list()
         )
@@ -2094,9 +2081,6 @@ def fetch_data(run_button):
     ]
 
     if missing_inchikeys:
-        total_ik_batches = (
-            len(missing_inchikeys) + PUBCHEM_BATCH_SIZE - 1
-        ) // PUBCHEM_BATCH_SIZE
         with mo.status.spinner(
             f"Fetching PubChem data for {len(missing_inchikeys):,} InChIKeys without CID...",
         ) as _ik_spinner:
@@ -2363,23 +2347,6 @@ def main():
             all_inchikeys = (
                 compound_taxon_reference_df.select("compound_inchikey")
                 .unique()
-                .to_series()
-                .to_list()
-            )
-            unique_smiles = (
-                pl.concat(
-                    [
-                        smiles_iso_df.select(
-                            pl.col("compound_smiles_iso").alias("smiles"),
-                        ),
-                        smiles_can_df.select(
-                            pl.col("compound_smiles_can").alias("smiles"),
-                        ),
-                    ],
-                    how="vertical",
-                )
-                .unique()
-                .drop_nulls()
                 .to_series()
                 .to_list()
             )

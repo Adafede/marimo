@@ -49,6 +49,7 @@ with app.setup:
     from abc import ABC, abstractmethod
     from dataclasses import dataclass
     from datetime import date, datetime
+    from typing import Any
 
     # Check for WASM/Pyodide environment early
     IS_PYODIDE = "pyodide" in sys.modules
@@ -58,7 +59,7 @@ with app.setup:
     from rdflib.namespace import XSD, Namespace
 
     # maplib is faster but not WASM compatible
-    MaplibModel = None
+    MaplibModel: Any = None
     if not IS_PYODIDE:
         try:
             from maplib import Model as MaplibModel
@@ -107,7 +108,7 @@ with app.setup:
 
         pyodide_http.patch_all()
 
-    CONFIG = {
+    CONFIG: dict[str, Any] = {
         "app_version": "0.1.0",
         "app_name": "LOTUS Wikidata Explorer",
         "app_url": "https://github.com/Adafede/marimo/blob/main/apps/lotus_wikidata_explorer.py",
@@ -155,16 +156,15 @@ with app.setup:
 
         def to_filters_dict(self) -> dict:
             """Convert to filters dictionary."""
-            filters = {}
+            filters: dict[str, Any] = {}
             if self.smiles:
-                filters["chemical_structure"] = {
+                chem_struct: dict[str, Any] = {
                     "smiles": self.smiles,
                     "search_type": self.smiles_search_type,
                 }
                 if self.smiles_search_type == "similarity":
-                    filters["chemical_structure"]["similarity_threshold"] = (
-                        self.smiles_threshold
-                    )
+                    chem_struct["similarity_threshold"] = self.smiles_threshold
+                filters["chemical_structure"] = chem_struct
             if self.has_mass_filter():
                 filters["mass"] = {"min": self.mass_range[0], "max": self.mass_range[1]}
             if self.has_year_filter():
@@ -189,7 +189,7 @@ with app.setup:
 
         @classmethod
         def from_lazyframe(cls, df: pl.LazyFrame) -> "DatasetStats":
-            stats = df.select(
+            stats: pl.DataFrame = df.select(
                 [
                     pl.col("compound")
                     .approx_n_unique()
@@ -319,7 +319,7 @@ with app.setup:
                 int,
                 tuple,
             ] = {}  # compound_id -> (name, inchikey, smiles, mass, mf)
-            taxon_meta: dict[int, str] = {}  # taxon_id -> taxon_name
+            taxon_meta: dict[int, str | None] = {}  # taxon_id -> taxon_name
             ref_meta: dict[int, tuple] = {}  # ref_id -> (ref_title, ref_doi, pub_date)
 
             # Lists for fact table - use array for integers (more compact)
@@ -373,11 +373,8 @@ with app.setup:
                         or None
                     )
                     try:
-                        mass = (
-                            float(row.get("compound_mass"))
-                            if row.get("compound_mass")
-                            else None
-                        )
+                        _mass_val = row.get("compound_mass")
+                        mass = float(_mass_val) if _mass_val else None
                     except (ValueError, TypeError):
                         mass = None
                     # Intern strings to save memory on repeated values
@@ -618,7 +615,7 @@ with app.setup:
                     effective_qid = qid
 
                 return query_sachem(
-                    escaped_smiles=validate_and_escape(smiles),
+                    escaped_smiles=validate_and_escape(smiles) or "",
                     search_type=effective_search_type,
                     threshold=threshold,
                     taxon_qid=effective_qid,
@@ -858,7 +855,7 @@ with app.setup:
                 if not csv_bytes or not csv_bytes.strip():
                     return None, None
 
-                df = parse_sparql_response(csv_bytes).collect()
+                df: pl.DataFrame = parse_sparql_response(csv_bytes).collect()
                 matches = [
                     (
                         extract_from_url(row["taxon"], WIKIDATA_ENTITY_PREFIX),
@@ -929,13 +926,13 @@ with app.setup:
 
         def _resolve_ambiguous(
             self,
-            matches: list[tuple[str, str]],
+            matches: list[tuple[str | None, str]],
             is_exact: bool,
             original_input: str = "",
             sanitized_input: str = "",
         ) -> tuple[str, mo.Html]:
             """Resolve ambiguous taxon matches."""
-            qids = tuple(qid for qid, _ in matches)
+            qids = tuple(qid for qid, _ in matches if qid is not None)
             info = {qid: [0, "", "", ""] for qid in qids}
 
             csv_bytes = execute_with_retry(
@@ -950,7 +947,8 @@ with app.setup:
                     taxon_url = row.get("taxon")
                     if taxon_url:
                         qid = extract_from_url(taxon_url, WIKIDATA_ENTITY_PREFIX)
-                        info[qid][0] = int(row.get("count") or 0)
+                        if qid is not None:
+                            info[qid][0] = int(row.get("count") or 0)
 
             csv_bytes = execute_with_retry(
                 query_taxon_details(values_clause("taxon", qids, prefix="wd:")),
@@ -964,8 +962,9 @@ with app.setup:
                     taxon_url = row.get("taxon")
                     if taxon_url:
                         qid = extract_from_url(taxon_url, WIKIDATA_ENTITY_PREFIX)
-                        info[qid][1] = row.get("taxonDescription", "")
-                        info[qid][2] = row.get("taxon_parentLabel", "")
+                        if qid is not None:
+                            info[qid][1] = row.get("taxonDescription", "")
+                            info[qid][2] = row.get("taxon_parentLabel", "")
 
             selected_qid = max(qids, key=lambda q: info[q][0])
 
@@ -973,6 +972,7 @@ with app.setup:
             matches_with_details = [
                 (qid, name, info[qid][1], info[qid][2], info[qid][0])
                 for qid, name in matches_sorted
+                if qid is not None
             ]
 
             return selected_qid, self._create_taxon_warning_html(
@@ -1062,7 +1062,7 @@ with app.setup:
         def _to_bytes(self, df: pl.LazyFrame) -> bytes:
             if self.memory.is_wasm:
                 # WASM: collect and write to buffer (no file system)
-                df_collected = df.collect()
+                df_collected: pl.DataFrame = df.collect()
                 buffer = io.BytesIO()
                 df_collected.write_csv(buffer)
                 result = buffer.getvalue()
@@ -1089,7 +1089,7 @@ with app.setup:
         def _to_bytes(self, df: pl.LazyFrame) -> bytes:
             if self.memory.is_wasm:
                 # WASM: collect and write NDJSON to buffer
-                df_collected = df.collect()
+                df_collected: pl.DataFrame = df.collect()
                 buffer = io.BytesIO()
                 df_collected.write_ndjson(buffer)
                 result = buffer.getvalue()
@@ -1137,7 +1137,7 @@ with app.setup:
 
         def _to_bytes_maplib(self, df: pl.LazyFrame) -> bytes:
             """Fast export using maplib (native only)."""
-            df_collected = df.collect()
+            df_collected: pl.DataFrame = df.collect()
 
             dataset_uri, query_hash, result_hash = self._create_dataset_uri(
                 df_collected,
@@ -1178,7 +1178,7 @@ with app.setup:
 
         def _to_bytes_rdflib(self, df: pl.LazyFrame) -> bytes:
             """WASM-compatible export using rdflib."""
-            df_collected = df.collect()
+            df_collected: pl.DataFrame = df.collect()
 
             dataset_uri, query_hash, result_hash = self._create_dataset_uri(
                 df_collected,
@@ -1822,7 +1822,7 @@ with app.setup:
 
             result_hasher = hashlib.sha256()
             try:
-                unique_compounds = (
+                unique_compounds: pl.DataFrame = (
                     df.select(pl.col("compound"))
                     .drop_nulls()
                     .unique()
@@ -1871,7 +1871,7 @@ with app.setup:
                 description = f"Chemical compounds from {taxon_description}"
                 description += ". Retrieved via LOTUS Wikidata Explorer."
 
-            metadata = {
+            metadata: dict[str, Any] = {
                 "@context": "https://schema.org/",
                 "@type": "Dataset",
                 "name": dataset_name,
@@ -1958,29 +1958,26 @@ with app.setup:
                 structure_is_multiline = (
                     "\n" in structure_value or "\r" in structure_value
                 )
-                metadata["search_parameters"]["structure_query"] = {
+                structure_query: dict[str, Any] = {
                     "param_key": "structure",
                     "legacy_param_key": "smiles",
                     "search_type": smiles_info.get("search_type", "substructure"),
                     "input_format": "molfile" if structure_is_multiline else "smiles",
                 }
                 if "similarity_threshold" in smiles_info:
-                    metadata["search_parameters"]["structure_query"][
+                    structure_query["similarity_threshold"] = smiles_info[
                         "similarity_threshold"
-                    ] = smiles_info["similarity_threshold"]
+                    ]
                 if structure_is_multiline:
-                    metadata["search_parameters"]["structure_query"][
-                        "query_preview"
-                    ] = structure_value[:120]
-                    metadata["search_parameters"]["structure_query"]["query_length"] = (
-                        len(structure_value)
-                    )
+                    structure_query["query_preview"] = structure_value
+                    structure_query["query_length"] = len(structure_value)
                 else:
-                    metadata["search_parameters"]["structure_query"]["query_text"] = (
-                        structure_value
-                    )
+                    structure_query["query_text"] = structure_value
+                search_params: dict[str, Any] = metadata["search_parameters"]
+                search_params["structure_query"] = structure_query
             if filters:
-                metadata["search_parameters"]["filters"] = filters
+                search_params_f: dict[str, Any] = metadata["search_parameters"]
+                search_params_f["filters"] = filters
             metadata["sparql_endpoint"] = {
                 "url": self.config["qlever_endpoint"],
                 "name": "QLever Wikidata",
@@ -2092,7 +2089,11 @@ with app.setup:
     # UTILITIES
     # ========================================================================
 
-    def generate_filename(taxon_name: str, file_type: str, filters: dict = None) -> str:
+    def generate_filename(
+        taxon_name: str,
+        file_type: str,
+        filters: dict | None = None,
+    ) -> str:
         """Generate safe filename handling None/empty taxon."""
         # Normalize taxon for filename
         if not taxon_name or taxon_name.strip() == "":
@@ -2152,11 +2153,11 @@ def ui_help():
 def url_api_defaults():
     query_params = mo.query_params()
 
-    def _to_float(value: str | None, default: float) -> float:
+    def _to_float(value: str | list[str] | None, default: float) -> float:
         if value is None or value == "":
             return default
         try:
-            return float(value)
+            return float(value if isinstance(value, str) else value[0])
         except (TypeError, ValueError):
             return default
 
@@ -2461,7 +2462,7 @@ def execute_search(
 
         with mo.status.spinner("Searching..."):
             try:
-                results, stats = lotus.search(criteria, qid)
+                results, stats = lotus.search(criteria, qid or "")
             except ValueError as exc:
                 mo.stop(True, mo.callout(mo.md(str(exc)), kind="warn"))
             except ConnectionError as exc:
@@ -2478,7 +2479,7 @@ def execute_search(
                 )
 
         query_hash, result_hash = lotus.compute_hashes(
-            qid,
+            qid or "",
             criteria.taxon,
             criteria.to_filters_dict(),
             results,
@@ -2522,7 +2523,7 @@ def display_results(
         def wrap_image2(smiles: str) -> mo.Html:
             return mo.image(svg_from_smiles(smiles)) if smiles else mo.image("")
 
-        def wrap_qid(qid_val: str | int, color: str) -> mo.Html:
+        def wrap_qid(qid_val: str | int, color: str | int) -> mo.Html:
             if not qid_val:
                 return mo.Html("")
             if qid_val == "*":
@@ -2889,17 +2890,17 @@ def main():
                 formula_filt = create_filters(
                     exact_formula=args.formula or "",
                     c_min=args.c_min or 0,
-                    c_max=args.c_max or ELEMENT_DEFAULTS["c"],
+                    c_max=args.c_max or None,
                     h_min=args.h_min or 0,
-                    h_max=args.h_max or ELEMENT_DEFAULTS["h"],
+                    h_max=args.h_max or None,
                     n_min=args.n_min or 0,
-                    n_max=args.n_max or ELEMENT_DEFAULTS["n"],
+                    n_max=args.n_max or None,
                     o_min=args.o_min or 0,
-                    o_max=args.o_max or ELEMENT_DEFAULTS["o"],
+                    o_max=args.o_max or None,
                     p_min=args.p_min or 0,
-                    p_max=args.p_max or ELEMENT_DEFAULTS["p"],
+                    p_max=args.p_max or None,
                     s_min=args.s_min or 0,
-                    s_max=args.s_max or ELEMENT_DEFAULTS["s"],
+                    s_max=args.s_max or None,
                     f_state="allowed",
                     cl_state="allowed",
                     br_state="allowed",
