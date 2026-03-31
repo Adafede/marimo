@@ -348,6 +348,39 @@ with app.setup:
         "7534071"  # frozen.csv - https://zenodo.org/records/7534071
     )
 
+    CRITICAL_STRUCTURE_COLS = [
+        "structure_inchi",
+        "structure_smiles",
+        "structure_molecular_formula",
+        "structure_exact_mass",
+        "structure_smiles_2D",
+        "structure_stereocenters_total",
+        "structure_stereocenters_unspecified",
+        # Not really a structure, but easier
+        "organism_name",
+    ]
+
+    def drop_missing_structure_rows(
+        df: pl.DataFrame,
+        verbose: bool = False,
+    ) -> pl.DataFrame:
+        """
+        Drop rows where any critical structure field is null.
+        These rows have no usable chemical data and should not be published.
+        """
+        before = len(df)
+        mask = pl.all_horizontal(
+            [pl.col(c).is_not_null() for c in CRITICAL_STRUCTURE_COLS],
+        )
+        df = df.filter(mask)
+        dropped = before - len(df)
+        if dropped > 0:
+            print(
+                f"  Dropped {dropped:,} rows with missing critical structure fields",
+                file=sys.stderr,
+            )
+        return df
+
     def fetch_latest_zenodo_frozen() -> pl.DataFrame:
         """
         Fetch the latest frozen.csv from Zenodo to inherit manual_validation.
@@ -1273,13 +1306,17 @@ with app.setup:
         return formula.translate(SUBSCRIPT_TO_NORMAL)
 
     def normalize_blank_strings(df: pl.DataFrame) -> pl.DataFrame:
-        """Trim UTF-8 values and convert empty/whitespace-only cells to null."""
+        """Trim UTF-8 values and convert empty/whitespace-only cells and 'notClassified' to null."""
         utf8_cols = [name for name, dtype in df.schema.items() if dtype == pl.Utf8]
         if not utf8_cols:
             return df
+
         return df.with_columns(
             [
-                pl.col(col).str.strip_chars().replace("", None).alias(col)
+                pl.col(col)
+                .str.strip_chars()
+                .replace(["", "notClassified"], [None, None])
+                .alias(col)
                 for col in utf8_cols
             ],
         )
@@ -1354,9 +1391,9 @@ with app.setup:
         result = result.select(
             [
                 pl.col("compound_inchikey").alias("structure_inchikey"),
-                pl.col("taxon_name").fill_null("NA").alias("organism_name"),
-                pl.col("doi").fill_null("NA").alias("reference_doi"),
-                pl.lit("NA").alias("manual_validation"),
+                pl.col("taxon_name").alias("organism_name"),
+                pl.col("doi").alias("reference_doi"),
+                pl.lit(None).alias("manual_validation"),
                 pl.concat_str([pl.lit(WIKIDATA_ENTITY_PREFIX), pl.col("taxon")]).alias(
                     "organism_wikidata",
                 ),
@@ -1466,7 +1503,10 @@ with app.setup:
 
         # Join NPClassifier data via SMILES (isomeric first, then canonical)
         if len(npclassifier_df) > 0:
-            npc_renamed = npclassifier_df.select(
+            npc_renamed = npclassifier_df.filter(
+                (pl.col("error").is_null() | (pl.col("error") == ""))
+                & pl.col("pathway").is_not_null(),
+            ).select(
                 [
                     pl.col("smiles"),
                     pl.col("pathway").alias("npc_pathway"),
@@ -1474,12 +1514,82 @@ with app.setup:
                     pl.col("class").alias("npc_class"),
                 ],
             )
-            # Try isomeric SMILES first
+
+            # Pass 1: join on isomeric SMILES
             result = result.join(
                 npc_renamed,
                 left_on="compound_smiles_iso",
                 right_on="smiles",
                 how="left",
+            )
+
+            # Pass 2: for rows that still have no NPC data, try canonical SMILES
+            still_missing_npc = (
+                pl.col("npc_pathway").is_null()
+                & pl.col("compound_smiles_can").is_not_null()
+            )
+            result = (
+                result.join(
+                    npc_renamed.rename(
+                        {
+                            "smiles": "_npc2_smiles",
+                            "npc_pathway": "_npc2_pathway",
+                            "npc_superclass": "_npc2_superclass",
+                            "npc_class": "_npc2_class",
+                        },
+                    ),
+                    left_on="compound_smiles_can",
+                    right_on="_npc2_smiles",
+                    how="left",
+                )
+                .with_columns(
+                    [
+                        pl.coalesce("npc_pathway", "_npc2_pathway").alias(
+                            "npc_pathway",
+                        ),
+                        pl.coalesce("npc_superclass", "_npc2_superclass").alias(
+                            "npc_superclass",
+                        ),
+                        pl.coalesce("npc_class", "_npc2_class").alias("npc_class"),
+                    ],
+                )
+                .drop(
+                    ["_npc2_pathway", "_npc2_superclass", "_npc2_class"],
+                    strict=False,
+                )
+            )
+
+            # Pass 3: for rows that still have no NPC data, try the _rdkit_join_smiles
+            # (coalesced iso/can used as the RDKit join key — catches SMILES normalisation differences)
+            result = (
+                result.join(
+                    npc_renamed.rename(
+                        {
+                            "smiles": "_npc3_smiles",
+                            "npc_pathway": "_npc3_pathway",
+                            "npc_superclass": "_npc3_superclass",
+                            "npc_class": "_npc3_class",
+                        },
+                    ),
+                    left_on="_rdkit_join_smiles",
+                    right_on="_npc3_smiles",
+                    how="left",
+                )
+                .with_columns(
+                    [
+                        pl.coalesce("npc_pathway", "_npc3_pathway").alias(
+                            "npc_pathway",
+                        ),
+                        pl.coalesce("npc_superclass", "_npc3_superclass").alias(
+                            "npc_superclass",
+                        ),
+                        pl.coalesce("npc_class", "_npc3_class").alias("npc_class"),
+                    ],
+                )
+                .drop(
+                    ["_npc3_pathway", "_npc3_superclass", "_npc3_class"],
+                    strict=False,
+                )
             )
         else:
             result = result.with_columns(
@@ -2521,6 +2631,10 @@ def main():
                 ott_df,
                 pubchem_df,
                 rdkit_df,
+            )
+            frozen_metadata_df = drop_missing_structure_rows(
+                frozen_metadata_df,
+                verbose=args.verbose,
             )
             if len(old_frozen_df) > 0:
                 frozen_metadata_df = inherit_manual_validation(
