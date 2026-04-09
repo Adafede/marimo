@@ -3,7 +3,7 @@
 # dependencies = [
 #     "marimo",
 #     "polars==1.39.3",
-#     "rdkit",
+#     "rdkit==2026.3.1",
 # ]
 # [tool.marimo.runtime]
 # output_max_bytes = 1_073_741_824
@@ -47,7 +47,7 @@ Usage:
 
 import marimo
 
-__generated_with = "0.21.1"
+__generated_with = "0.23.0"
 app = marimo.App(width="full", app_title="LOTUS Data Exporter")
 
 with app.setup:

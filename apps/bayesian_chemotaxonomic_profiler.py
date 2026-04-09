@@ -1,14 +1,14 @@
 # /// script
 # requires-python = "==3.13.*"
 # dependencies = [
-#     "aiohttp==3.13.3",
+#     "aiohttp==3.13.5",
 #     "altair==6.0.0",
 #     "cmcrameri==1.9",
 #     "marimo",
-#     "numpy==2.4.3",
+#     "numpy==2.4.4",
 #     "polars==1.39.3",
 #     "pyarrow==23.0.1",
-#     "requests==2.32.5",
+#     "requests==2.33.1",
 #     "scipy==1.17.1",
 #     "simple-parsing==0.1.8",
 #     # "vegafusion==2.0.3",
@@ -114,7 +114,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import marimo
 
-__generated_with = "0.21.1"
+__generated_with = "0.23.0"
 app = marimo.App(width="medium", app_title="Bayesian Chemotaxonomic Markers")
 
 with app.setup:
@@ -2090,7 +2090,7 @@ def build_lineages(compound_scaffold, lineage):
 @app.cell
 def lineage_diagnostics(
     compound_lineage,
-    compound_taxon,
+    compound_taxon: pl.DataFrame,
     taxon_lineage,
     taxon_rank,
 ):
@@ -2315,7 +2315,7 @@ def scaffold_trace_diagnostic(markers):
 @app.cell
 def run_analysis(
     compound_lineage,
-    compound_taxon,
+    compound_taxon: pl.DataFrame,
     effective_config,
     taxon_lineage,
     taxon_name,
@@ -2865,7 +2865,7 @@ def markers_gen(markers):
 @app.cell
 def methods_summary(
     compound_scaffold,
-    compound_taxon,
+    compound_taxon: pl.DataFrame,
     effective_config,
     markers,
 ):

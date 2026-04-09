@@ -4,7 +4,7 @@
 #     "great-tables==0.21.0",
 #     "marimo",
 #     "polars==1.39.3",
-#     "rdflib==7.1.0",
+#     "rdflib==7.6.0",
 # ]
 # [tool.marimo.runtime]
 # output_max_bytes = 300_000_000
@@ -31,7 +31,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import marimo
 
-__generated_with = "0.21.1"
+__generated_with = "0.23.0"
 app = marimo.App(width="full", app_title="LOTUS Wikidata Explorer")
 
 with app.setup:

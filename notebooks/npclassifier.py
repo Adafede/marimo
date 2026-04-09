@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12"
 # dependencies = [
-#     "marimo>=0.16.5",
+#     "marimo",
 #     "simple-parsing==0.1.8",
 #     "polars==1.39.3",
 #     "altair==6.0.0",
@@ -10,7 +10,7 @@
 
 import marimo
 
-__generated_with = "0.18.1"
+__generated_with = "0.23.0"
 app = marimo.App(width="full")
 
 with app.setup:
@@ -244,9 +244,6 @@ def classify_batch(
     return cache
 
 
-# ── Notebook UI ───────────────────────────────────────────────────────────────
-
-
 @app.cell
 def _show_header():
     mo.md(f"""
@@ -280,7 +277,7 @@ def _controls():
 
 
 @app.cell
-def _load_smiles(file_input, parse_smiles_file):
+def _load_smiles(file_input):
     import csv
     import re
 
@@ -385,7 +382,6 @@ def _load_smiles(file_input, parse_smiles_file):
 
         if not smiles_list:
             smiles_list = parse_smiles_file(_raw)
-
     return parse_details, smiles_list
 
 
@@ -507,12 +503,10 @@ def _download(results_df, run_btn, smiles_list):
         data=results_df.write_csv().encode(),
         filename="npclassifier_results.csv",
         mimetype="text/csv",
-        label="⬇️ Download results CSV",
+        label="Download results CSV",
     )
     return
 
-
-# ── CLI entry point ───────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     if not settings.smiles_file:
