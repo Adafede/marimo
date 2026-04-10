@@ -919,11 +919,35 @@ with app.setup:
         @staticmethod
         def _is_server_error(exc: ConnectionError) -> bool:
             """Return True for HTTP 5xx errors surfaced by execute_with_retry."""
-            match = re.search(r"HTTP status (\d{3})", str(exc))
-            if not match:
+            status = TaxonResolutionService._extract_http_status(exc)
+            if status is None:
                 return False
-            status = int(match.group(1))
             return 500 <= status <= 599
+
+        @staticmethod
+        def _extract_http_status(exc: Exception) -> int | None:
+            for source in (exc, getattr(exc, "__cause__", None)):
+                if source is None:
+                    continue
+                for attr in ("code", "status"):
+                    value = getattr(source, attr, None)
+                    if isinstance(value, int) and 100 <= value <= 599:
+                        return value
+
+            text = str(exc)
+            cause = getattr(exc, "__cause__", None)
+            if cause is not None:
+                text = f"{text} {cause}"
+
+            for pattern in (
+                r"HTTP\s+status\s*(\d{3})",
+                r"HTTP\s+Error\s*(\d{3})",
+                r"status[=: ]+\s*(\d{3})",
+            ):
+                match = re.search(pattern, text, re.IGNORECASE)
+                if match:
+                    return int(match.group(1))
+            return None
 
         def _create_sanitization_notice(
             self,
@@ -2418,11 +2442,24 @@ def execute_search(
     year_start,
 ):
     def _backend_error_callout(
-        context: str, exc: Exception, molfile_hint: bool = False
+        context: str,
+        exc: Exception,
+        molfile_hint: bool = False,
     ):
         error_text = str(exc).strip()
-        status_match = re.search(r"HTTP status (\d{3})", error_text)
-        status_text = f" (HTTP {status_match.group(1)})" if status_match else ""
+
+        status = None
+        for pattern in (
+            r"HTTP\s+status\s*(\d{3})",
+            r"HTTP\s+Error\s*(\d{3})",
+            r"status[=: ]+\s*(\d{3})",
+        ):
+            status_match = re.search(pattern, error_text, re.IGNORECASE)
+            if status_match:
+                status = status_match.group(1)
+                break
+
+        status_text = f" (HTTP {status})" if status else ""
 
         message_parts = [
             f"**{context} {status_text}.**",
