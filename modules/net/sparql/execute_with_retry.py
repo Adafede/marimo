@@ -3,6 +3,7 @@
 __all__ = ["execute_with_retry"]
 
 import time
+import re
 from .client import Client
 
 
@@ -24,6 +25,21 @@ def execute_with_retry(
 
     last_error = None
     last_http_details = None
+
+    def _extract_status(exc: Exception) -> int | None:
+        for attr in ("code", "status"):
+            value = getattr(exc, attr, None)
+            if isinstance(value, int) and 100 <= value <= 599:
+                return value
+
+        match = re.search(
+            r"(?:HTTP\s+status|HTTP\s+Error|status[=: ]+)\s*(\d{3})",
+            str(exc),
+            re.IGNORECASE,
+        )
+        if match:
+            return int(match.group(1))
+        return None
 
     # Create clients once, reuse
     main_client = Client(endpoint=endpoint, timeout=timeout)
@@ -49,7 +65,7 @@ def execute_with_retry(
         except Exception as e:
             last_error = e
 
-            status = getattr(e, "code", None)
+            status = _extract_status(e)
             if status is not None:
                 body_preview = ""
                 if hasattr(e, "read"):
@@ -72,7 +88,12 @@ def execute_with_retry(
         raise TimeoutError(
             f"Query timed out after {max_retries} attempts.",
         ) from last_error
-    elif "http" in error_name.lower() or "urlerror" in error_name.lower():
+    elif (
+        "http" in error_name.lower()
+        or "urlerror" in error_name.lower()
+        or "http" in error_msg.lower()
+        or _extract_status(last_error) is not None
+    ):
         if last_http_details is not None:
             status, body_preview = last_http_details
             detail = f"HTTP status {status}"
