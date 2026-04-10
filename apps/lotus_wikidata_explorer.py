@@ -43,6 +43,7 @@ with app.setup:
     import json
     import time
     import hashlib
+    import re
     import sys
     import urllib.parse
     import gc
@@ -908,8 +909,21 @@ with app.setup:
                     return matches[0][0], notice_html
                 return matches[0][0], None
 
+            except ConnectionError as exc:
+                if self._is_server_error(exc):
+                    raise
+                return None, None
             except Exception:
                 return None, None
+
+        @staticmethod
+        def _is_server_error(exc: ConnectionError) -> bool:
+            """Return True for HTTP 5xx errors surfaced by execute_with_retry."""
+            match = re.search(r"HTTP status (\d{3})", str(exc))
+            if not match:
+                return False
+            status = int(match.group(1))
+            return 500 <= status <= 599
 
         def _create_sanitization_notice(
             self,
@@ -2403,6 +2417,27 @@ def execute_search(
     year_filter,
     year_start,
 ):
+    def _backend_error_callout(
+        context: str, exc: Exception, molfile_hint: bool = False
+    ):
+        error_text = str(exc).strip()
+        status_match = re.search(r"HTTP status (\d{3})", error_text)
+        status_text = f" (HTTP {status_match.group(1)})" if status_match else ""
+
+        message_parts = [
+            f"**{context} {status_text}.**",
+            "QLever returned a server error. Please retry in a moment.",
+        ]
+        if molfile_hint:
+            message_parts.append(
+                "If this is a Molfile query, rerunning once may help for transient upstream failures.",
+            )
+        message_parts.append(
+            f"Raw upstream error:\n\n```text\n{error_text[:1200]}\n```",
+        )
+
+        return mo.callout(mo.md("\n\n".join(message_parts)), kind="warn")
+
     if not run_button.value:
         lotus, results, stats, qid, criteria, query_hash, result_hash, taxon_warning = (
             None,
@@ -2418,11 +2453,13 @@ def execute_search(
         start_time = time.time()
         lotus = LOTUSExplorer(CONFIG, IS_PYODIDE)
 
-        qid, taxon_warning = lotus.resolve_taxon(taxon_input.value)
         if not taxon_input.value.strip() and not smiles_input.value.strip():
             mo.stop(True, "Need taxon or structure")
         else:
-            qid, taxon_warning = lotus.resolve_taxon(taxon_input.value)
+            try:
+                qid, taxon_warning = lotus.resolve_taxon(taxon_input.value)
+            except ConnectionError as exc:
+                mo.stop(True, _backend_error_callout("Error", exc))
 
         formula_filt = None
         if formula_filter.value:
@@ -2468,14 +2505,7 @@ def execute_search(
             except ConnectionError as exc:
                 mo.stop(
                     True,
-                    mo.callout(
-                        mo.md(
-                            f"Search backend error: `{str(exc)}`\n\n"
-                            "If this is a Molfile query, try rerunning once; "
-                            "the full upstream error message is shown above.",
-                        ),
-                        kind="warn",
-                    ),
+                    _backend_error_callout("Search", exc, molfile_hint=True),
                 )
 
         query_hash, result_hash = lotus.compute_hashes(
