@@ -909,10 +909,11 @@ with app.setup:
                     return matches[0][0], notice_html
                 return matches[0][0], None
 
-            except ConnectionError as exc:
-                if self._is_server_error(exc):
-                    raise
-                return None, None
+            except (ConnectionError, RuntimeError, TimeoutError):
+                # Always propagate HTTP/network/timeout errors so the caller
+                # can surface them to the user, regardless of how Pyodide
+                # wraps the underlying JS fetch error.
+                raise
             except Exception:
                 return None, None
 
@@ -2495,7 +2496,7 @@ def execute_search(
         else:
             try:
                 qid, taxon_warning = lotus.resolve_taxon(taxon_input.value)
-            except ConnectionError as exc:
+            except (ConnectionError, RuntimeError, TimeoutError) as exc:
                 mo.stop(True, _backend_error_callout("Error", exc))
 
         formula_filt = None
@@ -2539,7 +2540,7 @@ def execute_search(
                 results, stats = lotus.search(criteria, qid or "")
             except ValueError as exc:
                 mo.stop(True, mo.callout(mo.md(str(exc)), kind="warn"))
-            except ConnectionError as exc:
+            except (ConnectionError, RuntimeError, TimeoutError) as exc:
                 mo.stop(
                     True,
                     _backend_error_callout("Search", exc, molfile_hint=True),
