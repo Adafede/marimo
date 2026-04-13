@@ -62,7 +62,9 @@ def execute_with_retry(
             marker in sample_lower for marker in gateway_markers
         ):
             status_match = re.search(r"\b(50[0-9])\b", sample)
-            status_hint = f"HTTP status {status_match.group(1)}; " if status_match else ""
+            status_hint = (
+                f"HTTP status {status_match.group(1)}; " if status_match else ""
+            )
             cleaned = " ".join(sample.split())
             return f"{status_hint}response: {cleaned[:500]}"
 
