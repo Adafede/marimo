@@ -1,0 +1,5 @@
+*.zip filter=lfs diff=lfs merge=lfs -text
+*.rds filter=lfs diff=lfs merge=lfs -text
+apps/public/classyfire/classyfire_cache.csv filter=lfs diff=lfs merge=lfs -text
+apps/public/npclassifier/npclassifier_cache.csv filter=lfs diff=lfs merge=lfs -text
+apps/public/npclassifier/npclassifier_cache.json filter=lfs diff=lfs merge=lfs -text
