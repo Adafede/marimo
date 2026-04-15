@@ -14,23 +14,23 @@ def sensitivity(
 ) -> np.ndarray | float:
     """Compute sensitivity (recall, true positive rate).
 
-    sensitivity = a / (a + c)
+            sensitivity = a / (a + c)
 
-    Interpretation: Of all items in the group, what fraction have the feature?
+            Interpretation: Of all items in the group, what fraction have the feature?
 
-Parameters
-----------
-a : np.ndarray | int
-    A.
-c : np.ndarray | int
-    C.
-continuity_correction : float
-    Default is 0.5.
+    Parameters
+    ----------
+    a : np.ndarray | int
+        A.
+    c : np.ndarray | int
+        C.
+    continuity_correction : float
+        Default is 0.5.
 
-Returns
--------
-np.ndarray | float
-    Computed result.
+    Returns
+    -------
+    np.ndarray | float
+        Sensitivity values clipped to the interval ``[0, 1]``.
     """
     numerator = np.asarray(a, dtype=np.float32)
     denominator = (
@@ -48,23 +48,23 @@ def specificity(
 ) -> np.ndarray | float:
     """Compute specificity (true negative rate).
 
-    specificity = d / (b + d)
+            specificity = d / (b + d)
 
-    Interpretation: Of all items outside the group, what fraction lack the feature?
+            Interpretation: Of all items outside the group, what fraction lack the feature?
 
-Parameters
-----------
-b : np.ndarray | int
-    B.
-d : np.ndarray | int
-    D.
-continuity_correction : float
-    Default is 0.5.
+    Parameters
+    ----------
+    b : np.ndarray | int
+        B.
+    d : np.ndarray | int
+        D.
+    continuity_correction : float
+        Default is 0.5.
 
-Returns
--------
-np.ndarray | float
-    Computed result.
+    Returns
+    -------
+    np.ndarray | float
+        Specificity values clipped to the interval ``[0, 1]``.
     """
     numerator = np.asarray(d, dtype=np.float32)
     denominator = (
@@ -82,23 +82,23 @@ def precision(
 ) -> np.ndarray | float:
     """Compute precision (positive predictive value).
 
-    precision = a / (a + b)
+            precision = a / (a + b)
 
-    Interpretation: Of all items with the feature, what fraction are in the group?
+            Interpretation: Of all items with the feature, what fraction are in the group?
 
-Parameters
-----------
-a : np.ndarray | int
-    A.
-b : np.ndarray | int
-    B.
-continuity_correction : float
-    Default is 0.5.
+    Parameters
+    ----------
+    a : np.ndarray | int
+        A.
+    b : np.ndarray | int
+        B.
+    continuity_correction : float
+        Default is 0.5.
 
-Returns
--------
-np.ndarray | float
-    Computed result.
+    Returns
+    -------
+    np.ndarray | float
+        Precision values clipped to the interval ``[0, 1]``.
     """
     numerator = np.asarray(a, dtype=np.float32)
     denominator = (
@@ -116,23 +116,23 @@ def false_positive_rate(
 ) -> np.ndarray | float:
     """Compute false positive rate (FPR = 1 - specificity).
 
-    FPR = b / (b + d)
+            FPR = b / (b + d)
 
-    Interpretation: Of all items outside the group, what fraction have the feature?
+            Interpretation: Of all items outside the group, what fraction have the feature?
 
-Parameters
-----------
-b : np.ndarray | int
-    B.
-d : np.ndarray | int
-    D.
-continuity_correction : float
-    Default is 0.5.
+    Parameters
+    ----------
+    b : np.ndarray | int
+        B.
+    d : np.ndarray | int
+        D.
+    continuity_correction : float
+        Default is 0.5.
 
-Returns
--------
-np.ndarray | float
-    Computed result.
+    Returns
+    -------
+    np.ndarray | float
+        False-positive-rate values clipped to the interval ``[0, 1]``.
     """
     numerator = np.asarray(b, dtype=np.float32)
     denominator = (
@@ -150,23 +150,23 @@ def false_negative_rate(
 ) -> np.ndarray | float:
     """Compute false negative rate (FNR = 1 - sensitivity).
 
-    FNR = c / (a + c)
+            FNR = c / (a + c)
 
-    Interpretation: Of all items in the group, what fraction lack the feature?
+            Interpretation: Of all items in the group, what fraction lack the feature?
 
-Parameters
-----------
-a : np.ndarray | int
-    A.
-c : np.ndarray | int
-    C.
-continuity_correction : float
-    Default is 0.5.
+    Parameters
+    ----------
+    a : np.ndarray | int
+        A.
+    c : np.ndarray | int
+        C.
+    continuity_correction : float
+        Default is 0.5.
 
-Returns
--------
-np.ndarray | float
-    Computed result.
+    Returns
+    -------
+    np.ndarray | float
+        False-negative-rate values clipped to the interval ``[0, 1]``.
     """
     numerator = np.asarray(c, dtype=np.float32)
     denominator = (
@@ -188,35 +188,35 @@ def likelihood_ratio_positive(
 ) -> np.ndarray | float:
     """Compute positive likelihood ratio.
 
-    LR+ = sensitivity / FPR
+            LR+ = sensitivity / FPR
 
-    Interpretation: How much more likely is the feature in the group vs outside?
+            Interpretation: How much more likely is the feature in the group vs outside?
 
-    Can be computed from either:
-    - Pre-computed sensitivity and FPR, OR
-    - Contingency table cells a, b, c, d
+            Can be computed from either:
+            - Pre-computed sensitivity and FPR, OR
+            - Contingency table cells a, b, c, d
 
-Parameters
-----------
-sens : np.ndarray | float | None
-    None. Default is None.
-fpr : np.ndarray | float | None
-    None. Default is None.
-a : np.ndarray | int | None
-    None. Default is None.
-b : np.ndarray | int | None
-    None. Default is None.
-c : np.ndarray | int | None
-    None. Default is None.
-d : np.ndarray | int | None
-    None. Default is None.
-continuity_correction : float
-    Default is 0.5.
+    Parameters
+    ----------
+    sens : np.ndarray | float | None
+        None. Default is None.
+    fpr : np.ndarray | float | None
+        None. Default is None.
+    a : np.ndarray | int | None
+        None. Default is None.
+    b : np.ndarray | int | None
+        None. Default is None.
+    c : np.ndarray | int | None
+        None. Default is None.
+    d : np.ndarray | int | None
+        None. Default is None.
+    continuity_correction : float
+        Default is 0.5.
 
-Returns
--------
-np.ndarray | float
-    Computed result.
+    Returns
+    -------
+    np.ndarray | float
+        Positive likelihood ratio (LR+) values.
     """
     if sens is not None and fpr is not None:
         s = np.asarray(sens)
@@ -241,31 +241,31 @@ def likelihood_ratio_negative(
 ) -> np.ndarray | float:
     """Compute negative likelihood ratio.
 
-    LR- = (1 - sensitivity) / specificity = FNR / specificity
+            LR- = (1 - sensitivity) / specificity = FNR / specificity
 
-    Interpretation: How much more likely is feature absence in group vs outside?
+            Interpretation: How much more likely is feature absence in group vs outside?
 
-Parameters
-----------
-sens : np.ndarray | float
-    None. Default is None.
-spec : np.ndarray | float
-    None. Default is None.
-a : np.ndarray | int
-    None. Default is None.
-b : np.ndarray | int
-    None. Default is None.
-c : np.ndarray | int
-    None. Default is None.
-d : np.ndarray | int
-    None. Default is None.
-continuity_correction : float
-    Default is 0.5.
+    Parameters
+    ----------
+    sens : np.ndarray | float
+        None. Default is None.
+    spec : np.ndarray | float
+        None. Default is None.
+    a : np.ndarray | int
+        None. Default is None.
+    b : np.ndarray | int
+        None. Default is None.
+    c : np.ndarray | int
+        None. Default is None.
+    d : np.ndarray | int
+        None. Default is None.
+    continuity_correction : float
+        Default is 0.5.
 
-Returns
--------
-np.ndarray | float
-    Computed result.
+    Returns
+    -------
+    np.ndarray | float
+        Negative likelihood ratio (LR-) values.
     """
     if sens is not None and spec is not None:
         fnr = 1 - np.asarray(sens)
@@ -289,27 +289,27 @@ def f1_score(
 ) -> np.ndarray | float:
     """Compute F1 score (harmonic mean of precision and sensitivity).
 
-    F1 = 2 × (precision × sensitivity) / (precision + sensitivity)
+            F1 = 2 × (precision × sensitivity) / (precision + sensitivity)
 
-Parameters
-----------
-prec : np.ndarray | float
-    None. Default is None.
-sens : np.ndarray | float
-    None. Default is None.
-a : np.ndarray | int
-    None. Default is None.
-b : np.ndarray | int
-    None. Default is None.
-c : np.ndarray | int
-    None. Default is None.
-continuity_correction : float
-    Default is 0.5.
+    Parameters
+    ----------
+    prec : np.ndarray | float
+        None. Default is None.
+    sens : np.ndarray | float
+        None. Default is None.
+    a : np.ndarray | int
+        None. Default is None.
+    b : np.ndarray | int
+        None. Default is None.
+    c : np.ndarray | int
+        None. Default is None.
+    continuity_correction : float
+        Default is 0.5.
 
-Returns
--------
-np.ndarray | float
-    Computed result.
+    Returns
+    -------
+    np.ndarray | float
+        F1 score values.
     """
     if prec is not None and sens is not None:
         p = np.asarray(prec)
@@ -332,23 +332,23 @@ def contingency_stats(
 ) -> dict[str, np.ndarray | float]:
     """Compute all classical statistics for a 2×2 contingency table.
 
-Parameters
-----------
-a : np.ndarray | int
-    A.
-b : np.ndarray | int
-    B.
-c : np.ndarray | int
-    C.
-d : np.ndarray | int
-    D.
-continuity_correction : float
-    Default is 0.5.
+    Parameters
+    ----------
+    a : np.ndarray | int
+        A.
+    b : np.ndarray | int
+        B.
+    c : np.ndarray | int
+        C.
+    d : np.ndarray | int
+        D.
+    continuity_correction : float
+        Default is 0.5.
 
-Returns
--------
-dict[str, np.ndarray | float]
-    Computed result.
+    Returns
+    -------
+    dict[str, np.ndarray | float]
+        LR+, LR-, and F1 metrics.
     """
     sens = sensitivity(a, c, continuity_correction)
     spec = specificity(b, d, continuity_correction)

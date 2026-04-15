@@ -13,15 +13,15 @@ CACHE_SIZE: int = 256
 def parse_cached(formula: str) -> tuple[tuple[str, int], ...]:
     """Parse molecular formula with caching. Returns tuple for hashability.
 
-Parameters
-----------
-formula : str
-    Formula.
+    Parameters
+    ----------
+    formula : str
+        Formula.
 
-Returns
--------
-tuple[tuple[str, int], ...]
-    Computed result.
+    Returns
+    -------
+    tuple[tuple[str, int], ...]
+        Return value produced by parse cached.
     """
     if not formula:
         return ()

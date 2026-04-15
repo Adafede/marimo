@@ -18,19 +18,19 @@ def build_sachem_service(
 ) -> str:
     """Build the SACHEM SERVICE clause.
 
-Parameters
-----------
-structure_literal : str
-    Structure literal.
-search_type : str
-    Search .
-threshold : float
-    Threshold.
+    Parameters
+    ----------
+    structure_literal : str
+        Structure literal.
+    search_type : str
+        Search .
+    threshold : float
+        Threshold.
 
-Returns
--------
-str
-    Computed result.
+    Returns
+    -------
+    str
+        Return value produced by build sachem service.
     """
     is_multiline_literal = structure_literal.startswith(
         "'''",
@@ -82,25 +82,25 @@ def query_sachem(
 ) -> str:
     """Build SACHEM chemical search query.
 
-    OPTIMIZATION: When taxon_qid is provided, we filter by taxonomic data FIRST
-    (uses Wikidata's indexes, creates a much smaller set), then apply SACHEM
-    SERVICE to the pre-filtered compounds. This is dramatically faster.
+            OPTIMIZATION: When taxon_qid is provided, we filter by taxonomic data FIRST
+            (uses Wikidata's indexes, creates a much smaller set), then apply SACHEM
+            SERVICE to the pre-filtered compounds. This is dramatically faster.
 
-Parameters
-----------
-escaped_smiles : str
-    Escaped smiles.
-search_type : str
-    Default is 'substructure'.
-threshold : float
-    Default is 0.8.
-taxon_qid : str | None
-    None. Default is None.
+    Parameters
+    ----------
+    escaped_smiles : str
+        Escaped smiles.
+    search_type : str
+        Default is 'substructure'.
+    threshold : float
+        Default is 0.8.
+    taxon_qid : str | None
+        None. Default is None.
 
-Returns
--------
-str
-    Computed result.
+    Returns
+    -------
+    str
+        Return value produced by query sachem.
     """
     sachem_clause = build_sachem_service(
         structure_literal=escaped_smiles,

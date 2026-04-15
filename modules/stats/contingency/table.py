@@ -20,22 +20,22 @@ def diversity_weight(
 ) -> np.ndarray | int:
     """Compute diversity-weighted count using geometric mean.
 
-    weight = √(n_items × n_sources)
+            weight = √(n_items × n_sources)
 
-    This penalizes redundant observations (many items from one source)
-    while rewarding diverse evidence (items from many sources).
+            This penalizes redundant observations (many items from one source)
+            while rewarding diverse evidence (items from many sources).
 
-Parameters
-----------
-n_items : np.ndarray | int
-    N items.
-n_sources : np.ndarray | int
-    N sources.
+    Parameters
+    ----------
+    n_items : np.ndarray | int
+        N items.
+    n_sources : np.ndarray | int
+        N sources.
 
-Returns
--------
-np.ndarray | int
-    Computed result.
+    Returns
+    -------
+    np.ndarray | int
+        Rounded diversity-weighted counts as integer values.
     """
     items = np.asarray(n_items, dtype=np.float32)
     sources = np.asarray(n_sources, dtype=np.float32)
@@ -58,23 +58,23 @@ def contingency_table_2x2(
 ) -> dict[str, np.ndarray | int]:
     """Construct 2×2 contingency table from marginals.
 
-Parameters
-----------
-a_raw : np.ndarray | int
-    A raw.
-feature_total : np.ndarray | int | None
-    Feature total.
-group_total : np.ndarray | int | None
-    Group total.
-universe_size : int | None
-    Universe size.
-a_weight : np.ndarray | float | None
-    None. Default is None.
+    Parameters
+    ----------
+    a_raw : np.ndarray | int
+        A raw.
+    feature_total : np.ndarray | int | None
+        Feature total.
+    group_total : np.ndarray | int | None
+        Group total.
+    universe_size : int | None
+        Universe size.
+    a_weight : np.ndarray | float | None
+        None. Default is None.
 
-Returns
--------
-dict[str, np.ndarray | int]
-    Computed result.
+    Returns
+    -------
+    dict[str, np.ndarray | int]
+        Dictionary with contingency cells ``a``, ``b``, ``c``, ``c_eff``, ``d``, and total size ``N``.
     """
     a_r = np.asarray(a_raw, dtype=np.int32)
     f_tot = np.asarray(feature_total, dtype=np.int32)
@@ -119,27 +119,27 @@ def contingency_from_presence(
 ) -> dict[str, np.ndarray | int]:
     """Build contingency table with optional diversity weighting.
 
-    Combines diversity_weight and contingency_table_2x2 in one call.
+            Combines diversity_weight and contingency_table_2x2 in one call.
 
-Parameters
-----------
-feature_in_group : np.ndarray | int
-    Feature in group.
-n_sources : np.ndarray | int | None
-    None. Default is None.
-feature_total : np.ndarray | int | None
-    None. Default is None.
-group_total : np.ndarray | int | None
-    None. Default is None.
-universe_size : int | None
-    None. Default is None.
-apply_diversity_weight : bool
-    True. Default is True.
+    Parameters
+    ----------
+    feature_in_group : np.ndarray | int
+        Feature in group.
+    n_sources : np.ndarray | int | None
+        None. Default is None.
+    feature_total : np.ndarray | int | None
+        None. Default is None.
+    group_total : np.ndarray | int | None
+        None. Default is None.
+    universe_size : int | None
+        None. Default is None.
+    apply_diversity_weight : bool
+        True. Default is True.
 
-Returns
--------
-dict[str, np.ndarray | int]
-    Computed result.
+    Returns
+    -------
+    dict[str, np.ndarray | int]
+        Contingency table dictionary, including metadata such as ``a_raw`` and optionally ``n_sources``.
     """
     a_raw = np.asarray(feature_in_group, dtype=np.int32)
 
@@ -171,20 +171,20 @@ def observed_rate(
 ) -> np.ndarray | float:
     """Compute observed rate (MLE) = a / (a + c).
 
-    This is the maximum likelihood estimate of the rate,
-    before any Bayesian shrinkage.
+            This is the maximum likelihood estimate of the rate,
+            before any Bayesian shrinkage.
 
-Parameters
-----------
-a : np.ndarray | int
-    A.
-group_total : np.ndarray | int
-    Group total.
+    Parameters
+    ----------
+    a : np.ndarray | int
+        A.
+    group_total : np.ndarray | int
+        Group total.
 
-Returns
--------
-np.ndarray | float
-    Computed result.
+    Returns
+    -------
+    np.ndarray | float
+        Observed rates computed as ``a / group_total``.
     """
     numerator = np.asarray(a, dtype=np.float32)
     denominator = np.maximum(np.asarray(group_total, dtype=np.float32), 1e-10)
@@ -198,22 +198,22 @@ def baseline_rate(
 ) -> np.ndarray | float:
     """Compute baseline rate θ₀ = feature_total / N.
 
-    This represents the expected rate if the group were a random
-    sample from the universe.
+            This represents the expected rate if the group were a random
+            sample from the universe.
 
-Parameters
-----------
-feature_total : np.ndarray | int
-    Feature total.
-universe_size : int
-    Universe size.
-min_rate : float
-    Default is 1e-06.
+    Parameters
+    ----------
+    feature_total : np.ndarray | int
+        Feature total.
+    universe_size : int
+        Universe size.
+    min_rate : float
+        Default is 1e-06.
 
-Returns
--------
-np.ndarray | float
-    Computed result.
+    Returns
+    -------
+    np.ndarray | float
+        Baseline rates clipped to at least ``min_rate``.
     """
     rate = np.asarray(feature_total, dtype=np.float32) / universe_size
     return np.maximum(rate, min_rate)

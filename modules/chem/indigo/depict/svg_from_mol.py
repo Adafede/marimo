@@ -15,21 +15,21 @@ def svg_from_mol(
 ) -> str:
     """Generate data URI for chemical structure depiction from an Indigo molecule.
 
-Parameters
-----------
-mol : IndigoObject | None
-    Mol.
-img_format : str
-    Default is 'svg'.
-aromatize : bool
-    True. Default is True.
-coloring : bool
-    True. Default is True.
+    Parameters
+    ----------
+    mol : IndigoObject | None
+        Mol.
+    img_format : str
+        Default is 'svg'.
+    aromatize : bool
+        True. Default is True.
+    coloring : bool
+        True. Default is True.
 
-Returns
--------
-str
-    Computed result.
+    Returns
+    -------
+    str
+        Return value produced by svg from mol.
     """
     if mol is None:
         return ""

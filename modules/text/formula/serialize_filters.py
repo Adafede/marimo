@@ -48,17 +48,17 @@ def serialize_elements(
 ) -> dict[str, dict[str, int | None]]:
     """Serialize element range filters to dictionary.
 
-Parameters
-----------
-filters : FormulaFilters
-    Filters.
-element_names : dict[str, str]
-    Element names.
+    Parameters
+    ----------
+    filters : FormulaFilters
+        Filters.
+    element_names : dict[str, str]
+        Element names.
 
-Returns
--------
-dict[str, dict[str, int | None]]
-    Computed result.
+    Returns
+    -------
+    dict[str, dict[str, int | None]]
+        Return value produced by serialize elements.
     """
     return {
         element_names.get(key, key): range_dict
@@ -73,17 +73,17 @@ def serialize_halogens(
 ) -> dict[str, str]:
     """Serialize active halogen filters to dictionary.
 
-Parameters
-----------
-filters : FormulaFilters
-    Filters.
-halogen_names : dict[str, str]
-    Halogen names.
+    Parameters
+    ----------
+    filters : FormulaFilters
+        Filters.
+    halogen_names : dict[str, str]
+        Halogen names.
 
-Returns
--------
-dict[str, str]
-    Computed result.
+    Returns
+    -------
+    dict[str, str]
+        Return value produced by serialize halogens.
     """
     return {
         halogen_names.get(key, key): getattr(filters, attr)
@@ -99,19 +99,19 @@ def serialize_filters(
 ) -> dict[str, Any] | None:
     """Convert FormulaFilters to dictionary for metadata export.
 
-Parameters
-----------
-filters : FormulaFilters | None
-    Filters.
-element_names : dict[str, str] | None
-    None. Default is None.
-halogen_names : dict[str, str] | None
-    None. Default is None.
+    Parameters
+    ----------
+    filters : FormulaFilters | None
+        Filters.
+    element_names : dict[str, str] | None
+        None. Default is None.
+    halogen_names : dict[str, str] | None
+        None. Default is None.
 
-Returns
--------
-dict[str, Any] | None
-    Computed result.
+    Returns
+    -------
+    dict[str, Any] | None
+        Return value produced by serialize filters.
     """
     if not filters or not filters.is_active():
         return None

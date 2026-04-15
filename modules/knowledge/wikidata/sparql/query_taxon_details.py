@@ -8,15 +8,15 @@ from .prefixes import PREFIXES
 def query_taxon_details(values_clause_str: str) -> str:
     """Build SPARQL query for taxon details.
 
-Parameters
-----------
-values_clause_str : str
-    Values clause str.
+    Parameters
+    ----------
+    values_clause_str : str
+        Values clause str.
 
-Returns
--------
-str
-    Computed result.
+    Returns
+    -------
+    str
+        Return value produced by query taxon details.
     """
     return f"""
     {PREFIXES}

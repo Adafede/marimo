@@ -15,15 +15,15 @@ except ImportError:
 def extract_qid_from_url(url: str) -> str:
     """Extract QID from Wikidata entity URL.
 
-Parameters
-----------
-url : str
-    Url.
+    Parameters
+    ----------
+    url : str
+        Url.
 
-Returns
--------
-str
-    Computed result.
+    Returns
+    -------
+    str
+        Return value produced by extract qid from url.
     """
     return url.split("/")[-1] if "/" in url else url
 
@@ -31,15 +31,15 @@ str
 def parse_search_results(csv_bytes: bytes) -> list[tuple[str, str]]:
     """Parse search results CSV into list of (qid, name) tuples.
 
-Parameters
-----------
-csv_bytes : bytes
-    Csv bytes.
+    Parameters
+    ----------
+    csv_bytes : bytes
+        Csv bytes.
 
-Returns
--------
-list[tuple[str, str]]
-    Computed result.
+    Returns
+    -------
+    list[tuple[str, str]]
+        Return value produced by parse search results.
     """
     df = pl.scan_csv(source=io.BytesIO(csv_bytes))
     if df.is_empty():
@@ -55,15 +55,15 @@ list[tuple[str, str]]
 def parse_connectivity(csv_bytes: bytes) -> dict[str, int]:
     """Parse connectivity CSV into qid -> compound_count mapping.
 
-Parameters
-----------
-csv_bytes : bytes
-    Csv bytes.
+    Parameters
+    ----------
+    csv_bytes : bytes
+        Csv bytes.
 
-Returns
--------
-dict[str, int]
-    Computed result.
+    Returns
+    -------
+    dict[str, int]
+        Return value produced by parse connectivity.
     """
     df = pl.scan_csv(source=io.BytesIO(csv_bytes))
     return {
@@ -78,15 +78,15 @@ dict[str, int]
 def parse_details(csv_bytes: bytes) -> dict[str, dict[str, str | None]]:
     """Parse details CSV into qid -> {description, parent} mapping.
 
-Parameters
-----------
-csv_bytes : bytes
-    Csv bytes.
+    Parameters
+    ----------
+    csv_bytes : bytes
+        Csv bytes.
 
-Returns
--------
-dict[str, dict[str, str | None]]
-    Computed result.
+    Returns
+    -------
+    dict[str, dict[str, str | None]]
+        Return value produced by parse details.
     """
     df = pl.scan_csv(source=io.BytesIO(csv_bytes))
     return {
@@ -106,19 +106,19 @@ def resolve_from_csv(
 ) -> tuple[list[tuple[str, str, str | None, str | None, int | None]], dict[str, int]]:
     """Parse taxon search results and enrich with connectivity data.
 
-Parameters
-----------
-search_results_csv : bytes
-    Search results csv.
-connectivity_csv : bytes | None
-    None. Default is None.
-details_csv : bytes | None
-    None. Default is None.
+    Parameters
+    ----------
+    search_results_csv : bytes
+        Search results csv.
+    connectivity_csv : bytes | None
+        None. Default is None.
+    details_csv : bytes | None
+        None. Default is None.
 
-Returns
--------
-tuple[list[tuple[str, str, str | None, str | None, int | None]], dict[str, int]]
-    Computed result.
+    Returns
+    -------
+    tuple[list[tuple[str, str, str | None, str | None, int | None]], dict[str, int]]
+        Return value produced by resolve from csv.
     """
     if not HAS_POLARS:
         raise ImportError("polars is required for taxon resolution")

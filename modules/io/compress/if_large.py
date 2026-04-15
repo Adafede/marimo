@@ -12,19 +12,19 @@ def compress_if_large(
 ) -> tuple[bytes, bool]:
     """Compress data with gzip if it exceeds size threshold.
 
-Parameters
-----------
-data : bytes
-    Data.
-threshold : int
-    Default is 1000000.
-compression_level : int
-    Default is 6.
+    Parameters
+    ----------
+    data : bytes
+        Data.
+    threshold : int
+        Default is 1000000.
+    compression_level : int
+        Default is 6.
 
-Returns
--------
-tuple[bytes, bool]
-    Computed result.
+    Returns
+    -------
+    tuple[bytes, bool]
+        Return value produced by compress if large.
     """
     if len(data) < threshold:
         return data, False

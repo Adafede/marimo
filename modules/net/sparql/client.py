@@ -28,17 +28,17 @@ class Client:
     def _request(self, query: str, accept: str) -> bytes:
         """Execute HTTP request to SPARQL endpoint.
 
-Parameters
-----------
-query : str
-    Query.
-accept : str
-    Accept.
+        Parameters
+        ----------
+        query : str
+            Query.
+        accept : str
+            Accept.
 
-Returns
--------
-bytes
-    Computed result.
+        Returns
+        -------
+        bytes
+            Return value produced by request.
         """
         headers = {
             "Accept": accept,
@@ -58,29 +58,29 @@ bytes
     def query_csv(self, query: str) -> bytes:
         """Execute query returning CSV bytes.
 
-Parameters
-----------
-query : str
-    Query.
+        Parameters
+        ----------
+        query : str
+            Query.
 
-Returns
--------
-bytes
-    Computed result.
+        Returns
+        -------
+        bytes
+            Return value produced by query csv.
         """
         return self._request(query, "text/csv")
 
     def query_json(self, query: str) -> bytes:
         """Execute query returning JSON bytes.
 
-Parameters
-----------
-query : str
-    Query.
+        Parameters
+        ----------
+        query : str
+            Query.
 
-Returns
--------
-bytes
-    Computed result.
+        Returns
+        -------
+        bytes
+            Return value produced by query json.
         """
         return self._request(query, "application/sparql-results+json")

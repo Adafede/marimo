@@ -18,24 +18,24 @@ def posterior_probability_above(
 ) -> np.ndarray | float:
     """Compute P(θ > threshold | data) for Beta(α, β) posterior.
 
-    Uses the regularized incomplete beta function:
-        P(θ > t) = 1 - I_t(α, β)
+            Uses the regularized incomplete beta function:
+                P(θ > t) = 1 - I_t(α, β)
 
-    where I_t is the regularized incomplete beta function.
+            where I_t is the regularized incomplete beta function.
 
-Parameters
-----------
-alpha : np.ndarray | float
-    Alpha.
-beta : np.ndarray | float
-    Beta.
-threshold : np.ndarray | float
-    Threshold.
+    Parameters
+    ----------
+    alpha : np.ndarray | float
+        Alpha.
+    beta : np.ndarray | float
+        Beta.
+    threshold : np.ndarray | float
+        Threshold.
 
-Returns
--------
-np.ndarray | float
-    Computed result.
+    Returns
+    -------
+    np.ndarray | float
+        Posterior probabilities that ``theta`` is greater than ``threshold``.
     """
     a = np.maximum(np.asarray(alpha), 1e-6)
     b = np.maximum(np.asarray(beta), 1e-6)
@@ -50,19 +50,19 @@ def posterior_probability_below(
 ) -> np.ndarray | float:
     """Compute P(θ < threshold | data) for Beta(α, β) posterior.
 
-Parameters
-----------
-alpha : np.ndarray | float
-    Alpha.
-beta : np.ndarray | float
-    Beta.
-threshold : np.ndarray | float
-    Threshold.
+    Parameters
+    ----------
+    alpha : np.ndarray | float
+        Alpha.
+    beta : np.ndarray | float
+        Beta.
+    threshold : np.ndarray | float
+        Threshold.
 
-Returns
--------
-np.ndarray | float
-    Computed result.
+    Returns
+    -------
+    np.ndarray | float
+        Posterior probabilities that ``theta`` is less than ``threshold``.
     """
     a = np.maximum(np.asarray(alpha), 1e-6)
     b = np.maximum(np.asarray(beta), 1e-6)
@@ -77,25 +77,25 @@ def credible_interval(
 ) -> tuple[np.ndarray | float, np.ndarray | float]:
     """Compute equal-tailed credible interval for Beta(α, β).
 
-    Returns the interval [L, U] such that:
-        P(θ < L) = (1 - probability) / 2
-        P(θ > U) = (1 - probability) / 2
+            Returns the interval [L, U] such that:
+                P(θ < L) = (1 - probability) / 2
+                P(θ > U) = (1 - probability) / 2
 
-    For symmetric distributions, this equals the HDI (highest density interval).
+            For symmetric distributions, this equals the HDI (highest density interval).
 
-Parameters
-----------
-alpha : np.ndarray | float
-    Alpha.
-beta : np.ndarray | float
-    Beta.
-probability : float
-    Default is 0.89.
+    Parameters
+    ----------
+    alpha : np.ndarray | float
+        Alpha.
+    beta : np.ndarray | float
+        Beta.
+    probability : float
+        Default is 0.89.
 
-Returns
--------
-tuple[np.ndarray | float, np.ndarray | float]
-    Computed result.
+    Returns
+    -------
+    tuple[np.ndarray | float, np.ndarray | float]
+        Lower and upper bounds of the equal-tailed credible interval.
     """
     a = np.maximum(np.asarray(alpha), 0.01)
     b = np.maximum(np.asarray(beta), 0.01)
@@ -111,17 +111,17 @@ def posterior_mean(
 ) -> np.ndarray | float:
     """Compute posterior mean E[θ] = α / (α + β).
 
-Parameters
-----------
-alpha : np.ndarray | float
-    Alpha.
-beta : np.ndarray | float
-    Beta.
+    Parameters
+    ----------
+    alpha : np.ndarray | float
+        Alpha.
+    beta : np.ndarray | float
+        Beta.
 
-Returns
--------
-np.ndarray | float
-    Computed result.
+    Returns
+    -------
+    np.ndarray | float
+        Posterior mean values.
     """
     a = np.asarray(alpha)
     b = np.asarray(beta)
@@ -134,20 +134,20 @@ def posterior_mode(
 ) -> np.ndarray | float:
     """Compute posterior mode (MAP estimate).
 
-    Mode = (α - 1) / (α + β - 2) when α > 1 and β > 1.
-    Otherwise returns the mean as a fallback.
+            Mode = (α - 1) / (α + β - 2) when α > 1 and β > 1.
+            Otherwise returns the mean as a fallback.
 
-Parameters
-----------
-alpha : np.ndarray | float
-    Alpha.
-beta : np.ndarray | float
-    Beta.
+    Parameters
+    ----------
+    alpha : np.ndarray | float
+        Alpha.
+    beta : np.ndarray | float
+        Beta.
 
-Returns
--------
-np.ndarray | float
-    Computed result.
+    Returns
+    -------
+    np.ndarray | float
+        Posterior mode (MAP) estimates.
     """
     a = np.asarray(alpha)
     b = np.asarray(beta)
@@ -170,17 +170,17 @@ def posterior_variance(
 ) -> np.ndarray | float:
     """Compute posterior variance Var[θ] = αβ / [(α+β)²(α+β+1)].
 
-Parameters
-----------
-alpha : np.ndarray | float
-    Alpha.
-beta : np.ndarray | float
-    Beta.
+    Parameters
+    ----------
+    alpha : np.ndarray | float
+        Alpha.
+    beta : np.ndarray | float
+        Beta.
 
-Returns
--------
-np.ndarray | float
-    Computed result.
+    Returns
+    -------
+    np.ndarray | float
+        Posterior variance values.
     """
     a = np.asarray(alpha)
     b = np.asarray(beta)
@@ -194,17 +194,17 @@ def beta_prior_params(
 ) -> tuple[float, float]:
     """Convert prior (mean, strength) to Beta(α, β) parameters.
 
-Parameters
-----------
-mean : float
-    Mean.
-strength : float
-    Strength.
+    Parameters
+    ----------
+    mean : float
+        Mean.
+    strength : float
+        Strength.
 
-Returns
--------
-tuple[float, float]
-    Computed result.
+    Returns
+    -------
+    tuple[float, float]
+        Prior parameters ``(alpha, beta)`` for the Beta distribution.
     """
     if not (0 < mean < 1):
         raise ValueError(f"mean must be in (0, 1), got {mean}")
@@ -224,25 +224,25 @@ def effective_sample_size(
 ) -> np.ndarray | float:
     """Compute effective sample size (ESS) contributed by data.
 
-    ESS = (α_post + β_post) - (α_prior + β_prior)
+            ESS = (α_post + β_post) - (α_prior + β_prior)
 
-    This measures how much information the data contributed beyond the prior.
+            This measures how much information the data contributed beyond the prior.
 
-Parameters
-----------
-alpha_post : np.ndarray | float
-    Alpha post.
-beta_post : np.ndarray | float
-    Beta post.
-alpha_prior : np.ndarray | float
-    Alpha prior.
-beta_prior : np.ndarray | float
-    Beta prior.
+    Parameters
+    ----------
+    alpha_post : np.ndarray | float
+        Alpha post.
+    beta_post : np.ndarray | float
+        Beta post.
+    alpha_prior : np.ndarray | float
+        Alpha prior.
+    beta_prior : np.ndarray | float
+        Beta prior.
 
-Returns
--------
-np.ndarray | float
-    Computed result.
+    Returns
+    -------
+    np.ndarray | float
+        Effective sample size contributed by the observed data.
     """
     return (
         np.asarray(alpha_post)

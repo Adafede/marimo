@@ -17,20 +17,20 @@ def filter_mass(
 ) -> pl.DataFrame:
     """Filter DataFrame by mass range.
 
-Parameters
-----------
-df : pl.DataFrame
-    Df.
-mass_min : float | None
-    None. Default is None.
-mass_max : float | None
-    None. Default is None.
-column : str
-    DEFAULT_MASS_COLUMN. Default is DEFAULT_MASS_COLUMN.
+    Parameters
+    ----------
+    df : pl.DataFrame
+        Df.
+    mass_min : float | None
+        None. Default is None.
+    mass_max : float | None
+        None. Default is None.
+    column : str
+        DEFAULT_MASS_COLUMN. Default is DEFAULT_MASS_COLUMN.
 
-Returns
--------
-pl.DataFrame
-    Computed result.
+    Returns
+    -------
+    pl.DataFrame
+        Return value produced by filter mass.
     """
     return filter_range(df, column, mass_min, mass_max)

@@ -8,15 +8,15 @@ from .prefixes import PREFIXES
 def query_taxon_connectivity(values_clause_str: str) -> str:
     """Build query to count compound connections for each taxon.
 
-Parameters
-----------
-values_clause_str : str
-    Values clause str.
+    Parameters
+    ----------
+    values_clause_str : str
+        Values clause str.
 
-Returns
--------
-str
-    Computed result.
+    Returns
+    -------
+    str
+        Return value produced by query taxon connectivity.
     """
     return f"""
     {PREFIXES}

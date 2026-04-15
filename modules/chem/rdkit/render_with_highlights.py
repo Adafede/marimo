@@ -18,27 +18,27 @@ def render_with_highlights(
 ) -> str:
     """Render a molecule as SVG with highlighted substructures.
 
-    Deprecated: Use depict.with_highlights instead.
+            Deprecated: Use depict.with_highlights instead.
 
-Parameters
-----------
-name : str
-    Name.
-smi : str
-    Smi.
-smarts_mols : list[SmartsEntry]
-    Smarts mols.
-match_counter : defaultdict | None
-    None. Default is None.
-width : int
-    Default is 200.
-height : int
-    Default is 200.
+    Parameters
+    ----------
+    name : str
+        Name.
+    smi : str
+        Smi.
+    smarts_mols : list[SmartsEntry]
+        Smarts mols.
+    match_counter : defaultdict | None
+        None. Default is None.
+    width : int
+        Default is 200.
+    height : int
+        Default is 200.
 
-Returns
--------
-str
-    Computed result.
+    Returns
+    -------
+    str
+        Return value produced by render with highlights.
     """
     return with_highlights(
         name=name,

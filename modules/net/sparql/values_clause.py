@@ -8,19 +8,19 @@ from collections.abc import Sequence
 def values_clause(variable: str, values: Sequence[str], prefix: str = "") -> str:
     """Build a VALUES clause for SPARQL query.
 
-Parameters
-----------
-variable : str
-    Variable.
-values : Sequence[str]
-    Values.
-prefix : str
-    Default is ''.
+    Parameters
+    ----------
+    variable : str
+        Variable.
+    values : Sequence[str]
+        Values.
+    prefix : str
+        Default is ''.
 
-Returns
--------
-str
-    Computed result.
+    Returns
+    -------
+    str
+        Return value produced by values clause.
     """
     if not values:
         return ""

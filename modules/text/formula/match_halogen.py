@@ -8,19 +8,19 @@ from .count_element import count_element
 def match_halogen(formula: str, halogen: str, constraint: str) -> bool:
     """Check if halogen presence matches constraint (allowed/required/excluded).
 
-Parameters
-----------
-formula : str
-    Formula.
-halogen : str
-    Halogen.
-constraint : str
-    Constraint.
+    Parameters
+    ----------
+    formula : str
+        Formula.
+    halogen : str
+        Halogen.
+    constraint : str
+        Constraint.
 
-Returns
--------
-bool
-    Computed result.
+    Returns
+    -------
+    bool
+        Return value produced by match halogen.
     """
     cnt = count_element(formula, halogen)
     if constraint == "required":

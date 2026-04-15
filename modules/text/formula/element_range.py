@@ -15,25 +15,25 @@ class ElementRange:
     def is_active(self) -> bool:
         """Check if range filter is active.
 
-Returns
--------
-bool
-    Computed result.
+        Returns
+        -------
+        bool
+            Return value produced by is active.
         """
         return self.min_val is not None or self.max_val is not None
 
     def matches(self, count: int) -> bool:
         """Check if count is within range.
 
-Parameters
-----------
-count : int
-    Count.
+        Parameters
+        ----------
+        count : int
+            Count.
 
-Returns
--------
-bool
-    Computed result.
+        Returns
+        -------
+        bool
+            Return value produced by matches.
         """
         if not self.is_active():
             return True

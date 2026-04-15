@@ -15,15 +15,15 @@ ERROR_FAILED: str = "[!] Could not determine MCS."
 def find_mcs(mols: list[Mol]) -> tuple[str | None, str | None]:
     """Find Maximum Common Substructure SMARTS from a list of molecules.
 
-Parameters
-----------
-mols : list[Mol]
-    Mols.
+    Parameters
+    ----------
+    mols : list[Mol]
+        Mols.
 
-Returns
--------
-tuple[str | None, str | None]
-    Computed result.
+    Returns
+    -------
+    tuple[str | None, str | None]
+        Return value produced by find mcs.
     """
     if len(mols) < MIN_MOLECULES:
         return None, ERROR_INSUFFICIENT

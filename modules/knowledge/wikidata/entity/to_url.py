@@ -8,16 +8,16 @@ from .prefix import ENTITY_PREFIX
 def to_url(qid: str, prefix: str = ENTITY_PREFIX) -> str:
     """Build Wikidata entity URL from QID.
 
-Parameters
-----------
-qid : str
-    Qid.
-prefix : str
-    ENTITY_PREFIX. Default is ENTITY_PREFIX.
+    Parameters
+    ----------
+    qid : str
+        Qid.
+    prefix : str
+        ENTITY_PREFIX. Default is ENTITY_PREFIX.
 
-Returns
--------
-str
-    Computed result.
+    Returns
+    -------
+    str
+        Return value produced by to url.
     """
     return f"{prefix}{qid}"
