@@ -22,7 +22,7 @@ def pluralize(
     Returns
     -------
     str
-        Return value produced by pluralize.
+        String representation of pluralize.
     """
     if count == 1:
         return singular

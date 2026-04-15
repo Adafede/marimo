@@ -38,7 +38,7 @@ def filter_range(
     Returns
     -------
     pl.DataFrame
-        Return value produced by filter range.
+        DataFrame containing range.
     """
     if df.is_empty():
         return df

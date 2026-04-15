@@ -14,7 +14,7 @@ def parse_line(line: str) -> tuple[str, str]:
     Returns
     -------
     tuple[str, str]
-        Return value produced by parse line.
+        Tuple containing line.
     """
     if " " in line:
         value, label = line.split(sep=" ", maxsplit=1)
@@ -33,6 +33,6 @@ def parse_labeled_lines(text: str) -> list[tuple[str, str]]:
     Returns
     -------
     list[tuple[str, str]]
-        Return value produced by parse labeled lines.
+        List of labeled lines.
     """
     return [parse_line(line=line.strip()) for line in text.splitlines() if line.strip()]

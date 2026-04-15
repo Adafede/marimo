@@ -30,7 +30,7 @@ def build_sachem_service(
     Returns
     -------
     str
-        Return value produced by build sachem service.
+        String representation of sachem service.
     """
     is_multiline_literal = structure_literal.startswith(
         "'''",
@@ -82,9 +82,9 @@ def query_sachem(
 ) -> str:
     """Build SACHEM chemical search query.
 
-            OPTIMIZATION: When taxon_qid is provided, we filter by taxonomic data FIRST
-            (uses Wikidata's indexes, creates a much smaller set), then apply SACHEM
-            SERVICE to the pre-filtered compounds. This is dramatically faster.
+                OPTIMIZATION: When taxon_qid is provided, we filter by taxonomic data FIRST
+                (uses Wikidata's indexes, creates a much smaller set), then apply SACHEM
+                SERVICE to the pre-filtered compounds. This is dramatically faster.
 
     Parameters
     ----------
@@ -100,7 +100,7 @@ def query_sachem(
     Returns
     -------
     str
-        Return value produced by query sachem.
+        String representation of query sachem.
     """
     sachem_clause = build_sachem_service(
         structure_literal=escaped_smiles,

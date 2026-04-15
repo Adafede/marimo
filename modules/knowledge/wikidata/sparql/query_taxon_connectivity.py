@@ -16,7 +16,7 @@ def query_taxon_connectivity(values_clause_str: str) -> str:
     Returns
     -------
     str
-        Return value produced by query taxon connectivity.
+        String representation of query taxon connectivity.
     """
     return f"""
     {PREFIXES}

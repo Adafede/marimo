@@ -31,7 +31,7 @@ def filter_year(
     Returns
     -------
     pl.DataFrame
-        Return value produced by filter year.
+        DataFrame containing year.
     """
     return filter_range(
         df,

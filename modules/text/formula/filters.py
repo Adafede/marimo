@@ -29,7 +29,7 @@ class FormulaFilters:
         Returns
         -------
         bool
-            Return value produced by is active.
+            ``True`` if active; otherwise ``False``.
         """
         if self.exact_formula and self.exact_formula.strip():
             return True

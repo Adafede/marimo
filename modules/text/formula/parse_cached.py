@@ -21,7 +21,7 @@ def parse_cached(formula: str) -> tuple[tuple[str, int], ...]:
     Returns
     -------
     tuple[tuple[str, int], ...]
-        Return value produced by parse cached.
+        Tuple containing cached.
     """
     if not formula:
         return ()

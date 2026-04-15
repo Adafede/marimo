@@ -365,7 +365,7 @@ with app.setup:
         verbose: bool = False,
     ) -> pl.DataFrame:
         """Drop rows where any critical structure field is null.
-                        These rows have no usable chemical data and should not be published.
+                                These rows have no usable chemical data and should not be published.
 
         Parameters
         ----------
@@ -394,7 +394,7 @@ with app.setup:
 
     def fetch_latest_zenodo_frozen() -> pl.DataFrame:
         """Fetch the latest frozen.csv from Zenodo to inherit manual_validation.
-                        Uses the Zenodo API to find the latest version and download frozen.csv.
+                                Uses the Zenodo API to find the latest version and download frozen.csv.
 
         Returns
         -------
@@ -469,7 +469,7 @@ with app.setup:
         old_df: pl.DataFrame,
     ) -> pl.DataFrame:
         """Inherit manual_validation from previous version.
-                        Matches on structure_inchikey + organism_wikidata + reference_wikidata.
+                                Matches on structure_inchikey + organism_wikidata + reference_wikidata.
 
         Parameters
         ----------
@@ -525,7 +525,7 @@ with app.setup:
         name: str,
     ) -> dict:
         """Compute changes between new and old versions.
-                        Returns dict with added, removed counts and samples.
+                                Returns dict with added, removed counts and samples.
 
         Parameters
         ----------
@@ -762,7 +762,7 @@ with app.setup:
 
     def fetch_npclassifier_cache(url: str | None = None) -> pl.DataFrame:
         """Fetch NPClassifier cache CSV from remote URL.
-                        Returns DataFrame with columns: smiles, pathway, superclass, class, isglycoside, error
+                                Returns DataFrame with columns: smiles, pathway, superclass, class, isglycoside, error
 
         Parameters
         ----------
@@ -797,7 +797,7 @@ with app.setup:
 
     def fetch_classyfire_cache(url: str | None = None) -> pl.DataFrame:
         """Fetch ClassyFire cache from remote URL or local file.
-                        Expected columns: inchikey, chemontid, kingdom, superclass, class, direct_parent
+                                Expected columns: inchikey, chemontid, kingdom, superclass, class, direct_parent
 
         Parameters
         ----------
@@ -898,9 +898,9 @@ with app.setup:
 
     def fetch_ott_taxonomy_cache(url: str | None = None) -> pl.DataFrame:
         """Fetch Open Tree of Life (OTT) taxonomy cache from remote URL or local file.
-                        Expected columns: organism_name, organism_taxonomy_ottid, organism_taxonomy_01domain, etc.
+                                Expected columns: organism_name, organism_taxonomy_ottid, organism_taxonomy_01domain, etc.
 
-                        Maps to: organism_name, ott_id, domain, kingdom, phylum, class, order, family, tribe, genus, species, varietas
+                                Maps to: organism_name, ott_id, domain, kingdom, phylum, class, order, family, tribe, genus, species, varietas
 
         Parameters
         ----------
@@ -1065,18 +1065,18 @@ with app.setup:
     def compute_rdkit_properties(smiles_list: list[str]) -> pl.DataFrame:
         """Compute RDKit-derived structure properties from a list of SMILES.
 
-                        Returns DataFrame with columns:
-                        - smiles (input SMILES)
-                        - smiles_2D (canonical SMILES without stereochemistry)
-                        - molecular_formula
-                        - exact_mass
-                        - xlogp
-                        - stereocenters_total
-                        - stereocenters_unspecified
-                        - inchi (computed InChI)
-                        - inchikey (computed InChIKey)
+                                Returns DataFrame with columns:
+                                - smiles (input SMILES)
+                                - smiles_2D (canonical SMILES without stereochemistry)
+                                - molecular_formula
+                                - exact_mass
+                                - xlogp
+                                - stereocenters_total
+                                - stereocenters_unspecified
+                                - inchi (computed InChI)
+                                - inchikey (computed InChIKey)
 
-                        Based on: https://github.com/lotusnprod/lotus-processor/blob/main/src/2_curating/2_editing/structure/3_processingAndEnriching/chemosanitizer_functions.py
+                                Based on: https://github.com/lotusnprod/lotus-processor/blob/main/src/2_curating/2_editing/structure/3_processingAndEnriching/chemosanitizer_functions.py
 
         Parameters
         ----------
@@ -1197,8 +1197,8 @@ with app.setup:
     ) -> pl.DataFrame:
         """Fetch comprehensive compound data from PubChem via SPARQL.
 
-                        Uses batched queries with VALUES clause for efficient filtering server-side.
-                        This avoids downloading the entire PubChem database (120M+ records).
+                                Uses batched queries with VALUES clause for efficient filtering server-side.
+                                This avoids downloading the entire PubChem database (120M+ records).
 
         Parameters
         ----------
@@ -1311,7 +1311,7 @@ with app.setup:
     ) -> pl.DataFrame:
         """Fetch PubChem compound data by InChIKey for compounds without CIDs.
 
-                        Uses batched queries with VALUES clause for efficient filtering server-side.
+                                Uses batched queries with VALUES clause for efficient filtering server-side.
 
         Parameters
         ----------
@@ -1543,14 +1543,14 @@ with app.setup:
     ) -> pl.DataFrame:
         """Build frozen.csv output.
 
-                        Columns:
-                        - structure_inchikey
-                        - organism_name
-                        - reference_doi
-                        - manual_validation (always NA)
-                        - organism_wikidata
-                        - structure_wikidata
-                        - reference_wikidata
+                                Columns:
+                                - structure_inchikey
+                                - organism_name
+                                - reference_doi
+                                - manual_validation (always NA)
+                                - organism_wikidata
+                                - structure_wikidata
+                                - reference_wikidata
 
         Parameters
         ----------
@@ -1617,22 +1617,22 @@ with app.setup:
     ) -> pl.DataFrame:
         """Build frozen_metadata.csv output matching the old Zenodo format.
 
-                        Data priority: PubChem > RDKit > Wikidata
-                        - InChIKey, mass, SMILES from PubChem when available
-                        - RDKit as fallback for properties PubChem doesn't provide (xlogp, stereocenters)
-                        - Wikidata as final fallback
+                                Data priority: PubChem > RDKit > Wikidata
+                                - InChIKey, mass, SMILES from PubChem when available
+                                - RDKit as fallback for properties PubChem doesn't provide (xlogp, stereocenters)
+                                - Wikidata as final fallback
 
-                        Columns:
-                        - structure_wikidata, structure_inchikey, structure_inchi, structure_smiles
-                        - structure_molecular_formula, structure_exact_mass, structure_xlogp
-                        - structure_smiles_2D, structure_cid, structure_nameIupac, structure_nameTraditional
-                        - structure_stereocenters_total, structure_stereocenters_unspecified
-                        - structure_taxonomy_npclassifier_01pathway, _02superclass, _03class
-                        - structure_taxonomy_classyfire_chemontid, _01kingdom, _02superclass, _03class, _04directparent
-                        - organism_wikidata, organism_name
-                        - organism_taxonomy_gbifid, organism_taxonomy_ncbiid, organism_taxonomy_ottid
-                        - organism_taxonomy_01domain through organism_taxonomy_10varietas
-                        - reference_wikidata, reference_doi, manual_validation
+                                Columns:
+                                - structure_wikidata, structure_inchikey, structure_inchi, structure_smiles
+                                - structure_molecular_formula, structure_exact_mass, structure_xlogp
+                                - structure_smiles_2D, structure_cid, structure_nameIupac, structure_nameTraditional
+                                - structure_stereocenters_total, structure_stereocenters_unspecified
+                                - structure_taxonomy_npclassifier_01pathway, _02superclass, _03class
+                                - structure_taxonomy_classyfire_chemontid, _01kingdom, _02superclass, _03class, _04directparent
+                                - organism_wikidata, organism_name
+                                - organism_taxonomy_gbifid, organism_taxonomy_ncbiid, organism_taxonomy_ottid
+                                - organism_taxonomy_01domain through organism_taxonomy_10varietas
+                                - reference_wikidata, reference_doi, manual_validation
 
         Parameters
         ----------

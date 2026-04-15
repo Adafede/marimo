@@ -24,7 +24,7 @@ def query_compounds_by_taxon(qid: str) -> str:
     Returns
     -------
     str
-        Return value produced by query compounds by taxon.
+        String representation of query compounds by taxon.
     """
     return f"""
     {PREFIXES}
@@ -52,7 +52,7 @@ def query_all_compounds() -> str:
     Returns
     -------
     str
-        Return value produced by query all compounds.
+        String representation of query all compounds.
     """
     return f"""
     {PREFIXES}

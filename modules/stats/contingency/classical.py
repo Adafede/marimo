@@ -14,9 +14,9 @@ def sensitivity(
 ) -> np.ndarray | float:
     """Compute sensitivity (recall, true positive rate).
 
-            sensitivity = a / (a + c)
+                sensitivity = a / (a + c)
 
-            Interpretation: Of all items in the group, what fraction have the feature?
+                Interpretation: Of all items in the group, what fraction have the feature?
 
     Parameters
     ----------
@@ -48,9 +48,9 @@ def specificity(
 ) -> np.ndarray | float:
     """Compute specificity (true negative rate).
 
-            specificity = d / (b + d)
+                specificity = d / (b + d)
 
-            Interpretation: Of all items outside the group, what fraction lack the feature?
+                Interpretation: Of all items outside the group, what fraction lack the feature?
 
     Parameters
     ----------
@@ -82,9 +82,9 @@ def precision(
 ) -> np.ndarray | float:
     """Compute precision (positive predictive value).
 
-            precision = a / (a + b)
+                precision = a / (a + b)
 
-            Interpretation: Of all items with the feature, what fraction are in the group?
+                Interpretation: Of all items with the feature, what fraction are in the group?
 
     Parameters
     ----------
@@ -116,9 +116,9 @@ def false_positive_rate(
 ) -> np.ndarray | float:
     """Compute false positive rate (FPR = 1 - specificity).
 
-            FPR = b / (b + d)
+                FPR = b / (b + d)
 
-            Interpretation: Of all items outside the group, what fraction have the feature?
+                Interpretation: Of all items outside the group, what fraction have the feature?
 
     Parameters
     ----------
@@ -150,9 +150,9 @@ def false_negative_rate(
 ) -> np.ndarray | float:
     """Compute false negative rate (FNR = 1 - sensitivity).
 
-            FNR = c / (a + c)
+                FNR = c / (a + c)
 
-            Interpretation: Of all items in the group, what fraction lack the feature?
+                Interpretation: Of all items in the group, what fraction lack the feature?
 
     Parameters
     ----------
@@ -188,13 +188,13 @@ def likelihood_ratio_positive(
 ) -> np.ndarray | float:
     """Compute positive likelihood ratio.
 
-            LR+ = sensitivity / FPR
+                LR+ = sensitivity / FPR
 
-            Interpretation: How much more likely is the feature in the group vs outside?
+                Interpretation: How much more likely is the feature in the group vs outside?
 
-            Can be computed from either:
-            - Pre-computed sensitivity and FPR, OR
-            - Contingency table cells a, b, c, d
+                Can be computed from either:
+                - Pre-computed sensitivity and FPR, OR
+                - Contingency table cells a, b, c, d
 
     Parameters
     ----------
@@ -241,9 +241,9 @@ def likelihood_ratio_negative(
 ) -> np.ndarray | float:
     """Compute negative likelihood ratio.
 
-            LR- = (1 - sensitivity) / specificity = FNR / specificity
+                LR- = (1 - sensitivity) / specificity = FNR / specificity
 
-            Interpretation: How much more likely is feature absence in group vs outside?
+                Interpretation: How much more likely is feature absence in group vs outside?
 
     Parameters
     ----------
@@ -289,7 +289,7 @@ def f1_score(
 ) -> np.ndarray | float:
     """Compute F1 score (harmonic mean of precision and sensitivity).
 
-            F1 = 2 × (precision × sensitivity) / (precision + sensitivity)
+                F1 = 2 × (precision × sensitivity) / (precision + sensitivity)
 
     Parameters
     ----------

@@ -37,9 +37,9 @@ from loguru import logger
 def copy_public_directories(source_dir: Path, output_dir: Path) -> None:
     """Copy all public/ directories from source to output directory.
 
-            This function recursively finds all 'public' directories in the source
-            and copies them to the corresponding location in the output directory,
-            preserving the directory structure.
+                This function recursively finds all 'public' directories in the source
+                and copies them to the corresponding location in the output directory,
+                preserving the directory structure.
 
     Parameters
     ----------
@@ -94,7 +94,7 @@ def find_imported_modules(notebook_path: Path) -> Set[str]:
     Returns
     -------
     Set[str]
-        Return value produced by find imported modules.
+        Set of imported modules.
     """
     with open(notebook_path) as f:
         content = f.read()
@@ -125,7 +125,7 @@ def find_module_dependencies(module_path: Path, module_name: str) -> Set[str]:
     Returns
     -------
     Set[str]
-        Return value produced by find module dependencies.
+        Set of module dependencies.
     """
     if not module_path.exists():
         return set()
@@ -184,7 +184,7 @@ def get_all_required_modules(notebook_path: Path, public_path: Path) -> Set[str]
     Returns
     -------
     Set[str]
-        Return value produced by get all required modules.
+        Set of all required modules.
     """
     direct_imports = find_imported_modules(notebook_path)
 
@@ -224,7 +224,7 @@ def convert_relative_to_absolute_imports(code: str, module_name: str) -> str:
     Returns
     -------
     str
-        Return value produced by convert relative to absolute imports.
+        String representation of relative to absolute imports.
     """
     module_parts = module_name.split(".")
 
@@ -360,7 +360,7 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
         Returns
         -------
         str
-            Return value produced by get inlined code with deps.
+            String representation of inlined code with deps.
         """
         result_parts = []
 
@@ -462,13 +462,13 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
     def parse_import_aliases(import_text: str) -> dict:
         """Parse import statement to extract name -> alias mappings.
 
-                        Examples:
-                            'foo, bar' -> {'foo': 'foo', 'bar': 'bar'}
-                            'foo as f, bar as b' -> {'foo': 'f', 'bar': 'b'}
-                            '(
-                    foo as f,
-                    bar,
-                )' -> {'foo': 'f', 'bar': 'bar'}
+                                Examples:
+                                    'foo, bar' -> {'foo': 'foo', 'bar': 'bar'}
+                                    'foo as f, bar as b' -> {'foo': 'f', 'bar': 'b'}
+                                    '(
+                            foo as f,
+                            bar,
+                        )' -> {'foo': 'f', 'bar': 'bar'}
 
         Parameters
         ----------
@@ -478,7 +478,7 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
         Returns
         -------
         dict
-            Return value produced by parse import aliases.
+            Dictionary containing import aliases.
         """
         aliases = {}
         # Remove parentheses and normalize whitespace
@@ -610,12 +610,12 @@ def _export_html_wasm(
 ) -> bool:
     """Export a single marimo notebook to HTML/WebAssembly format.
 
-            This function takes a marimo notebook (.py file) and exports it to HTML/WebAssembly format.
-            If as_app is True, the notebook is exported in "run" mode with code hidden, suitable for
-            applications. Otherwise, it's exported in "edit" mode, suitable for interactive notebooks.
+                This function takes a marimo notebook (.py file) and exports it to HTML/WebAssembly format.
+                If as_app is True, the notebook is exported in "run" mode with code hidden, suitable for
+                applications. Otherwise, it's exported in "edit" mode, suitable for interactive notebooks.
 
-            For apps, if a modules/ directory exists, modules will be automatically
-            inlined before export, and the inlined version is saved alongside the HTML.
+                For apps, if a modules/ directory exists, modules will be automatically
+                inlined before export, and the inlined version is saved alongside the HTML.
 
     Parameters
     ----------
@@ -629,7 +629,7 @@ def _export_html_wasm(
     Returns
     -------
     bool
-        Return value produced by export html wasm.
+        Result export html wasm.
     """
     inlined_path = None
     notebook_to_export = notebook_path
@@ -703,9 +703,9 @@ def _generate_index(
 ) -> None:
     """Generate an index.html file that lists all the notebooks.
 
-            This function creates an HTML index page that displays links to all the exported
-            notebooks. The index page includes the marimo logo and displays each notebook
-            with a formatted title and a link to open it.
+                This function creates an HTML index page that displays links to all the exported
+                notebooks. The index page includes the marimo logo and displays each notebook
+                with a formatted title and a link to open it.
 
     Parameters
     ----------
@@ -755,9 +755,9 @@ def _generate_index(
 def _export(folder: Path, output_dir: Path, as_app: bool = False) -> List[dict]:
     """Export all marimo notebooks in a folder to HTML/WebAssembly format.
 
-            This function finds all Python files in the specified folder and exports them
-            to HTML/WebAssembly format using the export_html_wasm function. It returns a
-            list of dictionaries containing the data needed for the template.
+                This function finds all Python files in the specified folder and exports them
+                to HTML/WebAssembly format using the export_html_wasm function. It returns a
+                list of dictionaries containing the data needed for the template.
 
     Parameters
     ----------
@@ -771,7 +771,7 @@ def _export(folder: Path, output_dir: Path, as_app: bool = False) -> List[dict]:
     Returns
     -------
     List[dict]
-        Return value produced by export.
+        List of export.
     """
     # Check if the folder exists
     if not folder.exists():
@@ -818,16 +818,16 @@ def main(
 ) -> None:
     """Main function to export marimo notebooks.
 
-            This function:
-            1. Parses command line arguments
-            2. Exports all marimo notebooks in the 'notebooks' and 'apps' directories
-            3. For apps, automatically inlines modules from modules/ directories
-            4. Copies all public/ directories to the output directory
-            5. Generates an index.html file that lists all the notebooks
+                This function:
+                1. Parses command line arguments
+                2. Exports all marimo notebooks in the 'notebooks' and 'apps' directories
+                3. For apps, automatically inlines modules from modules/ directories
+                4. Copies all public/ directories to the output directory
+                5. Generates an index.html file that lists all the notebooks
 
-            Command line arguments:
-                --output-dir: Directory where the exported files will be saved (default: _site)
-                --template: Path to the template file (default: templates/index.html.j2)
+                Command line arguments:
+                    --output-dir: Directory where the exported files will be saved (default: _site)
+                    --template: Path to the template file (default: templates/index.html.j2)
 
     Parameters
     ----------

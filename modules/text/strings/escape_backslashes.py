@@ -14,6 +14,6 @@ def escape_backslashes(str: str) -> str:
     Returns
     -------
     str
-        Return value produced by escape backslashes.
+        String representation of escape backslashes.
     """
     return str.replace("\\", "\\\\")

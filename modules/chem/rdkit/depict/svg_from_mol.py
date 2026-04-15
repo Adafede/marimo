@@ -34,7 +34,7 @@ def svg_from_mol(
     Returns
     -------
     str
-        Return value produced by svg from mol.
+        String representation of svg from mol.
     """
     drawer = MolDraw2DSVG(width, height)
     drawer.DrawMolecule(

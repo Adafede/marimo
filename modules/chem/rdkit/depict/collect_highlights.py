@@ -33,7 +33,7 @@ def iter_pattern_highlights(
     Yields
     ------
     tuple[list[int]
-        Generated values.
+        Yielded values for iter pattern highlights.
     """
     for pattern_name, _, smarts_mol, color in smarts_entries:
         matches = find_matches(mol=mol, pattern=smarts_mol)
@@ -68,7 +68,7 @@ def collect_highlights(
     Returns
     -------
     tuple[list[int], dict[int, RGBColor], list[str]]
-        Return value produced by collect highlights.
+        Tuple containing collect highlights.
     """
     atom_ids: list[int] = []
     colors: dict[int, RGBColor] = {}

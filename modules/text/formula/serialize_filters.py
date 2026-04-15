@@ -58,7 +58,7 @@ def serialize_elements(
     Returns
     -------
     dict[str, dict[str, int | None]]
-        Return value produced by serialize elements.
+        Dictionary containing serialize elements.
     """
     return {
         element_names.get(key, key): range_dict
@@ -83,7 +83,7 @@ def serialize_halogens(
     Returns
     -------
     dict[str, str]
-        Return value produced by serialize halogens.
+        Dictionary containing serialize halogens.
     """
     return {
         halogen_names.get(key, key): getattr(filters, attr)
@@ -111,7 +111,7 @@ def serialize_filters(
     Returns
     -------
     dict[str, Any] | None
-        Return value produced by serialize filters.
+        Dictionary containing serialize filters.
     """
     if not filters or not filters.is_active():
         return None

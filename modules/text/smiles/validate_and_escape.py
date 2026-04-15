@@ -17,7 +17,7 @@ def _looks_like_molfile(text: str) -> bool:
     Returns
     -------
     bool
-        Return value produced by looks like molfile.
+        Result looks like molfile.
     """
     upper = text.upper()
     return "M  END" in upper and (
@@ -41,7 +41,7 @@ def validate_and_escape(smiles: str | None) -> str | None:
     Returns
     -------
     str | None
-        Return value produced by validate and escape.
+        Result validate and escape.
     """
     if not smiles:
         return smiles

@@ -119,7 +119,7 @@ def contingency_from_presence(
 ) -> dict[str, np.ndarray | int]:
     """Build contingency table with optional diversity weighting.
 
-            Combines diversity_weight and contingency_table_2x2 in one call.
+                Combines diversity_weight and contingency_table_2x2 in one call.
 
     Parameters
     ----------
@@ -171,8 +171,8 @@ def observed_rate(
 ) -> np.ndarray | float:
     """Compute observed rate (MLE) = a / (a + c).
 
-            This is the maximum likelihood estimate of the rate,
-            before any Bayesian shrinkage.
+                This is the maximum likelihood estimate of the rate,
+                before any Bayesian shrinkage.
 
     Parameters
     ----------
@@ -198,8 +198,8 @@ def baseline_rate(
 ) -> np.ndarray | float:
     """Compute baseline rate θ₀ = feature_total / N.
 
-            This represents the expected rate if the group were a random
-            sample from the universe.
+                This represents the expected rate if the group were a random
+                sample from the universe.
 
     Parameters
     ----------

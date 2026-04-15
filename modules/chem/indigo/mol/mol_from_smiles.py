@@ -22,7 +22,7 @@ def mol_from_smiles(
     Returns
     -------
     IndigoObject | None
-        Return value produced by mol from smiles.
+        Result mol from smiles.
     """
     if not smiles:
         return None

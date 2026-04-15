@@ -16,7 +16,7 @@ def parse(smarts: str) -> Mol | None:
     Returns
     -------
     Mol | None
-        Return value produced by parse.
+        Result parse.
     """
     if not smarts:
         return None

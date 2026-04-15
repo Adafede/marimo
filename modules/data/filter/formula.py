@@ -32,7 +32,7 @@ def filter_formula(
     Returns
     -------
     pl.DataFrame
-        Return value produced by filter formula.
+        DataFrame containing formula.
     """
     if df.is_empty() or column not in df.columns:
         return df

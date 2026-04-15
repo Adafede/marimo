@@ -18,7 +18,7 @@ def execute_with_retry(
 ) -> bytes:
     """Execute SPARQL query with retry logic.
 
-            Optimized for fast feedback with minimal retries.
+                Optimized for fast feedback with minimal retries.
 
     Parameters
     ----------
@@ -40,7 +40,7 @@ def execute_with_retry(
     Returns
     -------
     bytes
-        Return value produced by execute with retry.
+        Result execute with retry.
     """
     if not query or not query.strip():
         raise ValueError("SPARQL query cannot be empty")

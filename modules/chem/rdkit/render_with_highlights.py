@@ -18,7 +18,7 @@ def render_with_highlights(
 ) -> str:
     """Render a molecule as SVG with highlighted substructures.
 
-            Deprecated: Use depict.with_highlights instead.
+                Deprecated: Use depict.with_highlights instead.
 
     Parameters
     ----------
@@ -38,7 +38,7 @@ def render_with_highlights(
     Returns
     -------
     str
-        Return value produced by render with highlights.
+        String representation of render with highlights.
     """
     return with_highlights(
         name=name,

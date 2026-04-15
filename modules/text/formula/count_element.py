@@ -18,6 +18,6 @@ def count_element(formula: str, element: str) -> int:
     Returns
     -------
     int
-        Return value produced by count element.
+        Numeric value for count element.
     """
     return parse(formula).get(element, 0)

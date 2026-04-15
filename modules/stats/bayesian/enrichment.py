@@ -22,8 +22,8 @@ def fold_change_credible_interval(
 ) -> tuple[np.ndarray | float, np.ndarray | float]:
     """Compute credible interval for log fold-change relative to baseline.
 
-            Transforms credible interval on probability scale [0, 1] to
-            log fold-change scale: log_base(θ / baseline).
+                Transforms credible interval on probability scale [0, 1] to
+                log fold-change scale: log_base(θ / baseline).
 
     Parameters
     ----------
@@ -41,7 +41,7 @@ def fold_change_credible_interval(
     Returns
     -------
     tuple[np.ndarray | float, np.ndarray | float]
-        Return value produced by fold change credible interval.
+        Tuple containing fold change credible interval.
     """
     # Get CI on probability scale
     p_lower, p_upper = credible_interval(alpha, beta, probability)
@@ -68,14 +68,14 @@ def rope_decision(
 ) -> tuple[np.ndarray | str, np.ndarray | float, np.ndarray | float]:
     """Classify enrichment using ROPE (Region of Practical Equivalence).
 
-            ROPE is the interval [-ε, +ε] on log fold-change scale where differences
-            are considered practically negligible.
+                ROPE is the interval [-ε, +ε] on log fold-change scale where differences
+                are considered practically negligible.
 
-            Classification logic:
-                - "enriched": CI entirely above +ε (strong evidence of enrichment)
-                - "depleted": CI entirely below -ε (strong evidence of depletion)
-                - "equivalent": CI entirely within [-ε, +ε] (negligible difference)
-                - "undecided": CI overlaps ROPE boundaries (insufficient evidence)
+                Classification logic:
+                    - "enriched": CI entirely above +ε (strong evidence of enrichment)
+                    - "depleted": CI entirely below -ε (strong evidence of depletion)
+                    - "equivalent": CI entirely within [-ε, +ε] (negligible difference)
+                    - "undecided": CI overlaps ROPE boundaries (insufficient evidence)
 
     Parameters
     ----------
@@ -95,7 +95,7 @@ def rope_decision(
     Returns
     -------
     tuple[np.ndarray | str, np.ndarray | float, np.ndarray | float]
-        Return value produced by rope decision.
+        Tuple containing rope decision.
     """
     t = np.maximum(np.asarray(baseline), 1e-10)
     a = np.maximum(np.asarray(alpha), 1e-6)
@@ -158,7 +158,7 @@ def enrichment_strength(
 ) -> dict[str, np.ndarray | float]:
     """Compute comprehensive enrichment statistics.
 
-            Returns posterior mean, mode, and fold-change metrics relative to baseline.
+                Returns posterior mean, mode, and fold-change metrics relative to baseline.
 
     Parameters
     ----------
@@ -174,7 +174,7 @@ def enrichment_strength(
     Returns
     -------
     dict[str, np.ndarray | float]
-        Return value produced by enrichment strength.
+        Dictionary containing enrichment strength.
     """
     from .beta import posterior_mean, posterior_mode
 
@@ -203,9 +203,9 @@ def hierarchical_prior_center(
 ) -> np.ndarray | float:
     """Blend parent posterior with global baseline for hierarchical prior.
 
-            prior_center = w × parent_posterior + (1-w) × global_baseline
+                prior_center = w × parent_posterior + (1-w) × global_baseline
 
-            where w controls how much we trust the parent's evidence.
+                where w controls how much we trust the parent's evidence.
 
     Parameters
     ----------
@@ -219,7 +219,7 @@ def hierarchical_prior_center(
     Returns
     -------
     np.ndarray | float
-        Return value produced by hierarchical prior center.
+        Result hierarchical prior center.
     """
     if not (0 <= hierarchical_weight <= 1):
         raise ValueError(

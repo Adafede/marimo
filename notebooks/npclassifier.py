@@ -73,7 +73,7 @@ def load_cache(cache_path: Path = CACHE_PATH) -> dict:
 @app.function
 def save_cache(cache: dict, cache_path: Path = CACHE_PATH) -> None:
     """Atomic write via tmp-file rename. Skips 5xx errors so transient failures aren't persisted.
-            Also writes a CSV sidecar next to the JSON file.
+                Also writes a CSV sidecar next to the JSON file.
 
     Parameters
     ----------

@@ -67,7 +67,7 @@ def create_filters(
     Returns
     -------
     FormulaFilters
-        Return value produced by create filters.
+        Constructed filters.
     """
     return FormulaFilters(
         exact_formula=exact_formula.strip() if exact_formula else None,

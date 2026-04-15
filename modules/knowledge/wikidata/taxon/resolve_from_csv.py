@@ -23,7 +23,7 @@ def extract_qid_from_url(url: str) -> str:
     Returns
     -------
     str
-        Return value produced by extract qid from url.
+        String representation of qid from url.
     """
     return url.split("/")[-1] if "/" in url else url
 
@@ -39,7 +39,7 @@ def parse_search_results(csv_bytes: bytes) -> list[tuple[str, str]]:
     Returns
     -------
     list[tuple[str, str]]
-        Return value produced by parse search results.
+        List of search results.
     """
     df = pl.scan_csv(source=io.BytesIO(csv_bytes))
     if df.is_empty():
@@ -63,7 +63,7 @@ def parse_connectivity(csv_bytes: bytes) -> dict[str, int]:
     Returns
     -------
     dict[str, int]
-        Return value produced by parse connectivity.
+        Dictionary containing connectivity.
     """
     df = pl.scan_csv(source=io.BytesIO(csv_bytes))
     return {
@@ -86,7 +86,7 @@ def parse_details(csv_bytes: bytes) -> dict[str, dict[str, str | None]]:
     Returns
     -------
     dict[str, dict[str, str | None]]
-        Return value produced by parse details.
+        Dictionary containing details.
     """
     df = pl.scan_csv(source=io.BytesIO(csv_bytes))
     return {
@@ -118,7 +118,7 @@ def resolve_from_csv(
     Returns
     -------
     tuple[list[tuple[str, str, str | None, str | None, int | None]], dict[str, int]]
-        Return value produced by resolve from csv.
+        Tuple containing resolve from csv.
     """
     if not HAS_POLARS:
         raise ImportError("polars is required for taxon resolution")

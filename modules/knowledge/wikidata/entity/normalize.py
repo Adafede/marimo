@@ -14,6 +14,6 @@ def normalize(value: str) -> str:
     Returns
     -------
     str
-        Return value produced by normalize.
+        String representation of normalize.
     """
     return value.strip().upper()

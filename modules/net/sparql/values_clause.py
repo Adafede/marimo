@@ -20,7 +20,7 @@ def values_clause(variable: str, values: Sequence[str], prefix: str = "") -> str
     Returns
     -------
     str
-        Return value produced by values clause.
+        String representation of values clause.
     """
     if not values:
         return ""

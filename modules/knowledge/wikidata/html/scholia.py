@@ -16,6 +16,6 @@ def scholia_url(qid: str) -> str:
     Returns
     -------
     str
-        Return value produced by scholia url.
+        String representation of scholia url.
     """
     return f"{SCHOLIA_BASE}{qid}"

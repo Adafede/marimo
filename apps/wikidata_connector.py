@@ -209,7 +209,7 @@ with app.setup:
         excluded_props: set[str],
     ) -> nx.Graph:
         """Fast multi-source BFS: expand from ALL terminals at once.
-                        Two SPARQL queries per depth level (outgoing + incoming). Returns Steiner tree.
+        Two SPARQL queries per depth level (outgoing + incoming). Returns Steiner tree.
 
         Parameters
         ----------

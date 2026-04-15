@@ -20,7 +20,7 @@ def find_matches(mol: Mol, pattern: Mol) -> tuple[tuple[int, ...], ...]:
     Returns
     -------
     tuple[tuple[int, ...], ...]
-        Return value produced by find matches.
+        Tuple containing matches.
     """
     return mol.GetSubstructMatches(pattern)
 
@@ -36,7 +36,7 @@ def iter_match_atoms(matches: tuple[tuple[int, ...], ...]) -> Iterator[int]:
     Yields
     ------
     int
-        Generated values.
+        Yielded values for iter match atoms.
     """
     for match in matches:
         yield from match

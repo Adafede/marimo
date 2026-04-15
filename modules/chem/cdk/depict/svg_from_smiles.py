@@ -32,7 +32,7 @@ def svg_from_smiles(
     Returns
     -------
     str
-        Return value produced by svg from smiles.
+        String representation of svg from smiles.
     """
     if not smiles:
         return ""
