@@ -27,7 +27,20 @@ HALOGEN_FILTERS = (
 
 
 def check_element_filters(formula: str, filters: FormulaFilters) -> bool:
-    """Check all element range filters."""
+    """Check all element range filters.
+
+Parameters
+----------
+formula : str
+    Formula.
+filters : FormulaFilters
+    Filters.
+
+Returns
+-------
+bool
+    Computed result.
+    """
     return all(
         not getattr(filters, attr).is_active()
         or match_element(
@@ -41,7 +54,20 @@ def check_element_filters(formula: str, filters: FormulaFilters) -> bool:
 
 
 def check_halogen_filters(formula: str, filters: FormulaFilters) -> bool:
-    """Check all halogen state filters."""
+    """Check all halogen state filters.
+
+Parameters
+----------
+formula : str
+    Formula.
+filters : FormulaFilters
+    Filters.
+
+Returns
+-------
+bool
+    Computed result.
+    """
     return all(
         match_halogen(
             formula=formula,
@@ -53,7 +79,20 @@ def check_halogen_filters(formula: str, filters: FormulaFilters) -> bool:
 
 
 def match_filters(formula: str, filters: FormulaFilters) -> bool:
-    """Check if a molecular formula matches all filter criteria."""
+    """Check if a molecular formula matches all filter criteria.
+
+Parameters
+----------
+formula : str
+    Formula.
+filters : FormulaFilters
+    Filters.
+
+Returns
+-------
+bool
+    Computed result.
+    """
     if not formula:
         return True
 

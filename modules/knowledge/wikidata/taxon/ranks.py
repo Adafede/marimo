@@ -4,7 +4,18 @@ __all__ = ["normalize_rank", "get_rank_label", "get_rank_order"]
 
 
 def normalize_rank(rank: str) -> str:
-    """Strip Wikidata IRI prefix and normalize to lowercase."""
+    """Strip Wikidata IRI prefix and normalize to lowercase.
+
+Parameters
+----------
+rank : str
+    Rank.
+
+Returns
+-------
+str
+    Computed result.
+    """
     if rank is None:
         return ""
     rank_str = str(rank)
@@ -21,7 +32,18 @@ def normalize_rank(rank: str) -> str:
 
 
 def get_rank_label(rank: str) -> str:
-    """Convert rank identifier (QID or name) to display label."""
+    """Convert rank identifier (QID or name) to display label.
+
+Parameters
+----------
+rank : str
+    Rank.
+
+Returns
+-------
+str
+    Computed result.
+    """
     if rank is None:
         return "Unknown"
     rank_normalized = normalize_rank(rank)
@@ -115,7 +137,18 @@ def get_rank_label(rank: str) -> str:
 
 
 def get_rank_order(rank: str) -> int:
-    """Get sort order for a rank (lower = coarser taxonomic level)."""
+    """Get sort order for a rank (lower = coarser taxonomic level).
+
+Parameters
+----------
+rank : str
+    Rank.
+
+Returns
+-------
+int
+    Computed result.
+    """
     if rank is None:
         return 999
     rank_normalized = normalize_rank(rank)

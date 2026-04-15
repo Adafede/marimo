@@ -13,14 +13,17 @@ ERROR_FAILED: str = "[!] Could not determine MCS."
 
 
 def find_mcs(mols: list[Mol]) -> tuple[str | None, str | None]:
-    """
-    Find Maximum Common Substructure SMARTS from a list of molecules.
+    """Find Maximum Common Substructure SMARTS from a list of molecules.
 
-    Args:
-        mols: List of RDKit Mol objects
+Parameters
+----------
+mols : list[Mol]
+    Mols.
 
-    Returns:
-        Tuple of (smarts_string, error_message)
+Returns
+-------
+tuple[str | None, str | None]
+    Computed result.
     """
     if len(mols) < MIN_MOLECULES:
         return None, ERROR_INSUFFICIENT

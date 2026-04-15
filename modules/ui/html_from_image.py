@@ -12,7 +12,22 @@ def build_style(
     max_height: str,
     rounded: bool,
 ) -> str:
-    """Build CSS style string for an <img> tag."""
+    """Build CSS style string for an <img> tag.
+
+Parameters
+----------
+max_width : str
+    Max width.
+max_height : str
+    Max height.
+rounded : bool
+    Rounded.
+
+Returns
+-------
+str
+    Computed result.
+    """
     styles = {
         "max-width": max_width,
         "max-height": max_height,
@@ -30,18 +45,25 @@ def html_from_image(
     rounded: bool = True,
     lazy: bool = True,
 ) -> str:
-    """
-    Generate an HTML <img> tag for a chemical structure depiction or any image.
+    """Generate an HTML <img> tag for a chemical structure depiction or any image.
 
-    Args:
-        img: Image source URL or data URI
-        max_width: Maximum width of the image (CSS)
-        max_height: Maximum height of the image (CSS)
-        rounded: Whether to apply border-radius
-        lazy: Whether to add lazy loading attribute
+Parameters
+----------
+img : str | None
+    Img.
+max_width : str
+    DEFAULT_MAX_WIDTH. Default is DEFAULT_MAX_WIDTH.
+max_height : str
+    DEFAULT_MAX_HEIGHT. Default is DEFAULT_MAX_HEIGHT.
+rounded : bool
+    True. Default is True.
+lazy : bool
+    True. Default is True.
 
-    Returns:
-        HTML <img> tag as a string. Returns empty string if img is empty.
+Returns
+-------
+str
+    Computed result.
     """
     if not img:
         return ""

@@ -14,14 +14,17 @@ from .patterns_compound import (
 
 
 def query_compounds_by_taxon(qid: str) -> str:
-    """
-    Build SPARQL query to find compounds in a specific taxon and its descendants.
+    """Build SPARQL query to find compounds in a specific taxon and its descendants.
 
-    Args:
-        qid: Wikidata QID of the taxon (e.g., "Q12345")
+Parameters
+----------
+qid : str
+    Qid.
 
-    Returns:
-        Complete SPARQL query string
+Returns
+-------
+str
+    Computed result.
     """
     return f"""
     {PREFIXES}
@@ -44,11 +47,12 @@ def query_compounds_by_taxon(qid: str) -> str:
 
 
 def query_all_compounds() -> str:
-    """
-    Build SPARQL query to retrieve all compounds.
+    """Build SPARQL query to retrieve all compounds.
 
-    Returns:
-        Complete SPARQL query string
+Returns
+-------
+str
+    Computed result.
     """
     return f"""
     {PREFIXES}

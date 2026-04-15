@@ -395,7 +395,18 @@ with app.setup:
     PROXY = "https://corsproxy.marimo.app/"
 
     def get_data_path(filename: str) -> str:
-        """Return local path or proxied remote URL depending on _USE_LOCAL."""
+        """Return local path or proxied remote URL depending on _USE_LOCAL.
+
+Parameters
+----------
+filename : str
+    Filename.
+
+Returns
+-------
+str
+    Computed result.
+        """
         if _USE_LOCAL:
             return f"{LOCAL_BASE_PATH}/{filename}"
         else:
@@ -463,6 +474,17 @@ def write_parquet_stream(
       to Arrow separately to avoid building one large Arrow Table in memory.
     - If pyarrow is not available or fails, fall back to Polars' writer.
     - Handles empty DataFrames safely.
+
+Parameters
+----------
+df : pl.DataFrame
+    Df.
+path : str
+    Path.
+compression : Literal['lz4', 'uncompressed', 'snappy', 'gzip', 'brotli', 'zstd']
+    Default is 'snappy'.
+row_group_size : int
+    Default is 2000.
     """
     # Fast-path for empty frames
     try:
@@ -527,7 +549,22 @@ def validate_columns(
     required: Iterable[str],
     name: str,
 ) -> pl.DataFrame:
-    """Validate dataframe has required columns with helpful error messages."""
+    """Validate dataframe has required columns with helpful error messages.
+
+Parameters
+----------
+df : pl.DataFrame
+    Df.
+required : Iterable[str]
+    Required.
+name : str
+    Name.
+
+Returns
+-------
+pl.DataFrame
+    Computed result.
+    """
     if df is None or df.is_empty():
         logging.warning(f"{name}: Empty dataframe")
         return df
@@ -555,6 +592,22 @@ def read_table(
     - For local files (and when not running under Pyodide), prefer `pl.scan_csv`
       + collect(engine="streaming") to reduce peak memory.
     - For remote/HTTP resources or Pyodide, fall back to `pl.read_csv`.
+
+Parameters
+----------
+path : str
+    Path.
+separator : str
+    Default is ','.
+expected : Iterable[str] | None
+    None. Default is None.
+name : str
+    Default is 'table'.
+
+Returns
+-------
+pl.DataFrame
+    Computed result.
     """
     p = str(path)
 
@@ -585,7 +638,20 @@ def read_table(
 
 @app.function
 def load_fragments(path: str, min_freq: int) -> pl.DataFrame:
-    """Load fragment SMILES, filtering by minimum molecule frequency."""
+    """Load fragment SMILES, filtering by minimum molecule frequency.
+
+Parameters
+----------
+path : str
+    Path.
+min_freq : int
+    Min freq.
+
+Returns
+-------
+pl.DataFrame
+    Computed result.
+    """
     return read_table(
         path,
         expected={"SMILES", "MoleculeFrequency"},
@@ -595,7 +661,18 @@ def load_fragments(path: str, min_freq: int) -> pl.DataFrame:
 
 @app.function
 def load_compound_fragment_mapping(path: str) -> pl.DataFrame:
-    """Parse compound-to-fragment mapping file."""
+    """Parse compound-to-fragment mapping file.
+
+Parameters
+----------
+path : str
+    Path.
+
+Returns
+-------
+pl.DataFrame
+    Computed result.
+    """
     return (
         pl.read_csv(
             path,
@@ -621,7 +698,22 @@ def build_compound_scaffold_table(
     mapping: pl.DataFrame,
     fragments: pl.DataFrame,
 ) -> pl.DataFrame:
-    """Build compound-scaffold table with minimal memory footprint."""
+    """Build compound-scaffold table with minimal memory footprint.
+
+Parameters
+----------
+compounds : pl.DataFrame
+    Compounds.
+mapping : pl.DataFrame
+    Mapping.
+fragments : pl.DataFrame
+    Fragments.
+
+Returns
+-------
+pl.DataFrame
+    Computed result.
+    """
 
     if (
         mapping is None
@@ -639,7 +731,18 @@ def build_compound_scaffold_table(
     # Filter fragments_str BEFORE exploding
     # This reduces the explosion size
     def filter_valid_fragments(fragments_str: str) -> str | None:
-        """Keep only valid fragments in comma-separated string."""
+        """Keep only valid fragments in comma-separated string.
+
+Parameters
+----------
+fragments_str : str
+    Fragments str.
+
+Returns
+-------
+str | None
+    Computed result.
+        """
         if not fragments_str:
             return ""
         frags = fragments_str.split(",")
@@ -672,7 +775,24 @@ def build_hierarchy_lineage(
     parent: str,
     focus: pl.Series | None = None,
 ) -> pl.DataFrame:
-    """Build ancestor lineage from parent-child edges via BFS traversal."""
+    """Build ancestor lineage from parent-child edges via BFS traversal.
+
+Parameters
+----------
+edges : pl.DataFrame
+    Edges.
+child : str
+    Child.
+parent : str
+    Parent.
+focus : pl.Series | None
+    None. Default is None.
+
+Returns
+-------
+pl.DataFrame
+    Computed result.
+    """
     validate_columns(edges, {child, parent}, "hierarchy")
     e = edges.select([child, parent]).drop_nulls().unique()
     if e.is_empty():
@@ -758,7 +878,18 @@ def build_hierarchy_lineage(
 
 @app.function
 def build_compound_lineage(compound_scaffold: pl.DataFrame) -> pl.DataFrame:
-    """Map compounds to their scaffolds (flat, distance=0)."""
+    """Map compounds to their scaffolds (flat, distance=0).
+
+Parameters
+----------
+compound_scaffold : pl.DataFrame
+    Compound scaffold.
+
+Returns
+-------
+pl.DataFrame
+    Computed result.
+    """
     validate_columns(compound_scaffold, {"compound", "scaffold"}, "compound_scaffold")
     return compound_scaffold.select(
         [
@@ -778,8 +909,7 @@ def run_hierarchical_analysis(
     taxon_rank: pl.DataFrame | None = None,
     cfg: EnrichmentConfigDict | dict | None = None,
 ) -> pl.LazyFrame:
-    """
-    Memory-optimized Bayesian enrichment analysis.
+    """Memory-optimized Bayesian enrichment analysis.
 
     Returns a LazyFrame that scans parquet files on disk - data is only
     materialized when needed, minimizing memory usage.
@@ -790,6 +920,26 @@ def run_hierarchical_analysis(
     - Use Float32 for intermediate calculations
     - Drop columns early when not needed
     - Return LazyFrame instead of DataFrame
+
+Parameters
+----------
+compound_taxon : pl.DataFrame
+    Compound taxon.
+compound_lineage : pl.DataFrame
+    Compound lineage.
+taxon_lineage : pl.DataFrame
+    Taxon lineage.
+taxon_name : pl.DataFrame
+    Taxon name.
+taxon_rank : pl.DataFrame | None
+    None. Default is None.
+cfg : EnrichmentConfigDict | dict | None
+    None. Default is None.
+
+Returns
+-------
+pl.LazyFrame
+    Computed result.
     """
     start = time.time()
     if cfg is None:
@@ -999,8 +1149,7 @@ def process_rank_minimal(
     cfg: dict,
     batch_size: int = 2500,
 ) -> pl.DataFrame:
-    """
-    Process single rank with phylogenetic independence-aware diversity weighting.
+    """Process single rank with phylogenetic independence-aware diversity weighting.
 
     Returns DataFrame with only essential columns:
     - compound_ancestor, taxon_ancestor, taxon_rank
@@ -1010,6 +1159,26 @@ def process_rank_minimal(
 
     Key improvement: Uses phylogenetic distances to compute effective independent
     taxa count. 5 sister species contribute less evidence than 3 distant organisms.
+
+Parameters
+----------
+rank : str
+    Rank.
+base_evidence : pl.DataFrame
+    Base evidence.
+taxon_lineage : pl.DataFrame
+    Taxon lineage.
+N : int
+    N.
+cfg : dict
+    Cfg.
+batch_size : int
+    Default is 2500.
+
+Returns
+-------
+pl.DataFrame
+    Computed result.
     """
 
     # Map to this rank
@@ -1440,11 +1609,19 @@ def process_rank_minimal(
 
 @app.function
 def compute_ci_rope(batch: pl.DataFrame, CI_PROB: float, ROPE_HW: float):
-    """
-    CI/ROPE computation using numpy.
+    """CI/ROPE computation using numpy.
 
     Uses numpy for scipy functions but minimizes intermediate allocations.
     Handles numerical edge cases for very small baseline rates.
+
+Parameters
+----------
+batch : pl.DataFrame
+    Batch.
+CI_PROB : float
+    Ci prob.
+ROPE_HW : float
+    Rope hw.
     """
 
     # Extract to numpy (unavoidable for scipy)
@@ -1516,11 +1693,32 @@ def discover_top_taxa(
     min_log2fc: float = MIN_LOG2FC,
     top_n: int = TOP_N_TAXA,
 ) -> list[str]:
-    """
-    Select top N taxa with most distinctive chemistry at this rank.
+    """Select top N taxa with most distinctive chemistry at this rank.
 
     Returns list of taxon IDs (taxon_ancestor).
     Works with both LazyFrame and DataFrame.
+
+Parameters
+----------
+markers : pl.LazyFrame | pl.DataFrame
+    Markers.
+rank : str
+    Rank.
+min_prob : float
+    MIN_PROB. Default is MIN_PROB.
+min_ess : float
+    MIN_ESS. Default is MIN_ESS.
+min_obs : float
+    MIN_OBS. Default is MIN_OBS.
+min_log2fc : float
+    MIN_LOG2FC. Default is MIN_LOG2FC.
+top_n : int
+    TOP_N_TAXA. Default is TOP_N_TAXA.
+
+Returns
+-------
+list[str]
+    Computed result.
     """
     # Build query lazily
     rank_markers = (
@@ -1578,9 +1776,32 @@ def get_markers_for_top_taxa(
     min_log2fc: float = MIN_LOG2FC,
     top_n_per_taxon: int = TOP_N_MARKERS_PER_TAXON,
 ) -> pl.DataFrame:
-    """
-    Get top markers for each of the selected top taxa.
+    """Get top markers for each of the selected top taxa.
     Works with both LazyFrame and DataFrame.
+
+Parameters
+----------
+markers : pl.LazyFrame | pl.DataFrame
+    Markers.
+rank : str
+    Rank.
+top_taxa : list
+    Top taxa.
+min_prob : float
+    MIN_PROB. Default is MIN_PROB.
+min_ess : float
+    MIN_ESS. Default is MIN_ESS.
+min_obs : float
+    MIN_OBS. Default is MIN_OBS.
+min_log2fc : float
+    MIN_LOG2FC. Default is MIN_LOG2FC.
+top_n_per_taxon : int
+    TOP_N_MARKERS_PER_TAXON. Default is TOP_N_MARKERS_PER_TAXON.
+
+Returns
+-------
+pl.DataFrame
+    Computed result.
     """
     # Handle empty top_taxa
     if not top_taxa:
@@ -1631,8 +1852,19 @@ def create_taxa_marker_heatmap(
     markers_df: pl.DataFrame,
     rank: str,
 ) -> alt.Chart | mo.Html:
-    """
-    Heatmap showing top 10 taxa (rows) × their markers (columns).
+    """Heatmap showing top 10 taxa (rows) × their markers (columns).
+
+Parameters
+----------
+markers_df : pl.DataFrame
+    Markers df.
+rank : str
+    Rank.
+
+Returns
+-------
+alt.Chart | mo.Html
+    Computed result.
     """
     if markers_df.is_empty():
         return mo.md(f"*No {rank}-level data*")
@@ -1735,8 +1967,19 @@ def create_taxa_summary_table(
     markers_df: pl.DataFrame,
     rank: str,
 ) -> pl.DataFrame:
-    """
-    Summary table: one row per taxon showing its marker statistics.
+    """Summary table: one row per taxon showing its marker statistics.
+
+Parameters
+----------
+markers_df : pl.DataFrame
+    Markers df.
+rank : str
+    Rank.
+
+Returns
+-------
+pl.DataFrame
+    Computed result.
     """
     if markers_df.is_empty():
         return pl.DataFrame()
@@ -1774,8 +2017,19 @@ def create_markers_detail_table(
     markers_df: pl.DataFrame,
     rank: str,
 ) -> pl.DataFrame:
-    """
-    Detailed table: one row per marker showing which taxa it's in.
+    """Detailed table: one row per marker showing which taxa it's in.
+
+Parameters
+----------
+markers_df : pl.DataFrame
+    Markers df.
+rank : str
+    Rank.
+
+Returns
+-------
+pl.DataFrame
+    Computed result.
     """
     if markers_df.is_empty():
         return pl.DataFrame()
@@ -2498,7 +2752,13 @@ def summary_stats(compound_scaffold, markers):
 
 @app.cell
 def lineage_profile_viz(markers):
-    """Scaffold selector for lineage profile visualization."""
+    """Scaffold selector for lineage profile visualization.
+
+Parameters
+----------
+markers : Any
+    Markers.
+    """
 
     mo.md("---")
 
@@ -2869,7 +3129,19 @@ def methods_summary(
     effective_config,
     markers,
 ):
-    """Statistical methods summary for reproducibility and publication."""
+    """Statistical methods summary for reproducibility and publication.
+
+Parameters
+----------
+compound_scaffold : Any
+    Compound scaffold.
+compound_taxon : pl.DataFrame
+    Compound taxon.
+effective_config : Any
+    Effective config.
+markers : Any
+    Markers.
+    """
 
     # Count key statistics - collect lazily
     n_compounds = compound_scaffold.get_column("compound_smiles").n_unique()

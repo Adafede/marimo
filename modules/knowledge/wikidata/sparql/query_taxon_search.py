@@ -4,7 +4,18 @@ __all__ = ["query_taxon_search"]
 
 
 def query_taxon_search(taxon_name: str) -> str:
-    """Build SPARQL query to find taxa by scientific name."""
+    """Build SPARQL query to find taxa by scientific name.
+
+Parameters
+----------
+taxon_name : str
+    Taxon name.
+
+Returns
+-------
+str
+    Computed result.
+    """
     return f"""
     PREFIX wdt: <http://www.wikidata.org/prop/direct/>
     SELECT

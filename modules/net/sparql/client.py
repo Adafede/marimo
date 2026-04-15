@@ -26,7 +26,20 @@ class Client:
         self.user_agent = user_agent
 
     def _request(self, query: str, accept: str) -> bytes:
-        """Execute HTTP request to SPARQL endpoint."""
+        """Execute HTTP request to SPARQL endpoint.
+
+Parameters
+----------
+query : str
+    Query.
+accept : str
+    Accept.
+
+Returns
+-------
+bytes
+    Computed result.
+        """
         headers = {
             "Accept": accept,
             "Content-Type": "application/x-www-form-urlencoded",
@@ -43,9 +56,31 @@ class Client:
             return response.read()
 
     def query_csv(self, query: str) -> bytes:
-        """Execute query returning CSV bytes."""
+        """Execute query returning CSV bytes.
+
+Parameters
+----------
+query : str
+    Query.
+
+Returns
+-------
+bytes
+    Computed result.
+        """
         return self._request(query, "text/csv")
 
     def query_json(self, query: str) -> bytes:
-        """Execute query returning JSON bytes."""
+        """Execute query returning JSON bytes.
+
+Parameters
+----------
+query : str
+    Query.
+
+Returns
+-------
+bytes
+    Computed result.
+        """
         return self._request(query, "application/sparql-results+json")

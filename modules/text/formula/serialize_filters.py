@@ -46,7 +46,20 @@ def serialize_elements(
     filters: FormulaFilters,
     element_names: dict[str, str],
 ) -> dict[str, dict[str, int | None]]:
-    """Serialize element range filters to dictionary."""
+    """Serialize element range filters to dictionary.
+
+Parameters
+----------
+filters : FormulaFilters
+    Filters.
+element_names : dict[str, str]
+    Element names.
+
+Returns
+-------
+dict[str, dict[str, int | None]]
+    Computed result.
+    """
     return {
         element_names.get(key, key): range_dict
         for key, attr in ELEMENT_ATTRS
@@ -58,7 +71,20 @@ def serialize_halogens(
     filters: FormulaFilters,
     halogen_names: dict[str, str],
 ) -> dict[str, str]:
-    """Serialize active halogen filters to dictionary."""
+    """Serialize active halogen filters to dictionary.
+
+Parameters
+----------
+filters : FormulaFilters
+    Filters.
+halogen_names : dict[str, str]
+    Halogen names.
+
+Returns
+-------
+dict[str, str]
+    Computed result.
+    """
     return {
         halogen_names.get(key, key): getattr(filters, attr)
         for key, attr in HALOGEN_ATTRS
@@ -71,7 +97,22 @@ def serialize_filters(
     element_names: dict[str, str] | None = None,
     halogen_names: dict[str, str] | None = None,
 ) -> dict[str, Any] | None:
-    """Convert FormulaFilters to dictionary for metadata export."""
+    """Convert FormulaFilters to dictionary for metadata export.
+
+Parameters
+----------
+filters : FormulaFilters | None
+    Filters.
+element_names : dict[str, str] | None
+    None. Default is None.
+halogen_names : dict[str, str] | None
+    None. Default is None.
+
+Returns
+-------
+dict[str, Any] | None
+    Computed result.
+    """
     if not filters or not filters.is_active():
         return None
 

@@ -11,7 +11,18 @@ CACHE_SIZE: int = 256
 
 @lru_cache(maxsize=CACHE_SIZE)
 def parse_cached(formula: str) -> tuple[tuple[str, int], ...]:
-    """Parse molecular formula with caching. Returns tuple for hashability."""
+    """Parse molecular formula with caching. Returns tuple for hashability.
+
+Parameters
+----------
+formula : str
+    Formula.
+
+Returns
+-------
+tuple[tuple[str, int], ...]
+    Computed result.
+    """
     if not formula:
         return ()
     return tuple(parse(formula).items())

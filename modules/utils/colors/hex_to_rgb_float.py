@@ -4,7 +4,18 @@ __all__ = ["hex_to_rgb_float"]
 
 
 def hex_to_rgb_float(hex_color: str) -> tuple[float, float, float]:
-    """Convert hex color string to RGB float tuple (0.0-1.0 range)."""
+    """Convert hex color string to RGB float tuple (0.0-1.0 range).
+
+Parameters
+----------
+hex_color : str
+    Hex color.
+
+Returns
+-------
+tuple[float, float, float]
+    Computed result.
+    """
     hex_color = hex_color.lstrip("#")
     r = int(hex_color[0:2], 16) / 255.0
     g = int(hex_color[2:4], 16) / 255.0

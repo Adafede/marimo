@@ -9,14 +9,17 @@ from .smiles.parse_many import parse_many
 def find_mcs_smarts(
     smiles_list: list[tuple[str, str]],
 ) -> tuple[str | None, str | None]:
-    """
-    Find Maximum Common Substructure SMARTS from a list of SMILES.
+    """Find Maximum Common Substructure SMARTS from a list of SMILES.
 
-    Args:
-        smiles_list: List of (name, smiles) tuples
+Parameters
+----------
+smiles_list : list[tuple[str, str]]
+    Smiles list.
 
-    Returns:
-        Tuple of (smarts_string, error_message)
+Returns
+-------
+tuple[str | None, str | None]
+    Computed result.
     """
     valid_mols = parse_many(smiles_list=smiles_list)
     return find_mcs(mols=valid_mols)

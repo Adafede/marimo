@@ -11,7 +11,24 @@ def filter_by_values(
     values: list,
     exclude: bool = False,
 ) -> pl.DataFrame:
-    """Filter DataFrame to rows where column matches (or excludes) given values."""
+    """Filter DataFrame to rows where column matches (or excludes) given values.
+
+Parameters
+----------
+df : pl.DataFrame
+    Df.
+column : str
+    Column.
+values : list
+    Values.
+exclude : bool
+    False. Default is False.
+
+Returns
+-------
+pl.DataFrame
+    Computed result.
+    """
     if column not in df.columns:
         return df
 

@@ -10,7 +10,18 @@ ELEMENT_PATTERN = re.compile(pattern=r"([A-Z][a-z]?)(\d*)")
 
 
 def parse(formula: str) -> dict[str, int]:
-    """Parse molecular formula into element counts."""
+    """Parse molecular formula into element counts.
+
+Parameters
+----------
+formula : str
+    Formula.
+
+Returns
+-------
+dict[str, int]
+    Computed result.
+    """
     if not formula:
         return {}
     normalized = normalize(formula)

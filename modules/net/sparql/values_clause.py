@@ -6,7 +6,22 @@ from collections.abc import Sequence
 
 
 def values_clause(variable: str, values: Sequence[str], prefix: str = "") -> str:
-    """Build a VALUES clause for SPARQL query."""
+    """Build a VALUES clause for SPARQL query.
+
+Parameters
+----------
+variable : str
+    Variable.
+values : Sequence[str]
+    Values.
+prefix : str
+    Default is ''.
+
+Returns
+-------
+str
+    Computed result.
+    """
     if not values:
         return ""
     formatted = " ".join(f"{prefix}{v}" for v in values)

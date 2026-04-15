@@ -11,7 +11,24 @@ def match_element(
     min_count: int | None = None,
     max_count: int | None = None,
 ) -> bool:
-    """Check if element count in formula is within specified range."""
+    """Check if element count in formula is within specified range.
+
+Parameters
+----------
+formula : str
+    Formula.
+element : str
+    Element.
+min_count : int | None
+    None. Default is None.
+max_count : int | None
+    None. Default is None.
+
+Returns
+-------
+bool
+    Computed result.
+    """
     cnt = count_element(formula, element)
     if min_count is not None and cnt < min_count:
         return False

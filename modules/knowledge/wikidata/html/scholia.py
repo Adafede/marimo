@@ -6,5 +6,16 @@ SCHOLIA_BASE = "https://scholia.toolforge.org/"
 
 
 def scholia_url(qid: str) -> str:
-    """Build Scholia URL from QID."""
+    """Build Scholia URL from QID.
+
+Parameters
+----------
+qid : str
+    Qid.
+
+Returns
+-------
+str
+    Computed result.
+    """
     return f"{SCHOLIA_BASE}{qid}"

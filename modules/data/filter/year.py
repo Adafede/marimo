@@ -15,7 +15,24 @@ def filter_year(
     year_end: int | None = None,
     column: str = DEFAULT_DATE_COLUMN,
 ) -> pl.DataFrame:
-    """Filter DataFrame by year range on a date column."""
+    """Filter DataFrame by year range on a date column.
+
+Parameters
+----------
+df : pl.DataFrame
+    Df.
+year_start : int | None
+    None. Default is None.
+year_end : int | None
+    None. Default is None.
+column : str
+    DEFAULT_DATE_COLUMN. Default is DEFAULT_DATE_COLUMN.
+
+Returns
+-------
+pl.DataFrame
+    Computed result.
+    """
     return filter_range(
         df,
         column,

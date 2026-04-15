@@ -9,7 +9,18 @@ ENTITY_PREFIX = "http://www.wikidata.org/entity/"
 
 
 def extract_qid_from_url_or_qid(value: str | int) -> str:
-    """Extract QID from URL, int, or return as proper QID string."""
+    """Extract QID from URL, int, or return as proper QID string.
+
+Parameters
+----------
+value : str | int
+    Value.
+
+Returns
+-------
+str
+    Computed result.
+    """
     if value is None or value == "":
         return ""
 
@@ -33,7 +44,20 @@ def extract_qid_from_url_or_qid(value: str | int) -> str:
 
 
 def link_from_qid(url_or_qid: str, color: str = "#3377c4") -> str:
-    """Create styled HTML link to Scholia for a Wikidata QID or entity URL."""
+    """Create styled HTML link to Scholia for a Wikidata QID or entity URL.
+
+Parameters
+----------
+url_or_qid : str
+    Url or qid.
+color : str
+    Default is '#3377c4'.
+
+Returns
+-------
+str
+    Computed result.
+    """
     if not url_or_qid:
         return ""
     qid = extract_qid_from_url_or_qid(value=url_or_qid)

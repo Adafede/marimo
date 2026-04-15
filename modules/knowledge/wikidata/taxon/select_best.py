@@ -10,14 +10,21 @@ def select_best(
     connectivity_map: dict[str, int],
     original_name: str,
 ) -> tuple[str | None, bool, list[Any]]:
-    """
-    Select the best matching taxon from a list of candidates.
+    """Select the best matching taxon from a list of candidates.
 
-    Returns:
-        Tuple of:
-        - Selected QID (or None if no matches)
-        - Whether it was an exact match
-        - List of matches for disambiguation display
+Parameters
+----------
+matches : list[tuple[str, str, str | None, str | None, int | None]]
+    Matches.
+connectivity_map : dict[str, int]
+    Connectivity map.
+original_name : str
+    Original name.
+
+Returns
+-------
+tuple[str | None, bool, list[Any]]
+    Computed result.
     """
     if not matches:
         return None, False, []
