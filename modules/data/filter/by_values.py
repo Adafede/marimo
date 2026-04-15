@@ -13,21 +13,21 @@ def filter_by_values(
 ) -> pl.DataFrame:
     """Filter DataFrame to rows where column matches (or excludes) given values.
 
-Parameters
-----------
-df : pl.DataFrame
-    Df.
-column : str
-    Column.
-values : list
-    Values.
-exclude : bool
-    False. Default is False.
+    Parameters
+    ----------
+    df : pl.DataFrame
+        Df.
+    column : str
+        Column.
+    values : list
+        Values.
+    exclude : bool
+        False. Default is False.
 
-Returns
--------
-pl.DataFrame
-    Computed result.
+    Returns
+    -------
+    pl.DataFrame
+        Return value produced by filter by values.
     """
     if column not in df.columns:
         return df

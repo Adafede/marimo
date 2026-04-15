@@ -6,14 +6,14 @@ __all__ = ["normalize"]
 def normalize(value: str) -> str:
     """Normalize a QID to uppercase.
 
-Parameters
-----------
-value : str
-    Value.
+    Parameters
+    ----------
+    value : str
+        Value.
 
-Returns
--------
-str
-    Computed result.
+    Returns
+    -------
+    str
+        Return value produced by normalize.
     """
     return value.strip().upper()

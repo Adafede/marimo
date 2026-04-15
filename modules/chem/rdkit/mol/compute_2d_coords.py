@@ -9,9 +9,9 @@ from rdkit.Chem.rdDepictor import Compute2DCoords
 def compute_2d_coords(mol: Mol) -> None:
     """Compute 2D coordinates for molecule depiction (modifies mol in place).
 
-Parameters
-----------
-mol : Mol
-    Mol.
+    Parameters
+    ----------
+    mol : Mol
+        Mol.
     """
     Compute2DCoords(mol)

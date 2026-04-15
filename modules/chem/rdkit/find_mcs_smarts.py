@@ -11,15 +11,15 @@ def find_mcs_smarts(
 ) -> tuple[str | None, str | None]:
     """Find Maximum Common Substructure SMARTS from a list of SMILES.
 
-Parameters
-----------
-smiles_list : list[tuple[str, str]]
-    Smiles list.
+    Parameters
+    ----------
+    smiles_list : list[tuple[str, str]]
+        Smiles list.
 
-Returns
--------
-tuple[str | None, str | None]
-    Computed result.
+    Returns
+    -------
+    tuple[str | None, str | None]
+        Return value produced by find mcs smarts.
     """
     valid_mols = parse_many(smiles_list=smiles_list)
     return find_mcs(mols=valid_mols)

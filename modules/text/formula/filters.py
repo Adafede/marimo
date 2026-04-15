@@ -26,10 +26,10 @@ class FormulaFilters:
     def is_active(self) -> bool:
         """Check if any filter is active.
 
-Returns
--------
-bool
-    Computed result.
+        Returns
+        -------
+        bool
+            Return value produced by is active.
         """
         if self.exact_formula and self.exact_formula.strip():
             return True

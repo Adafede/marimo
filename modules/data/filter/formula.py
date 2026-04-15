@@ -18,21 +18,21 @@ def filter_formula(
 ) -> pl.DataFrame:
     """Filter DataFrame by molecular formula criteria.
 
-Parameters
-----------
-df : pl.DataFrame
-    Df.
-filters : Any
-    Filters.
-column : str
-    DEFAULT_FORMULA_COLUMN. Default is DEFAULT_FORMULA_COLUMN.
-match_func : Callable[[str, Any], bool] | None
-    None. Default is None.
+    Parameters
+    ----------
+    df : pl.DataFrame
+        Df.
+    filters : Any
+        Filters.
+    column : str
+        DEFAULT_FORMULA_COLUMN. Default is DEFAULT_FORMULA_COLUMN.
+    match_func : Callable[[str, Any], bool] | None
+        None. Default is None.
 
-Returns
--------
-pl.DataFrame
-    Computed result.
+    Returns
+    -------
+    pl.DataFrame
+        Return value produced by filter formula.
     """
     if df.is_empty() or column not in df.columns:
         return df

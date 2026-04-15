@@ -112,17 +112,17 @@ with app.setup:
     def sparql(query: str, timeout: int = 60) -> list[dict]:
         """Execute SPARQL query via POST to avoid URL length limits.
 
-Parameters
-----------
-query : str
-    Query.
-timeout : int
-    Default is 60.
+        Parameters
+        ----------
+        query : str
+            Query.
+        timeout : int
+            Default is 60.
 
-Returns
--------
-list[dict]
-    Computed result.
+        Returns
+        -------
+        list[dict]
+            SPARQL variable name.
         """
         r = requests.post(
             QLEVER_ENDPOINT,
@@ -145,15 +145,15 @@ list[dict]
     def fetch_labels_batch(entities: list[str]) -> dict[str, str]:
         """Fetch labels for multiple entities in a single query.
 
-Parameters
-----------
-entities : list[str]
-    Entities.
+        Parameters
+        ----------
+        entities : list[str]
+            Entities.
 
-Returns
--------
-dict[str, str]
-    Computed result.
+        Returns
+        -------
+        dict[str, str]
+            QID.
         """
         if not entities:
             return {}
@@ -173,15 +173,15 @@ dict[str, str]
     def fetch_prop_labels_batch(pids: list[str]) -> dict[str, str]:
         """Fetch property labels in a single query.
 
-Parameters
-----------
-pids : list[str]
-    Pids.
+        Parameters
+        ----------
+        pids : list[str]
+            Pids.
 
-Returns
--------
-dict[str, str]
-    Computed result.
+        Returns
+        -------
+        dict[str, str]
+            PID.
         """
         if not pids:
             return {}
@@ -209,23 +209,23 @@ dict[str, str]
         excluded_props: set[str],
     ) -> nx.Graph:
         """Fast multi-source BFS: expand from ALL terminals at once.
-        Two SPARQL queries per depth level (outgoing + incoming). Returns Steiner tree.
+                        Two SPARQL queries per depth level (outgoing + incoming). Returns Steiner tree.
 
-Parameters
-----------
-terminals : list[str]
-    Terminals.
-max_depth : int
-    Max depth.
-blocklist : set[str]
-    Blocklist.
-excluded_props : set[str]
-    Excluded props.
+        Parameters
+        ----------
+        terminals : list[str]
+            Terminals.
+        max_depth : int
+            Max depth.
+        blocklist : set[str]
+            Blocklist.
+        excluded_props : set[str]
+            Excluded props.
 
-Returns
--------
-nx.Graph
-    Computed result.
+        Returns
+        -------
+        nx.Graph
+            Steiner-like connector graph spanning the reachable terminal nodes; edge metadata includes the linking property identifier.
         """
         terminal_set = set(terminals)
         blocklist_set = set(blocklist)

@@ -302,15 +302,15 @@ with app.setup:
     def extract_qid(url: str) -> str:
         """Extract QID from Wikidata URL.
 
-Parameters
-----------
-url : str
-    Url.
+        Parameters
+        ----------
+        url : str
+            Url.
 
-Returns
--------
-str
-    Computed result.
+        Returns
+        -------
+        str
+            Return value produced by extract qid.
         """
         if url and url.startswith(WIKIDATA_ENTITY_PREFIX):
             return url.replace(WIKIDATA_ENTITY_PREFIX, "")
@@ -323,19 +323,19 @@ str
     ) -> pl.LazyFrame:
         """Execute SPARQL query and return LazyFrame.
 
-Parameters
-----------
-query : str
-    Query.
-endpoint : str
-    Endpoint.
-schema_name : str | None
-    None. Default is None.
+        Parameters
+        ----------
+        query : str
+            Query.
+        endpoint : str
+            Endpoint.
+        schema_name : str | None
+            None. Default is None.
 
-Returns
--------
-pl.LazyFrame
-    Computed result.
+        Returns
+        -------
+        pl.LazyFrame
+            Return value produced by execute query.
         """
         csv_bytes = execute_with_retry(query, endpoint, timeout=600)
         if not csv_bytes or len(csv_bytes) < 10:
@@ -385,10 +385,10 @@ pl.LazyFrame
         def to_dict(self) -> dict:
             """Convert to dictionary, omitting None fields.
 
-Returns
--------
-dict
-    Computed result.
+            Returns
+            -------
+            dict
+                Return value produced by to dict.
             """
             result = {"QID": self.wikidata_qid}
             if self.ncbi_taxid:
@@ -413,15 +413,15 @@ dict
         def _simplify(values: list[str] | None) -> str | list[str] | None:
             """Return single value if list has one item, else return list.
 
-Parameters
-----------
-values : list[str] | None
-    Values.
+            Parameters
+            ----------
+            values : list[str] | None
+                Values.
 
-Returns
--------
-str | list[str] | None
-    Computed result.
+            Returns
+            -------
+            str | list[str] | None
+                Return value produced by simplify.
             """
             if not values:
                 return None
@@ -432,10 +432,10 @@ str | list[str] | None
         def to_dict(self) -> dict:
             """Convert to dictionary. Uses single value when unique, list when multiple.
 
-Returns
--------
-dict
-    Computed result.
+            Returns
+            -------
+            dict
+                Return value produced by to dict.
             """
             result = {}
             if self.inchikey:
@@ -451,10 +451,10 @@ dict
         def is_empty(self) -> bool:
             """Check if all descriptors are empty.
 
-Returns
--------
-bool
-    Computed result.
+            Returns
+            -------
+            bool
+                Return value produced by is empty.
             """
             return not (self.inchikey or self.smiles or self.smarts or self.cxsmiles)
 
@@ -469,10 +469,10 @@ bool
         def qid(self) -> str:
             """Shortcut to get the QID.
 
-Returns
--------
-str
-    Computed result.
+            Returns
+            -------
+            str
+                Return value produced by qid.
             """
             return self.identifiers.wikidata_qid
 
@@ -483,17 +483,17 @@ str
         ) -> dict:
             """Convert to tree node dictionary. Name first for readability.
 
-Parameters
-----------
-compounds : list[dict] | None
-    None. Default is None.
-children : list[dict] | None
-    None. Default is None.
+            Parameters
+            ----------
+            compounds : list[dict] | None
+                None. Default is None.
+            children : list[dict] | None
+                None. Default is None.
 
-Returns
--------
-dict
-    Computed result.
+            Returns
+            -------
+            dict
+                Return value produced by to node dict.
             """
             node: dict = {
                 "Name": self.name,
@@ -510,17 +510,17 @@ dict
     ) -> tuple[set[str], dict[str, list[str]]]:
         """Identify compounds that have InChIKeys AND are associated with taxa.
 
-        These are the "leaf" compounds that must appear in the trees.
+                        These are the "leaf" compounds that must appear in the trees.
 
-Parameters
-----------
-compound_taxon : pl.DataFrame
-    Compound taxon.
+        Parameters
+        ----------
+        compound_taxon : pl.DataFrame
+            Compound taxon.
 
-Returns
--------
-tuple[set[str], dict[str, list[str]]]
-    Computed result.
+        Returns
+        -------
+        tuple[set[str], dict[str, list[str]]]
+            Return value produced by build compounds with taxa.
         """
         # Group InChIKeys by compound
         compound_inchikeys = (
@@ -547,17 +547,17 @@ tuple[set[str], dict[str, list[str]]]
     def fetch_all_data(endpoint: str, progress_callback=None) -> LOTUSData:
         """Fetch all required data from Wikidata.
 
-Parameters
-----------
-endpoint : str
-    Endpoint.
-progress_callback : Any
-    None. Default is None.
+        Parameters
+        ----------
+        endpoint : str
+            Endpoint.
+        progress_callback : Any
+            None. Default is None.
 
-Returns
--------
-LOTUSData
-    Computed result.
+        Returns
+        -------
+        LOTUSData
+            Return value produced by fetch all data.
         """
         queries = [
             (
@@ -629,17 +629,17 @@ LOTUSData
     def extract_qids_from_lazyframe(lf: pl.LazyFrame, col: str) -> pl.LazyFrame:
         """Extract QIDs from Wikidata URLs in a column.
 
-Parameters
-----------
-lf : pl.LazyFrame
-    Lf.
-col : str
-    Col.
+        Parameters
+        ----------
+        lf : pl.LazyFrame
+            Lf.
+        col : str
+            Col.
 
-Returns
--------
-pl.LazyFrame
-    Computed result.
+        Returns
+        -------
+        pl.LazyFrame
+            Return value produced by extract qids from lazyframe.
         """
         return lf.with_columns(
             pl.col(col)
@@ -650,30 +650,30 @@ pl.LazyFrame
     def collect_df(lf: pl.LazyFrame) -> pl.DataFrame:
         """Collect LazyFrame to DataFrame with proper type casting.
 
-Parameters
-----------
-lf : pl.LazyFrame
-    Lf.
+        Parameters
+        ----------
+        lf : pl.LazyFrame
+            Lf.
 
-Returns
--------
-pl.DataFrame
-    Computed result.
+        Returns
+        -------
+        pl.DataFrame
+            Return value produced by collect df.
         """
         return cast(pl.DataFrame, lf.collect())
 
     def process_compound_taxon(lf: pl.LazyFrame) -> pl.LazyFrame:
         """Process compound-taxon triplets.
 
-Parameters
-----------
-lf : pl.LazyFrame
-    Lf.
+        Parameters
+        ----------
+        lf : pl.LazyFrame
+            Lf.
 
-Returns
--------
-pl.LazyFrame
-    Computed result.
+        Returns
+        -------
+        pl.LazyFrame
+            Return value produced by process compound taxon.
         """
         return lf.pipe(extract_qids_from_lazyframe, "compound").pipe(
             extract_qids_from_lazyframe,
@@ -683,30 +683,30 @@ pl.LazyFrame
     def process_taxon_ncbi(lf: pl.LazyFrame) -> pl.LazyFrame:
         """Process taxon-NCBI pairs.
 
-Parameters
-----------
-lf : pl.LazyFrame
-    Lf.
+        Parameters
+        ----------
+        lf : pl.LazyFrame
+            Lf.
 
-Returns
--------
-pl.LazyFrame
-    Computed result.
+        Returns
+        -------
+        pl.LazyFrame
+            Return value produced by process taxon ncbi.
         """
         return lf.pipe(extract_qids_from_lazyframe, "taxon")
 
     def process_taxon_parent(lf: pl.LazyFrame) -> pl.LazyFrame:
         """Process taxon-parent pairs.
 
-Parameters
-----------
-lf : pl.LazyFrame
-    Lf.
+        Parameters
+        ----------
+        lf : pl.LazyFrame
+            Lf.
 
-Returns
--------
-pl.LazyFrame
-    Computed result.
+        Returns
+        -------
+        pl.LazyFrame
+            Return value produced by process taxon parent.
         """
         return lf.pipe(extract_qids_from_lazyframe, "taxon").pipe(
             extract_qids_from_lazyframe,
@@ -716,30 +716,30 @@ pl.LazyFrame
     def process_taxon_name(lf: pl.LazyFrame) -> pl.LazyFrame:
         """Process taxon-name pairs.
 
-Parameters
-----------
-lf : pl.LazyFrame
-    Lf.
+        Parameters
+        ----------
+        lf : pl.LazyFrame
+            Lf.
 
-Returns
--------
-pl.LazyFrame
-    Computed result.
+        Returns
+        -------
+        pl.LazyFrame
+            Return value produced by process taxon name.
         """
         return lf.pipe(extract_qids_from_lazyframe, "taxon")
 
     def process_compound_parent(lf: pl.LazyFrame) -> pl.LazyFrame:
         """Process compound-parent pairs.
 
-Parameters
-----------
-lf : pl.LazyFrame
-    Lf.
+        Parameters
+        ----------
+        lf : pl.LazyFrame
+            Lf.
 
-Returns
--------
-pl.LazyFrame
-    Computed result.
+        Returns
+        -------
+        pl.LazyFrame
+            Return value produced by process compound parent.
         """
         return lf.pipe(extract_qids_from_lazyframe, "compound").pipe(
             extract_qids_from_lazyframe,
@@ -749,15 +749,15 @@ pl.LazyFrame
     def process_compound_label(lf: pl.LazyFrame) -> pl.LazyFrame:
         """Process compound-label pairs. Prefers 'mul' labels over 'en' when both exist.
 
-Parameters
-----------
-lf : pl.LazyFrame
-    Lf.
+        Parameters
+        ----------
+        lf : pl.LazyFrame
+            Lf.
 
-Returns
--------
-pl.LazyFrame
-    Computed result.
+        Returns
+        -------
+        pl.LazyFrame
+            Return value produced by process compound label.
         """
         return (
             lf.pipe(extract_qids_from_lazyframe, "compound")
@@ -771,32 +771,32 @@ pl.LazyFrame
     def process_compound_smiles(lf: pl.LazyFrame, col: str) -> pl.LazyFrame:
         """Process compound SMILES pairs.
 
-Parameters
-----------
-lf : pl.LazyFrame
-    Lf.
-col : str
-    Col.
+        Parameters
+        ----------
+        lf : pl.LazyFrame
+            Lf.
+        col : str
+            Col.
 
-Returns
--------
-pl.LazyFrame
-    Computed result.
+        Returns
+        -------
+        pl.LazyFrame
+            Return value produced by process compound smiles.
         """
         return lf.pipe(extract_qids_from_lazyframe, "compound")
 
     def process_reference_doi(lf: pl.LazyFrame) -> pl.LazyFrame:
         """Process reference DOI data.
 
-Parameters
-----------
-lf : pl.LazyFrame
-    Lf.
+        Parameters
+        ----------
+        lf : pl.LazyFrame
+            Lf.
 
-Returns
--------
-pl.LazyFrame
-    Computed result.
+        Returns
+        -------
+        pl.LazyFrame
+            Return value produced by process reference doi.
         """
         return (
             lf.pipe(extract_qids_from_lazyframe, "compound")
@@ -807,15 +807,15 @@ pl.LazyFrame
     def process_reference_pmid(lf: pl.LazyFrame) -> pl.LazyFrame:
         """Process reference PMID data.
 
-Parameters
-----------
-lf : pl.LazyFrame
-    Lf.
+        Parameters
+        ----------
+        lf : pl.LazyFrame
+            Lf.
 
-Returns
--------
-pl.LazyFrame
-    Computed result.
+        Returns
+        -------
+        pl.LazyFrame
+            Return value produced by process reference pmid.
         """
         return (
             lf.pipe(extract_qids_from_lazyframe, "compound")
@@ -829,19 +829,19 @@ pl.LazyFrame
     ) -> dict[str, dict[str, dict]]:
         """Build a nested mapping: compound -> taxon -> {reference_qid: {doi, pmid}}.
 
-        This allows looking up references for a specific compound-taxon pair.
+                        This allows looking up references for a specific compound-taxon pair.
 
-Parameters
-----------
-reference_doi_df : pl.DataFrame
-    Reference doi df.
-reference_pmid_df : pl.DataFrame
-    Reference pmid df.
+        Parameters
+        ----------
+        reference_doi_df : pl.DataFrame
+            Reference doi df.
+        reference_pmid_df : pl.DataFrame
+            Reference pmid df.
 
-Returns
--------
-dict[str, dict[str, dict]]
-    Computed result.
+        Returns
+        -------
+        dict[str, dict[str, dict]]
+            Return value produced by build reference map.
         """
         reference_map: dict[str, dict[str, dict]] = {}
 
@@ -885,19 +885,19 @@ dict[str, dict[str, dict]]
     ) -> pl.DataFrame:
         """Combine isomeric and canonical SMILES, preferring isomeric when both exist.
 
-        Returns DataFrame with columns: compound, smiles (as list)
+                        Returns DataFrame with columns: compound, smiles (as list)
 
-Parameters
-----------
-smiles_iso : pl.LazyFrame
-    Smiles iso.
-smiles_can : pl.LazyFrame
-    Smiles can.
+        Parameters
+        ----------
+        smiles_iso : pl.LazyFrame
+            Smiles iso.
+        smiles_can : pl.LazyFrame
+            Smiles can.
 
-Returns
--------
-pl.DataFrame
-    Computed result.
+        Returns
+        -------
+        pl.DataFrame
+            Return value produced by combine smiles.
         """
         iso_df = collect_df(smiles_iso)
         can_df = collect_df(smiles_can)
@@ -939,25 +939,25 @@ pl.DataFrame
         cxsmiles: pl.LazyFrame,
     ) -> tuple[dict, dict, dict]:
         """Build mappings for SMILES, SMARTS, and CXSMILES.
-        Each mapping returns lists of values per compound.
+                        Each mapping returns lists of values per compound.
 
-        Returns (smiles_map, smarts_map, cxsmiles_map)
+                        Returns (smiles_map, smarts_map, cxsmiles_map)
 
-Parameters
-----------
-smiles_iso : pl.LazyFrame
-    Smiles iso.
-smiles_can : pl.LazyFrame
-    Smiles can.
-smarts : pl.LazyFrame
-    Smarts.
-cxsmiles : pl.LazyFrame
-    Cxsmiles.
+        Parameters
+        ----------
+        smiles_iso : pl.LazyFrame
+            Smiles iso.
+        smiles_can : pl.LazyFrame
+            Smiles can.
+        smarts : pl.LazyFrame
+            Smarts.
+        cxsmiles : pl.LazyFrame
+            Cxsmiles.
 
-Returns
--------
-tuple[dict, dict, dict]
-    Computed result.
+        Returns
+        -------
+        tuple[dict, dict, dict]
+            Return value produced by build structure maps.
         """
         # Combine SMILES (prefer isomeric over canonical)
         smiles_df = combine_smiles(smiles_iso, smiles_can)
@@ -1025,25 +1025,25 @@ tuple[dict, dict, dict]
     ) -> dict[str, Descriptors]:
         """Build a unified mapping from compound QID to Descriptors.
 
-        Includes ALL compounds with any descriptor data (SMILES, SMARTS, CXSMILES),
-        not just those with InChIKeys. This enables efficient single-lookup for
-        descriptors in tree building.
+                        Includes ALL compounds with any descriptor data (SMILES, SMARTS, CXSMILES),
+                        not just those with InChIKeys. This enables efficient single-lookup for
+                        descriptors in tree building.
 
-Parameters
-----------
-smiles_map : dict
-    Smiles map.
-smarts_map : dict
-    Smarts map.
-cxsmiles_map : dict
-    Cxsmiles map.
-inchikey_map : dict[str, list[str]] | None
-    None. Default is None.
+        Parameters
+        ----------
+        smiles_map : dict
+            Smiles map.
+        smarts_map : dict
+            Smarts map.
+        cxsmiles_map : dict
+            Cxsmiles map.
+        inchikey_map : dict[str, list[str]] | None
+            None. Default is None.
 
-Returns
--------
-dict[str, Descriptors]
-    Computed result.
+        Returns
+        -------
+        dict[str, Descriptors]
+            Return value produced by build descriptor map.
         """
         inchikey_map = inchikey_map or {}
 
@@ -1089,33 +1089,33 @@ dict[str, Descriptors]
     ) -> list[dict]:
         """Build biological tree JSON for PubChem.
 
-        This tree organizes chemical compounds by their biological source taxa.
-        Only includes taxa that have compounds with InChIKeys directly or in their descendants.
-        All taxa are constrained to be under Biota (Q2382443).
+                        This tree organizes chemical compounds by their biological source taxa.
+                        Only includes taxa that have compounds with InChIKeys directly or in their descendants.
+                        All taxa are constrained to be under Biota (Q2382443).
 
-Parameters
-----------
-compound_taxon : pl.DataFrame
-    Compound taxon.
-taxon_ncbi : pl.DataFrame
-    Taxon ncbi.
-taxon_parent : pl.DataFrame
-    Taxon parent.
-taxon_name : pl.DataFrame
-    Taxon name.
-compounds_with_taxa : set[str]
-    Compounds with taxa.
-descriptor_map : dict[str, Descriptors]
-    Descriptor map.
-label_map : dict[str, str]
-    Label map.
-reference_map : dict[str, dict[str, dict]] | None
-    None. Default is None.
+        Parameters
+        ----------
+        compound_taxon : pl.DataFrame
+            Compound taxon.
+        taxon_ncbi : pl.DataFrame
+            Taxon ncbi.
+        taxon_parent : pl.DataFrame
+            Taxon parent.
+        taxon_name : pl.DataFrame
+            Taxon name.
+        compounds_with_taxa : set[str]
+            Compounds with taxa.
+        descriptor_map : dict[str, Descriptors]
+            Descriptor map.
+        label_map : dict[str, str]
+            Label map.
+        reference_map : dict[str, dict[str, dict]] | None
+            None. Default is None.
 
-Returns
--------
-list[dict]
-    Computed result.
+        Returns
+        -------
+        list[dict]
+            Return value produced by build biological tree.
         """
         # Step 1: Get all taxa that directly have compounds
         taxa_with_compounds = set(compound_taxon["taxon"].unique().to_list())
@@ -1194,17 +1194,17 @@ list[dict]
         def build_node(taxon_qid: str, visited: set) -> dict | None:
             """Build node, returning None if no compounds in subtree.
 
-Parameters
-----------
-taxon_qid : str
-    Taxon qid.
-visited : set
-    Visited.
+            Parameters
+            ----------
+            taxon_qid : str
+                Taxon qid.
+            visited : set
+                Visited.
 
-Returns
--------
-dict | None
-    Computed result.
+            Returns
+            -------
+            dict | None
+                Return value produced by build node.
             """
             if taxon_qid in visited:
                 return None
@@ -1299,28 +1299,28 @@ dict | None
     ) -> list[dict]:
         """Build chemical compound tree JSON for PubChem.
 
-        Includes:
-        - Nodes with InChIKeys that are associated with taxa (from compounds_with_taxa)
-        - Intermediary nodes without InChIKeys but with valid children
-        - Descriptors from descriptor_map for ALL nodes when available
+                        Includes:
+                        - Nodes with InChIKeys that are associated with taxa (from compounds_with_taxa)
+                        - Intermediary nodes without InChIKeys but with valid children
+                        - Descriptors from descriptor_map for ALL nodes when available
 
-        All compounds are constrained to be under chemical compound (Q11173).
+                        All compounds are constrained to be under chemical compound (Q11173).
 
-Parameters
-----------
-compound_parent : pl.DataFrame
-    Compound parent.
-compound_label : pl.DataFrame
-    Compound label.
-compounds_with_taxa : set[str]
-    Compounds with taxa.
-descriptor_map : dict[str, Descriptors]
-    Descriptor map.
+        Parameters
+        ----------
+        compound_parent : pl.DataFrame
+            Compound parent.
+        compound_label : pl.DataFrame
+            Compound label.
+        compounds_with_taxa : set[str]
+            Compounds with taxa.
+        descriptor_map : dict[str, Descriptors]
+            Descriptor map.
 
-Returns
--------
-list[dict]
-    Computed result.
+        Returns
+        -------
+        list[dict]
+            Return value produced by build compound tree.
         """
         # Build parent-child relationships
         parent_map_data = (
@@ -1350,17 +1350,17 @@ list[dict]
         def build_node(compound_qid: str, visited: set) -> dict | None:
             """Build node, returning None if no valid descendants.
 
-Parameters
-----------
-compound_qid : str
-    Compound qid.
-visited : set
-    Visited.
+            Parameters
+            ----------
+            compound_qid : str
+                Compound qid.
+            visited : set
+                Visited.
 
-Returns
--------
-dict | None
-    Computed result.
+            Returns
+            -------
+            dict | None
+                Return value produced by build node.
             """
             if compound_qid in visited:
                 return None
@@ -1419,17 +1419,17 @@ dict | None
     def tree_to_display(tree: list[dict]) -> tuple[dict, int, int]:
         """Convert tree to mo.tree() compatible format for display.
 
-        Returns (display_dict, shown_nodes, total_nodes).
+                        Returns (display_dict, shown_nodes, total_nodes).
 
-Parameters
-----------
-tree : list[dict]
-    Tree.
+        Parameters
+        ----------
+        tree : list[dict]
+            Tree.
 
-Returns
--------
-tuple[dict, int, int]
-    Computed result.
+        Returns
+        -------
+        tuple[dict, int, int]
+            Return value produced by tree to display.
         """
         max_depth = int(CONFIG["preview_max_depth"])
         max_children = int(CONFIG["preview_max_children"])
@@ -1493,15 +1493,15 @@ tuple[dict, int, int]
     def compute_stats(data: LOTUSData) -> DataStats:
         """Compute statistics from the data.
 
-Parameters
-----------
-data : LOTUSData
-    Data.
+        Parameters
+        ----------
+        data : LOTUSData
+            Data.
 
-Returns
--------
-DataStats
-    Computed result.
+        Returns
+        -------
+        DataStats
+            Return value produced by compute stats.
         """
         compound_taxon_df = collect_df(data.compound_taxon)
         taxon_ncbi_df = collect_df(data.taxon_ncbi)
@@ -1524,15 +1524,15 @@ DataStats
     def count_tree_nodes(tree: list[dict]) -> int:
         """Count total nodes in the tree.
 
-Parameters
-----------
-tree : list[dict]
-    Tree.
+        Parameters
+        ----------
+        tree : list[dict]
+            Tree.
 
-Returns
--------
-int
-    Computed result.
+        Returns
+        -------
+        int
+            Return value produced by count tree nodes.
         """
         count = 0
         for node in tree:
@@ -1552,22 +1552,22 @@ int
     def fetch_npclassifier_cache(url: str | None = None) -> pl.DataFrame:
         """Fetch NPClassifier cache CSV from remote URL.
 
-        The cache contains SMILES with their NPClassifier annotations:
-        - pathway: Top-level classification (e.g., "Terpenoids", "Alkaloids")
-        - superclass: Mid-level (e.g., "Sesquiterpenoids")
-        - class: Specific class (e.g., "Germacrane sesquiterpenoids")
+                        The cache contains SMILES with their NPClassifier annotations:
+                        - pathway: Top-level classification (e.g., "Terpenoids", "Alkaloids")
+                        - superclass: Mid-level (e.g., "Sesquiterpenoids")
+                        - class: Specific class (e.g., "Germacrane sesquiterpenoids")
 
-        Multiple values are separated by " $ ".
+                        Multiple values are separated by " $ ".
 
-Parameters
-----------
-url : str | None
-    None. Default is None.
+        Parameters
+        ----------
+        url : str | None
+            None. Default is None.
 
-Returns
--------
-pl.DataFrame
-    Computed result.
+        Returns
+        -------
+        pl.DataFrame
+            Return value produced by fetch npclassifier cache.
         """
         import urllib.request
 
@@ -1599,25 +1599,25 @@ pl.DataFrame
     ) -> list[dict]:
         """Build chemical tree based on NPClassifier hierarchy.
 
-        The NPClassifier hierarchy is: pathway → superclass → class → InChIKey
+                        The NPClassifier hierarchy is: pathway → superclass → class → InChIKey
 
-Parameters
-----------
-npclassifier_df : pl.DataFrame
-    Npclassifier df.
-smiles_to_inchikey : dict[str, list[str]]
-    Smiles to inchikey.
-smiles_to_qid : dict[str, str] | None
-    None. Default is None.
-compound_label_df : pl.DataFrame | None
-    None. Default is None.
-compounds_with_taxa : set[str] | None
-    None. Default is None.
+        Parameters
+        ----------
+        npclassifier_df : pl.DataFrame
+            Npclassifier df.
+        smiles_to_inchikey : dict[str, list[str]]
+            Smiles to inchikey.
+        smiles_to_qid : dict[str, str] | None
+            None. Default is None.
+        compound_label_df : pl.DataFrame | None
+            None. Default is None.
+        compounds_with_taxa : set[str] | None
+            None. Default is None.
 
-Returns
--------
-list[dict]
-    Computed result.
+        Returns
+        -------
+        list[dict]
+            Return value produced by build npclassifier tree.
         """
         smiles_to_qid = smiles_to_qid or {}
 
@@ -1769,22 +1769,22 @@ list[dict]
     ) -> tuple[dict[str, list[str]], dict[str, str]]:
         """Build mappings from SMILES to InChIKeys and SMILES to Wikidata QID.
 
-        This allows linking NPClassifier data (keyed by SMILES) to
-        InChIKeys and Wikidata QIDs for the final tree output.
+                        This allows linking NPClassifier data (keyed by SMILES) to
+                        InChIKeys and Wikidata QIDs for the final tree output.
 
-Parameters
-----------
-compound_taxon_df : pl.DataFrame
-    Compound taxon df.
-smiles_map : dict[str, list[str]]
-    Smiles map.
-inchikey_map : dict[str, list[str]]
-    Inchikey map.
+        Parameters
+        ----------
+        compound_taxon_df : pl.DataFrame
+            Compound taxon df.
+        smiles_map : dict[str, list[str]]
+            Smiles map.
+        inchikey_map : dict[str, list[str]]
+            Inchikey map.
 
-Returns
--------
-tuple[dict[str, list[str]], dict[str, str]]
-    Computed result.
+        Returns
+        -------
+        tuple[dict[str, list[str]], dict[str, str]]
+            Return value produced by build smiles to inchikey map.
         """
         smiles_to_inchikey: dict[str, list[str]] = {}
         smiles_to_qid: dict[str, str] = {}
@@ -1808,37 +1808,37 @@ tuple[dict[str, list[str]], dict[str, str]]
     def npclassifier_tree_to_pubchem(tree: list[dict]) -> dict:
         """Convert NPClassifier tree to PubChem format.
 
-        Structure:
-        {
-          "children": {
-            "Pathway": {
-              "children": {
-                "Superclass": {
-                  "children": {
-                    "Class": {
-                      "children": {
-                        "INCHIKEY-...": {"Name": "compound label", "QID": "Q..."}
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
+                        Structure:
+                        {
+                          "children": {
+                            "Pathway": {
+                              "children": {
+                                "Superclass": {
+                                  "children": {
+                                    "Class": {
+                                      "children": {
+                                        "INCHIKEY-...": {"Name": "compound label", "QID": "Q..."}
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
 
-        Leaf keys remain InChIKeys. The leaf "Name" field stores the
-        human-readable compound label when available.
+                        Leaf keys remain InChIKeys. The leaf "Name" field stores the
+                        human-readable compound label when available.
 
-Parameters
-----------
-tree : list[dict]
-    Tree.
+        Parameters
+        ----------
+        tree : list[dict]
+            Tree.
 
-Returns
--------
-dict
-    Computed result.
+        Returns
+        -------
+        dict
+            Return value produced by npclassifier tree to pubchem.
         """
         if not tree:
             return {}
@@ -1895,24 +1895,24 @@ dict
     ) -> dict:
         """Convert array-based tree to PubChem's dict-based format.
 
-        For biological tree:
-          - Names as keys for intermediate nodes
-          - NCBI TaxID as key for leaf taxa with InChIKeys as children
-        For chemical tree:
-          - Names as keys for intermediate nodes
-          - InChIKeys as leaf keys with empty arrays
+                        For biological tree:
+                          - Names as keys for intermediate nodes
+                          - NCBI TaxID as key for leaf taxa with InChIKeys as children
+                        For chemical tree:
+                          - Names as keys for intermediate nodes
+                          - InChIKeys as leaf keys with empty arrays
 
-Parameters
-----------
-tree : list[dict]
-    Tree.
-tree_type : str
-    Tree .
+        Parameters
+        ----------
+        tree : list[dict]
+            Tree.
+        tree_type : str
+            Tree .
 
-Returns
--------
-dict
-    Computed result.
+        Returns
+        -------
+        dict
+            Return value produced by tree to pubchem format.
         """
         if tree_type == "biological":
             return convert_bio_node_to_pubchem(tree)
@@ -1922,36 +1922,36 @@ dict
     def convert_bio_node_to_pubchem(nodes: list[dict]) -> dict:
         """Convert biological tree nodes to PubChem format.
 
-        Structure:
-        {
-          "children": {
-            "TaxonName": {
-              "QID": "Q...",
-              "children": {
-                "ChildTaxonName": {...},
-                "NCBI_ID": {
-                  "organism_name": ["TaxonName"],
-                  "compounds": {
-                    "InChIKey1": {"QID": "Q...", "references": [{"DOI": "...", "PMID": "..."}]},
-                    "InChIKey2": {"QID": "Q...", "references": [...]}
-                  }
-                }
-              }
-            }
-          }
-        }
+                        Structure:
+                        {
+                          "children": {
+                            "TaxonName": {
+                              "QID": "Q...",
+                              "children": {
+                                "ChildTaxonName": {...},
+                                "NCBI_ID": {
+                                  "organism_name": ["TaxonName"],
+                                  "compounds": {
+                                    "InChIKey1": {"QID": "Q...", "references": [{"DOI": "...", "PMID": "..."}]},
+                                    "InChIKey2": {"QID": "Q...", "references": [...]}
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
 
-        Compounds are keyed by InChIKey and include their Wikidata QID and references.
+                        Compounds are keyed by InChIKey and include their Wikidata QID and references.
 
-Parameters
-----------
-nodes : list[dict]
-    Nodes.
+        Parameters
+        ----------
+        nodes : list[dict]
+            Nodes.
 
-Returns
--------
-dict
-    Computed result.
+        Returns
+        -------
+        dict
+            Return value produced by convert bio node to pubchem.
         """
         if not nodes:
             return {}
@@ -2054,27 +2054,27 @@ dict
     def convert_chem_node_to_pubchem(nodes: list[dict]) -> dict:
         """Convert chemical tree nodes to PubChem format.
 
-        Structure:
-        {
-          "children": {
-            "CompoundClassName": {
-              "QID": "Q...",
-              "children": {
-                "INCHIKEY-...": {"QID": "Q..."}
-              }
-            }
-          }
-        }
+                        Structure:
+                        {
+                          "children": {
+                            "CompoundClassName": {
+                              "QID": "Q...",
+                              "children": {
+                                "INCHIKEY-...": {"QID": "Q..."}
+                              }
+                            }
+                          }
+                        }
 
-Parameters
-----------
-nodes : list[dict]
-    Nodes.
+        Parameters
+        ----------
+        nodes : list[dict]
+            Nodes.
 
-Returns
--------
-dict
-    Computed result.
+        Returns
+        -------
+        dict
+            Return value produced by convert chem node to pubchem.
         """
         if not nodes:
             return {}
@@ -2522,19 +2522,19 @@ def download_buttons(biological_tree, chemical_tree, npclassifier_tree):
     ) -> dict:
         """Build complete output with rich metadata.
 
-Parameters
-----------
-tree_type : str
-    Tree .
-tree : list[dict]
-    Tree.
-source : str
-    Default is 'wikidata'.
+        Parameters
+        ----------
+        tree_type : str
+            Tree .
+        tree : list[dict]
+            Tree.
+        source : str
+            Default is 'wikidata'.
 
-Returns
--------
-dict
-    Computed result.
+        Returns
+        -------
+        dict
+            Return value produced by build tree output.
         """
         is_biological = tree_type == "biological"
         is_npclassifier = source == "npclassifier"
@@ -2752,8 +2752,7 @@ def footer():
 
 
 def main():
-    """Entry point for CLI mode.
-    """
+    """Entry point for CLI mode."""
     import argparse
     from pathlib import Path
 
@@ -2993,19 +2992,19 @@ Examples:
             ) -> dict:
                 """Build complete output with rich metadata for CLI.
 
-Parameters
-----------
-tree_type : str
-    Tree .
-tree : list[dict]
-    Tree.
-source : str
-    Default is 'wikidata'.
+                Parameters
+                ----------
+                tree_type : str
+                    Tree .
+                tree : list[dict]
+                    Tree.
+                source : str
+                    Default is 'wikidata'.
 
-Returns
--------
-dict
-    Computed result.
+                Returns
+                -------
+                dict
+                    Return value produced by build cli tree output.
                 """
                 is_biological = tree_type == "biological"
                 is_npclassifier = source == "npclassifier"

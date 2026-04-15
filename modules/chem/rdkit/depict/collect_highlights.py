@@ -21,19 +21,19 @@ def iter_pattern_highlights(
 ) -> Iterator[tuple[list[int], RGBColor, str]]:
     """Iterate over pattern matches yielding highlight data.
 
-Parameters
-----------
-mol : Mol
-    Mol.
-smarts_entries : list[SmartsEntry]
-    Smarts entries.
-match_counter : defaultdict | None
-    Match counter.
+    Parameters
+    ----------
+    mol : Mol
+        Mol.
+    smarts_entries : list[SmartsEntry]
+        Smarts entries.
+    match_counter : defaultdict | None
+        Match counter.
 
-Yields
-------
-tuple[list[int]
-    Generated values.
+    Yields
+    ------
+    tuple[list[int]
+        Generated values.
     """
     for pattern_name, _, smarts_mol, color in smarts_entries:
         matches = find_matches(mol=mol, pattern=smarts_mol)
@@ -56,19 +56,19 @@ def collect_highlights(
 ) -> tuple[list[int], dict[int, RGBColor], list[str]]:
     """Collect atom highlight data from SMARTS pattern matches.
 
-Parameters
-----------
-mol : Mol
-    Mol.
-smarts_entries : list[SmartsEntry]
-    Smarts entries.
-match_counter : defaultdict | None
-    None. Default is None.
+    Parameters
+    ----------
+    mol : Mol
+        Mol.
+    smarts_entries : list[SmartsEntry]
+        Smarts entries.
+    match_counter : defaultdict | None
+        None. Default is None.
 
-Returns
--------
-tuple[list[int], dict[int, RGBColor], list[str]]
-    Computed result.
+    Returns
+    -------
+    tuple[list[int], dict[int, RGBColor], list[str]]
+        Return value produced by collect highlights.
     """
     atom_ids: list[int] = []
     colors: dict[int, RGBColor] = {}

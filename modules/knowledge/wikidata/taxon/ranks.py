@@ -6,15 +6,15 @@ __all__ = ["normalize_rank", "get_rank_label", "get_rank_order"]
 def normalize_rank(rank: str) -> str:
     """Strip Wikidata IRI prefix and normalize to lowercase.
 
-Parameters
-----------
-rank : str
-    Rank.
+    Parameters
+    ----------
+    rank : str
+        Rank.
 
-Returns
--------
-str
-    Computed result.
+    Returns
+    -------
+    str
+        Return value produced by normalize rank.
     """
     if rank is None:
         return ""
@@ -34,15 +34,15 @@ str
 def get_rank_label(rank: str) -> str:
     """Convert rank identifier (QID or name) to display label.
 
-Parameters
-----------
-rank : str
-    Rank.
+    Parameters
+    ----------
+    rank : str
+        Rank.
 
-Returns
--------
-str
-    Computed result.
+    Returns
+    -------
+    str
+        Return value produced by get rank label.
     """
     if rank is None:
         return "Unknown"
@@ -139,15 +139,15 @@ str
 def get_rank_order(rank: str) -> int:
     """Get sort order for a rank (lower = coarser taxonomic level).
 
-Parameters
-----------
-rank : str
-    Rank.
+    Parameters
+    ----------
+    rank : str
+        Rank.
 
-Returns
--------
-int
-    Computed result.
+    Returns
+    -------
+    int
+        Return value produced by get rank order.
     """
     if rank is None:
         return 999

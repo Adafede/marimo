@@ -18,23 +18,23 @@ def svg_from_mol(
 ) -> str:
     """Draw molecule to SVG string.
 
-Parameters
-----------
-mol : Mol
-    Mol.
-width : int
-    DEFAULT_WIDTH. Default is DEFAULT_WIDTH.
-height : int
-    DEFAULT_HEIGHT. Default is DEFAULT_HEIGHT.
-highlight_atoms : list[int] | None
-    None. Default is None.
-highlight_colors : dict[int, tuple[float, float, float]] | None
-    None. Default is None.
+    Parameters
+    ----------
+    mol : Mol
+        Mol.
+    width : int
+        DEFAULT_WIDTH. Default is DEFAULT_WIDTH.
+    height : int
+        DEFAULT_HEIGHT. Default is DEFAULT_HEIGHT.
+    highlight_atoms : list[int] | None
+        None. Default is None.
+    highlight_colors : dict[int, tuple[float, float, float]] | None
+        None. Default is None.
 
-Returns
--------
-str
-    Computed result.
+    Returns
+    -------
+    str
+        Return value produced by svg from mol.
     """
     drawer = MolDraw2DSVG(width, height)
     drawer.DrawMolecule(

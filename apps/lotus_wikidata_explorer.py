@@ -158,10 +158,10 @@ with app.setup:
         def to_filters_dict(self) -> dict:
             """Convert to filters dictionary.
 
-Returns
--------
-dict
-    Computed result.
+            Returns
+            -------
+            dict
+                Return value produced by to filters dict.
             """
             filters: dict[str, Any] = {}
             if self.smiles:
@@ -261,10 +261,10 @@ dict
         def to_denormalized(self) -> pl.LazyFrame:
             """Join all tables to produce the full denormalized view.
 
-Returns
--------
-pl.LazyFrame
-    Computed result.
+            Returns
+            -------
+            pl.LazyFrame
+                Return value produced by to denormalized.
             """
             return (
                 self.facts.join(self.compound_meta, on="compound", how="left")
@@ -276,10 +276,10 @@ pl.LazyFrame
         def empty(cls) -> "NormalizedDataset":
             """Create an empty normalized dataset.
 
-Returns
--------
-'NormalizedDataset'
-    Computed result.
+            Returns
+            -------
+            'NormalizedDataset'
+                Empty normalized dataset with predefined schemas for all tables.
             """
             return cls(
                 facts=pl.LazyFrame(
@@ -321,22 +321,22 @@ Returns
         def from_csv_bytes(cls, csv_bytes: bytes) -> "NormalizedDataset":
             """Parse CSV bytes in a streaming manner and build normalized tables.
 
-            This is the key memory optimization: instead of loading the entire
-            denormalized CSV into memory, we stream through it once and build
-            deduplicated lookup tables.
+                                    This is the key memory optimization: instead of loading the entire
+                                    denormalized CSV into memory, we stream through it once and build
+                                    deduplicated lookup tables.
 
-            Uses io.TextIOWrapper for true streaming without creating a full
-            string copy of the data.
+                                    Uses io.TextIOWrapper for true streaming without creating a full
+                                    string copy of the data.
 
-Parameters
-----------
-csv_bytes : bytes
-    Csv bytes.
+            Parameters
+            ----------
+            csv_bytes : bytes
+                Csv bytes.
 
-Returns
--------
-'NormalizedDataset'
-    Computed result.
+            Returns
+            -------
+            'NormalizedDataset'
+                Normalized dataset built from streamed CSV rows.
             """
             # Quick empty check without creating a copy via strip()
             if not csv_bytes or len(csv_bytes) < 10:
@@ -580,24 +580,24 @@ Returns
         ) -> pl.LazyFrame:
             """Fetch compounds from Wikidata.
 
-            In WASM mode with use_normalized=True, this uses the memory-efficient
-            normalized storage that parses CSV streaming and deduplicates metadata.
+                                    In WASM mode with use_normalized=True, this uses the memory-efficient
+                                    normalized storage that parses CSV streaming and deduplicates metadata.
 
-Parameters
-----------
-qid : str
-    Qid.
-smiles : str | None
-    None. Default is None.
-smiles_search_type : str
-    Default is 'substructure'.
-smiles_threshold : float
-    Default is 0.8.
+            Parameters
+            ----------
+            qid : str
+                Qid.
+            smiles : str | None
+                None. Default is None.
+            smiles_search_type : str
+                Default is 'substructure'.
+            smiles_threshold : float
+                Default is 0.8.
 
-Returns
--------
-pl.LazyFrame
-    Computed result.
+            Returns
+            -------
+            pl.LazyFrame
+                Return value produced by fetch compounds.
             """
             query = self._build_query(qid, smiles, smiles_search_type, smiles_threshold)
             csv_bytes = execute_with_retry(query, self.endpoint)
@@ -676,17 +676,17 @@ pl.LazyFrame
         ) -> pl.LazyFrame:
             """Apply standard transformations to the data.
 
-Parameters
-----------
-df : pl.LazyFrame
-    Df.
-from_normalized : bool
-    False. Default is False.
+            Parameters
+            ----------
+            df : pl.LazyFrame
+                Df.
+            from_normalized : bool
+                False. Default is False.
 
-Returns
--------
-pl.LazyFrame
-    Computed result.
+            Returns
+            -------
+            pl.LazyFrame
+                Return value produced by apply standard transforms.
             """
             if from_normalized:
                 # Normalized data already has correct column names and types
@@ -968,15 +968,15 @@ pl.LazyFrame
         def _is_server_error(exc: ConnectionError) -> bool:
             """Return True for HTTP 5xx errors surfaced by execute_with_retry.
 
-Parameters
-----------
-exc : ConnectionError
-    Exc.
+            Parameters
+            ----------
+            exc : ConnectionError
+                Exc.
 
-Returns
--------
-bool
-    Computed result.
+            Returns
+            -------
+            bool
+                Return value produced by is server error.
             """
             status = TaxonResolutionService._extract_http_status(exc)
             if status is None:
@@ -1015,17 +1015,17 @@ bool
         ) -> mo.Html:
             """Create HTML notice for sanitized input.
 
-Parameters
-----------
-original_input : str
-    Original input.
-sanitized_input : str
-    Sanitized input.
+            Parameters
+            ----------
+            original_input : str
+                Original input.
+            sanitized_input : str
+                Sanitized input.
 
-Returns
--------
-mo.Html
-    Computed result.
+            Returns
+            -------
+            mo.Html
+                Return value produced by create sanitization notice.
             """
             html = f"""
             <div style="line-height: 1.6; color: {CONFIG["color_hyperlink"]};">
@@ -1043,21 +1043,21 @@ mo.Html
         ) -> tuple[str, mo.Html]:
             """Resolve ambiguous taxon matches.
 
-Parameters
-----------
-matches : list[tuple[str | None, str]]
-    Matches.
-is_exact : bool
-    Is exact.
-original_input : str
-    Default is ''.
-sanitized_input : str
-    Default is ''.
+            Parameters
+            ----------
+            matches : list[tuple[str | None, str]]
+                Matches.
+            is_exact : bool
+                Is exact.
+            original_input : str
+                Default is ''.
+            sanitized_input : str
+                Default is ''.
 
-Returns
--------
-tuple[str, mo.Html]
-    Computed result.
+            Returns
+            -------
+            tuple[str, mo.Html]
+                Return value produced by resolve ambiguous.
             """
             qids = tuple(qid for qid, _ in matches if qid is not None)
             info = {qid: [0, "", "", ""] for qid in qids}
@@ -1120,23 +1120,23 @@ tuple[str, mo.Html]
         ) -> mo.Html:
             """Create HTML warning for ambiguous taxon.
 
-Parameters
-----------
-matches : list
-    Matches.
-selected_qid : str
-    Selected qid.
-is_exact : bool
-    Is exact.
-original_input : str
-    Default is ''.
-sanitized_input : str
-    Default is ''.
+            Parameters
+            ----------
+            matches : list
+                Matches.
+            selected_qid : str
+                Selected qid.
+            is_exact : bool
+                Is exact.
+            original_input : str
+                Default is ''.
+            sanitized_input : str
+                Default is ''.
 
-Returns
--------
-mo.Html
-    Computed result.
+            Returns
+            -------
+            mo.Html
+                Return value produced by create taxon warning html.
             """
             match_type = "exact matches" if is_exact else "similar taxa"
             intro = (
@@ -1284,15 +1284,15 @@ mo.Html
         def _to_bytes_maplib(self, df: pl.LazyFrame) -> bytes:
             """Fast export using maplib (native only).
 
-Parameters
-----------
-df : pl.LazyFrame
-    Df.
+            Parameters
+            ----------
+            df : pl.LazyFrame
+                Df.
 
-Returns
--------
-bytes
-    Computed result.
+            Returns
+            -------
+            bytes
+                Return value produced by to bytes maplib.
             """
             df_collected: pl.DataFrame = df.collect()
 
@@ -1336,15 +1336,15 @@ bytes
         def _to_bytes_rdflib(self, df: pl.LazyFrame) -> bytes:
             """WASM-compatible export using rdflib.
 
-Parameters
-----------
-df : pl.LazyFrame
-    Df.
+            Parameters
+            ----------
+            df : pl.LazyFrame
+                Df.
 
-Returns
--------
-bytes
-    Computed result.
+            Returns
+            -------
+            bytes
+                Return value produced by to bytes rdflib.
             """
             df_collected: pl.DataFrame = df.collect()
 
@@ -1615,17 +1615,17 @@ bytes
         ) -> tuple[pl.DataFrame | None, pl.DataFrame | None]:
             """Build all triples using vectorized Polars operations.
 
-Parameters
-----------
-df : pl.DataFrame
-    Df.
-dataset_uri : str
-    Dataset uri.
+            Parameters
+            ----------
+            df : pl.DataFrame
+                Df.
+            dataset_uri : str
+                Dataset uri.
 
-Returns
--------
-tuple[pl.DataFrame | None, pl.DataFrame | None]
-    Computed result.
+            Returns
+            -------
+            tuple[pl.DataFrame | None, pl.DataFrame | None]
+                Return value produced by build triples vectorized.
             """
             wd_ns = WIKIDATA_NAMESPACES["wd"]
             wdt_ns = WIKIDATA_NAMESPACES["wdt"]
@@ -2034,25 +2034,25 @@ tuple[pl.DataFrame | None, pl.DataFrame | None]
         ) -> dict:
             """Create rich Schema.org compliant metadata.
 
-Parameters
-----------
-stats : DatasetStats
-    Stats.
-taxon_input : str
-    Taxon input.
-qid : str
-    Qid.
-filters : dict
-    Filters.
-query_hash : str
-    Query hash.
-result_hash : str
-    Result hash.
+            Parameters
+            ----------
+            stats : DatasetStats
+                Stats.
+            taxon_input : str
+                Taxon input.
+            qid : str
+                Qid.
+            filters : dict
+                Filters.
+            query_hash : str
+                Query hash.
+            result_hash : str
+                Result hash.
 
-Returns
--------
-dict
-    Computed result.
+            Returns
+            -------
+            dict
+                Return value produced by create metadata.
             """
 
             # Normalize taxon information
@@ -2202,17 +2202,17 @@ dict
         def _normalize_taxon_display(self, taxon_input: str, qid: str) -> str:
             """Get display-friendly taxon name.
 
-Parameters
-----------
-taxon_input : str
-    Taxon input.
-qid : str
-    Qid.
+            Parameters
+            ----------
+            taxon_input : str
+                Taxon input.
+            qid : str
+                Qid.
 
-Returns
--------
-str
-    Computed result.
+            Returns
+            -------
+            str
+                Return value produced by normalize taxon display.
             """
             if not taxon_input or taxon_input.strip() == "":
                 return "any taxon"
@@ -2229,19 +2229,19 @@ str
         ) -> str:
             """Get taxon description for metadata.
 
-Parameters
-----------
-taxon_input : str
-    Taxon input.
-qid : str
-    Qid.
-filters : dict
-    Filters.
+            Parameters
+            ----------
+            taxon_input : str
+                Taxon input.
+            qid : str
+                Qid.
+            filters : dict
+                Filters.
 
-Returns
--------
-str
-    Computed result.
+            Returns
+            -------
+            str
+                Return value produced by get taxon description.
             """
             smiles_info = filters.get("chemical_structure", {})
 
@@ -2260,15 +2260,15 @@ str
         def create_citation(self, taxon_input: str) -> str:
             """Generate citation handling None/empty taxon.
 
-Parameters
-----------
-taxon_input : str
-    Taxon input.
+            Parameters
+            ----------
+            taxon_input : str
+                Taxon input.
 
-Returns
--------
-str
-    Computed result.
+            Returns
+            -------
+            str
+                Return value produced by create citation.
             """
             current_date = datetime.now().strftime("%B %d, %Y")
 
@@ -2297,15 +2297,15 @@ str
         def build_shareable_url(self, criteria: SearchCriteria) -> str:
             """Build shareable URL handling None/empty taxon.
 
-Parameters
-----------
-criteria : SearchCriteria
-    Criteria.
+            Parameters
+            ----------
+            criteria : SearchCriteria
+                Criteria.
 
-Returns
--------
-str
-    Computed result.
+            Returns
+            -------
+            str
+                Return value produced by build shareable url.
             """
             params = {}
 
@@ -2348,19 +2348,19 @@ str
     ) -> str:
         """Generate safe filename handling None/empty taxon.
 
-Parameters
-----------
-taxon_name : str
-    Taxon name.
-file_type : str
-    File .
-filters : dict | None
-    None. Default is None.
+        Parameters
+        ----------
+        taxon_name : str
+            Taxon name.
+        file_type : str
+            File .
+        filters : dict | None
+            None. Default is None.
 
-Returns
--------
-str
-    Computed result.
+        Returns
+        -------
+        str
+            Return value produced by generate filename.
         """
         # Normalize taxon for filename
         if not taxon_name or taxon_name.strip() == "":
@@ -3095,8 +3095,7 @@ def footer():
 
 
 def main():
-    """Entry point for CLI and GUI modes.
-    """
+    """Entry point for CLI and GUI modes."""
     if len(sys.argv) > 1 and sys.argv[1] == "export":
         import argparse
         from pathlib import Path

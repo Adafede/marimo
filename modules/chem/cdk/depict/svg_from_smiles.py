@@ -16,23 +16,23 @@ def svg_from_smiles(
 ) -> str:
     """Generate URL for chemical structure depiction from SMILES.
 
-Parameters
-----------
-smiles : str | None
-    Smiles.
-base_url : str
-    CDK_DEPICT_URL. Default is CDK_DEPICT_URL.
-layout : str
-    Default is 'cow'.
-img_format : str
-    Default is 'svg'.
-annotate : str | None
-    Default is 'cip'.
+    Parameters
+    ----------
+    smiles : str | None
+        Smiles.
+    base_url : str
+        CDK_DEPICT_URL. Default is CDK_DEPICT_URL.
+    layout : str
+        Default is 'cow'.
+    img_format : str
+        Default is 'svg'.
+    annotate : str | None
+        Default is 'cip'.
 
-Returns
--------
-str
-    Computed result.
+    Returns
+    -------
+    str
+        Return value produced by svg from smiles.
     """
     if not smiles:
         return ""

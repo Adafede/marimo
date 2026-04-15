@@ -18,29 +18,29 @@ def execute_with_retry(
 ) -> bytes:
     """Execute SPARQL query with retry logic.
 
-    Optimized for fast feedback with minimal retries.
+            Optimized for fast feedback with minimal retries.
 
-Parameters
-----------
-query : str
-    Query.
-endpoint : str
-    Endpoint.
-timeout : int
-    Default is 120.
-max_retries : int
-    Default is 2.
-backoff_base : float
-    Default is 1.0.
-format : str
-    Default is 'csv'.
-fallback_endpoint : str | None
-    None. Default is None.
+    Parameters
+    ----------
+    query : str
+        Query.
+    endpoint : str
+        Endpoint.
+    timeout : int
+        Default is 120.
+    max_retries : int
+        Default is 2.
+    backoff_base : float
+        Default is 1.0.
+    format : str
+        Default is 'csv'.
+    fallback_endpoint : str | None
+        None. Default is None.
 
-Returns
--------
-bytes
-    Computed result.
+    Returns
+    -------
+    bytes
+        Return value produced by execute with retry.
     """
     if not query or not query.strip():
         raise ValueError("SPARQL query cannot be empty")
@@ -133,7 +133,9 @@ bytes
                 body_preview = ""
                 if hasattr(e, "read"):
                     try:
-                        body_preview = e.read().decode("utf-8", errors="replace")[:400]  # ty: ignore[call-non-callable]
+                        body_preview = e.read().decode("utf-8", errors="replace")[
+                            :400
+                        ]  # ty: ignore[call-non-callable]
                     except Exception:
                         body_preview = ""
                 last_http_details = (status, body_preview)

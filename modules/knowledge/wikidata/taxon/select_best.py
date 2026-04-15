@@ -12,19 +12,19 @@ def select_best(
 ) -> tuple[str | None, bool, list[Any]]:
     """Select the best matching taxon from a list of candidates.
 
-Parameters
-----------
-matches : list[tuple[str, str, str | None, str | None, int | None]]
-    Matches.
-connectivity_map : dict[str, int]
-    Connectivity map.
-original_name : str
-    Original name.
+    Parameters
+    ----------
+    matches : list[tuple[str, str, str | None, str | None, int | None]]
+        Matches.
+    connectivity_map : dict[str, int]
+        Connectivity map.
+    original_name : str
+        Original name.
 
-Returns
--------
-tuple[str | None, bool, list[Any]]
-    Computed result.
+    Returns
+    -------
+    tuple[str | None, bool, list[Any]]
+        Return value produced by select best.
     """
     if not matches:
         return None, False, []

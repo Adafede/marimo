@@ -10,17 +10,17 @@ from rdkit.Chem import Mol
 def find_matches(mol: Mol, pattern: Mol) -> tuple[tuple[int, ...], ...]:
     """Find all substructure matches for a SMARTS pattern in a molecule.
 
-Parameters
-----------
-mol : Mol
-    Mol.
-pattern : Mol
-    Pattern.
+    Parameters
+    ----------
+    mol : Mol
+        Mol.
+    pattern : Mol
+        Pattern.
 
-Returns
--------
-tuple[tuple[int, ...], ...]
-    Computed result.
+    Returns
+    -------
+    tuple[tuple[int, ...], ...]
+        Return value produced by find matches.
     """
     return mol.GetSubstructMatches(pattern)
 
@@ -28,15 +28,15 @@ tuple[tuple[int, ...], ...]
 def iter_match_atoms(matches: tuple[tuple[int, ...], ...]) -> Iterator[int]:
     """Iterate over all atom indices from substructure matches.
 
-Parameters
-----------
-matches : tuple[tuple[int, ...], ...]
-    Matches.
+    Parameters
+    ----------
+    matches : tuple[tuple[int, ...], ...]
+        Matches.
 
-Yields
-------
-int
-    Generated values.
+    Yields
+    ------
+    int
+        Generated values.
     """
     for match in matches:
         yield from match

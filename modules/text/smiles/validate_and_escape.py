@@ -9,15 +9,15 @@ from ..strings.escape_backslashes import escape_backslashes
 def _looks_like_molfile(text: str) -> bool:
     """Heuristic check for Molfile V2000/V3000 blocks.
 
-Parameters
-----------
-text : str
-    Text.
+    Parameters
+    ----------
+    text : str
+        Text.
 
-Returns
--------
-bool
-    Computed result.
+    Returns
+    -------
+    bool
+        Return value produced by looks like molfile.
     """
     upper = text.upper()
     return "M  END" in upper and (
@@ -31,17 +31,17 @@ bool
 def validate_and_escape(smiles: str | None) -> str | None:
     """Validate structure text and return a SPARQL-safe string literal.
 
-    Accepts one-line SMILES and multiline Molfile blocks (e.g., V3000).
+            Accepts one-line SMILES and multiline Molfile blocks (e.g., V3000).
 
-Parameters
-----------
-smiles : str | None
-    Smiles.
+    Parameters
+    ----------
+    smiles : str | None
+        Smiles.
 
-Returns
--------
-str | None
-    Computed result.
+    Returns
+    -------
+    str | None
+        Return value produced by validate and escape.
     """
     if not smiles:
         return smiles

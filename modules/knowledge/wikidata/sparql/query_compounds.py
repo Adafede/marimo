@@ -16,15 +16,15 @@ from .patterns_compound import (
 def query_compounds_by_taxon(qid: str) -> str:
     """Build SPARQL query to find compounds in a specific taxon and its descendants.
 
-Parameters
-----------
-qid : str
-    Qid.
+    Parameters
+    ----------
+    qid : str
+        Qid.
 
-Returns
--------
-str
-    Computed result.
+    Returns
+    -------
+    str
+        Return value produced by query compounds by taxon.
     """
     return f"""
     {PREFIXES}
@@ -49,10 +49,10 @@ str
 def query_all_compounds() -> str:
     """Build SPARQL query to retrieve all compounds.
 
-Returns
--------
-str
-    Computed result.
+    Returns
+    -------
+    str
+        Return value produced by query all compounds.
     """
     return f"""
     {PREFIXES}

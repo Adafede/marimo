@@ -8,15 +8,15 @@ from rdkit.Chem import Mol, MolFromSmarts
 def parse(smarts: str) -> Mol | None:
     """Parse SMARTS string to RDKit Mol pattern object.
 
-Parameters
-----------
-smarts : str
-    Smarts.
+    Parameters
+    ----------
+    smarts : str
+        Smarts.
 
-Returns
--------
-Mol | None
-    Computed result.
+    Returns
+    -------
+    Mol | None
+        Return value produced by parse.
     """
     if not smarts:
         return None

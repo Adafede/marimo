@@ -18,24 +18,24 @@ def wrap_image(
 ) -> mo.Html:
     """Wrap image HTML in mo.Html for mo.ui.table.
 
-    Takes an HTML img tag string and returns it wrapped in mo.Html
-    with consistent styling for table display.
+            Takes an HTML img tag string and returns it wrapped in mo.Html
+            with consistent styling for table display.
 
-Parameters
-----------
-html_str : str | None
-    Html str.
-max_width : str
-    Default is '150px'.
-max_height : str
-    Default is '100px'.
-rounded : bool
-    True. Default is True.
+    Parameters
+    ----------
+    html_str : str | None
+        Html str.
+    max_width : str
+        Default is '150px'.
+    max_height : str
+        Default is '100px'.
+    rounded : bool
+        True. Default is True.
 
-Returns
--------
-mo.Html
-    Computed result.
+    Returns
+    -------
+    mo.Html
+        Return value produced by wrap image.
     """
     if not html_str:
         return mo.Html("")

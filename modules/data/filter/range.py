@@ -20,25 +20,25 @@ def filter_range(
 ) -> pl.DataFrame:
     """Filter DataFrame by column value range.
 
-Parameters
-----------
-df : pl.DataFrame
-    Df.
-column : str
-    Column.
-min_val : Any | None
-    None. Default is None.
-max_val : Any | None
-    None. Default is None.
-transform : Callable[[pl.Expr], pl.Expr] | None
-    None. Default is None.
-keep_nulls : bool
-    True. Default is True.
+    Parameters
+    ----------
+    df : pl.DataFrame
+        Df.
+    column : str
+        Column.
+    min_val : Any | None
+        None. Default is None.
+    max_val : Any | None
+        None. Default is None.
+    transform : Callable[[pl.Expr], pl.Expr] | None
+        None. Default is None.
+    keep_nulls : bool
+        True. Default is True.
 
-Returns
--------
-pl.DataFrame
-    Computed result.
+    Returns
+    -------
+    pl.DataFrame
+        Return value produced by filter range.
     """
     if df.is_empty():
         return df

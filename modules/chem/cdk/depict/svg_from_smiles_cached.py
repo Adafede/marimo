@@ -20,26 +20,26 @@ def svg_from_smiles_cached(
 ) -> str:
     """Generate URL for chemical structure depiction from SMILES (cached).
 
-    Handles None/empty SMILES gracefully by returning empty string.
-    Results are cached for performance.
+            Handles None/empty SMILES gracefully by returning empty string.
+            Results are cached for performance.
 
-Parameters
-----------
-smiles : str | None
-    Smiles.
-base_url : str
-    CDK_DEPICT_URL. Default is CDK_DEPICT_URL.
-layout : str
-    Default is 'cow'.
-img_format : str
-    Default is 'svg'.
-annotate : str | None
-    Default is 'cip'.
+    Parameters
+    ----------
+    smiles : str | None
+        Smiles.
+    base_url : str
+        CDK_DEPICT_URL. Default is CDK_DEPICT_URL.
+    layout : str
+        Default is 'cow'.
+    img_format : str
+        Default is 'svg'.
+    annotate : str | None
+        Default is 'cip'.
 
-Returns
--------
-str
-    Computed result.
+    Returns
+    -------
+    str
+        Return value produced by svg from smiles cached.
     """
     if not smiles:
         return ""
