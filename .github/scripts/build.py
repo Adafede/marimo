@@ -41,9 +41,12 @@ def copy_public_directories(source_dir: Path, output_dir: Path) -> None:
     and copies them to the corresponding location in the output directory,
     preserving the directory structure.
 
-    Args:
-        source_dir (Path): Source directory to search for public/ folders
-        output_dir (Path): Destination directory where public/ folders will be copied
+Parameters
+----------
+source_dir : Path
+    Source dir.
+output_dir : Path
+    Output dir.
     """
     if not source_dir.exists():
         logger.warning(f"Source directory not found: {source_dir}")
@@ -81,7 +84,18 @@ def copy_public_directories(source_dir: Path, output_dir: Path) -> None:
 
 
 def find_imported_modules(notebook_path: Path) -> Set[str]:
-    """Find all modules imported from 'modules.*' in the notebook."""
+    """Find all modules imported from 'modules.*' in the notebook.
+
+Parameters
+----------
+notebook_path : Path
+    Notebook path.
+
+Returns
+-------
+Set[str]
+    Computed result.
+    """
     with open(notebook_path) as f:
         content = f.read()
 
@@ -99,7 +113,20 @@ def find_imported_modules(notebook_path: Path) -> Set[str]:
 
 
 def find_module_dependencies(module_path: Path, module_name: str) -> Set[str]:
-    """Recursively find all dependencies of a module."""
+    """Recursively find all dependencies of a module.
+
+Parameters
+----------
+module_path : Path
+    Module path.
+module_name : str
+    Module name.
+
+Returns
+-------
+Set[str]
+    Computed result.
+    """
     if not module_path.exists():
         return set()
 
@@ -145,7 +172,20 @@ def find_module_dependencies(module_path: Path, module_name: str) -> Set[str]:
 
 
 def get_all_required_modules(notebook_path: Path, public_path: Path) -> Set[str]:
-    """Get all modules required by the notebook, including transitive dependencies."""
+    """Get all modules required by the notebook, including transitive dependencies.
+
+Parameters
+----------
+notebook_path : Path
+    Notebook path.
+public_path : Path
+    Public path.
+
+Returns
+-------
+Set[str]
+    Computed result.
+    """
     direct_imports = find_imported_modules(notebook_path)
 
     all_modules = set()
@@ -172,7 +212,20 @@ def get_all_required_modules(notebook_path: Path, public_path: Path) -> Set[str]
 
 
 def convert_relative_to_absolute_imports(code: str, module_name: str) -> str:
-    """Convert relative imports to absolute imports in module code."""
+    """Convert relative imports to absolute imports in module code.
+
+Parameters
+----------
+code : str
+    Code.
+module_name : str
+    Module name.
+
+Returns
+-------
+str
+    Computed result.
+    """
     module_parts = module_name.split(".")
 
     # Convert "from .x import y", "from ..x import y", etc. to absolute imports
@@ -201,7 +254,17 @@ def convert_relative_to_absolute_imports(code: str, module_name: str) -> str:
 
 
 def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
-    """Inline only required modules into the notebook."""
+    """Inline only required modules into the notebook.
+
+Parameters
+----------
+notebook_path : Path
+    Notebook path.
+output_path : Path
+    Output path.
+public_path : Path
+    Public path.
+    """
 
     # Get all required modules
     required_modules = get_all_required_modules(notebook_path, public_path)
@@ -285,10 +348,19 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
     ) -> str:
         """Get inlined code for a module, including its transitive dependencies.
 
-        Args:
-            module_path: The module path (e.g., 'modules.text.strings.pluralize')
-            indent: The indentation to use for the inlined code
-            aliases: Dict mapping original names to aliases (e.g., {'ENTITY_PREFIX': 'WIKIDATA_ENTITY_PREFIX'})
+Parameters
+----------
+module_path : str
+    Module path.
+indent : str
+    Indent.
+aliases : dict | None
+    None. Default is None.
+
+Returns
+-------
+str
+    Computed result.
         """
         result_parts = []
 
@@ -393,7 +465,20 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
         Examples:
             'foo, bar' -> {'foo': 'foo', 'bar': 'bar'}
             'foo as f, bar as b' -> {'foo': 'f', 'bar': 'b'}
-            '(\n    foo as f,\n    bar,\n)' -> {'foo': 'f', 'bar': 'bar'}
+            '(
+    foo as f,
+    bar,
+)' -> {'foo': 'f', 'bar': 'bar'}
+
+Parameters
+----------
+import_text : str
+    Import text.
+
+Returns
+-------
+dict
+    Computed result.
         """
         aliases = {}
         # Remove parentheses and normalize whitespace
@@ -532,14 +617,19 @@ def _export_html_wasm(
     For apps, if a modules/ directory exists, modules will be automatically
     inlined before export, and the inlined version is saved alongside the HTML.
 
-    Args:
-        notebook_path (Path): Path to the marimo notebook (.py file) to export
-        output_dir (Path): Directory where the exported HTML file will be saved
-        as_app (bool, optional): Whether to export as an app (run mode) or notebook (edit mode).
-                                Defaults to False.
+Parameters
+----------
+notebook_path : Path
+    Notebook path.
+output_dir : Path
+    Output dir.
+as_app : bool
+    False. Default is False.
 
-    Returns:
-        bool: True if export succeeded, False otherwise
+Returns
+-------
+bool
+    Computed result.
     """
     inlined_path = None
     notebook_to_export = notebook_path
@@ -617,14 +707,16 @@ def _generate_index(
     notebooks. The index page includes the marimo logo and displays each notebook
     with a formatted title and a link to open it.
 
-    Args:
-        notebooks_data (List[dict]): List of dictionaries with data for notebooks
-        apps_data (List[dict]): List of dictionaries with data for apps
-        output_dir (Path): Directory where the index.html file will be saved
-        template_file (Path, optional): Path to the template file. If None, uses the default template.
-
-    Returns:
-        None
+Parameters
+----------
+output_dir : Path
+    Output dir.
+template_file : Path
+    Template file.
+notebooks_data : List[dict] | None
+    None. Default is None.
+apps_data : List[dict] | None
+    None. Default is None.
     """
     logger.info("Generating index.html")
 
@@ -667,13 +759,19 @@ def _export(folder: Path, output_dir: Path, as_app: bool = False) -> List[dict]:
     to HTML/WebAssembly format using the export_html_wasm function. It returns a
     list of dictionaries containing the data needed for the template.
 
-    Args:
-        folder (Path): Path to the folder containing marimo notebooks
-        output_dir (Path): Directory where the exported HTML files will be saved
-        as_app (bool, optional): Whether to export as apps (run mode) or notebooks (edit mode).
+Parameters
+----------
+folder : Path
+    Folder.
+output_dir : Path
+    Output dir.
+as_app : bool
+    False. Default is False.
 
-    Returns:
-        List[dict]: List of dictionaries with "display_name" and "html_path" for each notebook
+Returns
+-------
+List[dict]
+    Computed result.
     """
     # Check if the folder exists
     if not folder.exists():
@@ -731,8 +829,12 @@ def main(
         --output-dir: Directory where the exported files will be saved (default: _site)
         --template: Path to the template file (default: templates/index.html.j2)
 
-    Returns:
-        None
+Parameters
+----------
+output_dir : Union[str, Path]
+    Default is '_site'.
+template : Union[str, Path]
+    Default is 'templates/tailwind.html.j2'.
     """
     logger.info("Starting marimo build process")
 

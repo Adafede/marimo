@@ -11,7 +11,22 @@ def validate(
     max_length: int = DEFAULT_MAX_LENGTH,
     required_atoms: str = DEFAULT_REQUIRED_ATOMS,
 ) -> tuple[bool, str | None]:
-    """Validate SMILES string for common issues."""
+    """Validate SMILES string for common issues.
+
+Parameters
+----------
+smiles : str | None
+    Smiles.
+max_length : int
+    DEFAULT_MAX_LENGTH. Default is DEFAULT_MAX_LENGTH.
+required_atoms : str
+    DEFAULT_REQUIRED_ATOMS. Default is DEFAULT_REQUIRED_ATOMS.
+
+Returns
+-------
+tuple[bool, str | None]
+    Computed result.
+    """
     if not smiles or not smiles.strip():
         return True, None
 

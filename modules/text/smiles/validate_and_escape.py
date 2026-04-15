@@ -7,7 +7,18 @@ from ..strings.escape_backslashes import escape_backslashes
 
 
 def _looks_like_molfile(text: str) -> bool:
-    """Heuristic check for Molfile V2000/V3000 blocks."""
+    """Heuristic check for Molfile V2000/V3000 blocks.
+
+Parameters
+----------
+text : str
+    Text.
+
+Returns
+-------
+bool
+    Computed result.
+    """
     upper = text.upper()
     return "M  END" in upper and (
         "V3000" in upper
@@ -21,6 +32,16 @@ def validate_and_escape(smiles: str | None) -> str | None:
     """Validate structure text and return a SPARQL-safe string literal.
 
     Accepts one-line SMILES and multiline Molfile blocks (e.g., V3000).
+
+Parameters
+----------
+smiles : str | None
+    Smiles.
+
+Returns
+-------
+str | None
+    Computed result.
     """
     if not smiles:
         return smiles

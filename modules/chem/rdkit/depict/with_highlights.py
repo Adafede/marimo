@@ -21,14 +21,42 @@ CONTAINER_STYLE: str = (
 
 
 def create_label(name: str, smiles: str) -> str:
-    """Create HTML label for molecule display."""
+    """Create HTML label for molecule display.
+
+Parameters
+----------
+name : str
+    Name.
+smiles : str
+    Smiles.
+
+Returns
+-------
+str
+    Computed result.
+    """
     if name != smiles:
         return f"<strong>{name}</strong><br><code>{smiles}</code>"
     return f"<code>{smiles}</code>"
 
 
 def wrap_in_container(svg: str, label: str, tooltips: list[str]) -> str:
-    """Wrap SVG and metadata in styled HTML container."""
+    """Wrap SVG and metadata in styled HTML container.
+
+Parameters
+----------
+svg : str
+    Svg.
+label : str
+    Label.
+tooltips : list[str]
+    Tooltips.
+
+Returns
+-------
+str
+    Computed result.
+    """
     tooltips_html = "<br>".join(tooltips)
     return (
         f"<div style='{CONTAINER_STYLE}'>"
@@ -45,19 +73,27 @@ def with_highlights(
     width: int = 200,
     height: int = 200,
 ) -> str:
-    """
-    Depict a molecule as SVG with highlighted substructures.
+    """Depict a molecule as SVG with highlighted substructures.
 
-    Args:
-        name: Display name for the molecule
-        smiles: SMILES string
-        smarts_entries: List of (name, smarts, smarts_mol, rgb_color) tuples
-        match_counter: Optional defaultdict to count matches per SMARTS
-        width: SVG width in pixels
-        height: SVG height in pixels
+Parameters
+----------
+name : str
+    Name.
+smiles : str
+    Smiles.
+smarts_entries : list[SmartsEntry]
+    Smarts entries.
+match_counter : defaultdict | None
+    None. Default is None.
+width : int
+    Default is 200.
+height : int
+    Default is 200.
 
-    Returns:
-        HTML string with SVG and labels
+Returns
+-------
+str
+    Computed result.
     """
     mol = parse(smiles=smiles)
     if not mol:

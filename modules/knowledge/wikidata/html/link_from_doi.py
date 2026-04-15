@@ -8,12 +8,36 @@ DOI_BASE = "https://doi.org/"
 
 
 def extract_doi(doi: str) -> str:
-    """Extract DOI identifier from URL or raw DOI."""
+    """Extract DOI identifier from URL or raw DOI.
+
+Parameters
+----------
+doi : str
+    Doi.
+
+Returns
+-------
+str
+    Computed result.
+    """
     return doi.split("doi.org/")[-1] if "doi.org/" in doi else doi
 
 
 def link_from_doi(doi: str, color: str = DEFAULT_LINK_COLOR) -> str:
-    """Create styled HTML link for a DOI."""
+    """Create styled HTML link for a DOI.
+
+Parameters
+----------
+doi : str
+    Doi.
+color : str
+    DEFAULT_LINK_COLOR. Default is DEFAULT_LINK_COLOR.
+
+Returns
+-------
+str
+    Computed result.
+    """
     if not doi:
         return ""
     clean_doi = extract_doi(doi=doi)

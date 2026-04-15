@@ -364,9 +364,20 @@ with app.setup:
         df: pl.DataFrame,
         verbose: bool = False,
     ) -> pl.DataFrame:
-        """
-        Drop rows where any critical structure field is null.
+        """Drop rows where any critical structure field is null.
         These rows have no usable chemical data and should not be published.
+
+Parameters
+----------
+df : pl.DataFrame
+    Df.
+verbose : bool
+    False. Default is False.
+
+Returns
+-------
+pl.DataFrame
+    Computed result.
         """
         before = len(df)
         mask = pl.all_horizontal(
@@ -382,9 +393,13 @@ with app.setup:
         return df
 
     def fetch_latest_zenodo_frozen() -> pl.DataFrame:
-        """
-        Fetch the latest frozen.csv from Zenodo to inherit manual_validation.
+        """Fetch the latest frozen.csv from Zenodo to inherit manual_validation.
         Uses the Zenodo API to find the latest version and download frozen.csv.
+
+Returns
+-------
+pl.DataFrame
+    Computed result.
         """
         import urllib.request
         import json
@@ -453,9 +468,20 @@ with app.setup:
         new_df: pl.DataFrame,
         old_df: pl.DataFrame,
     ) -> pl.DataFrame:
-        """
-        Inherit manual_validation from previous version.
+        """Inherit manual_validation from previous version.
         Matches on structure_inchikey + organism_wikidata + reference_wikidata.
+
+Parameters
+----------
+new_df : pl.DataFrame
+    New df.
+old_df : pl.DataFrame
+    Old df.
+
+Returns
+-------
+pl.DataFrame
+    Computed result.
         """
         if len(old_df) == 0:
             return new_df
@@ -498,9 +524,24 @@ with app.setup:
         key_cols: list[str],
         name: str,
     ) -> dict:
-        """
-        Compute changes between new and old versions.
+        """Compute changes between new and old versions.
         Returns dict with added, removed counts and samples.
+
+Parameters
+----------
+new_df : pl.DataFrame
+    New df.
+old_df : pl.DataFrame
+    Old df.
+key_cols : list[str]
+    Key cols.
+name : str
+    Name.
+
+Returns
+-------
+dict
+    Computed result.
         """
         if len(old_df) == 0:
             return {
@@ -551,7 +592,15 @@ with app.setup:
         changes: list[dict],
         output_path: str,
     ):
-        """Write changes report to a text file."""
+        """Write changes report to a text file.
+
+Parameters
+----------
+changes : list[dict]
+    Changes.
+output_path : str
+    Output path.
+        """
 
         with open(output_path, "w") as f:
             f.write("=" * 60 + "\n")
@@ -573,7 +622,18 @@ with app.setup:
     # ========================================================================
 
     def extract_qid(url: str) -> str:
-        """Extract QID from Wikidata URL."""
+        """Extract QID from Wikidata URL.
+
+Parameters
+----------
+url : str
+    Url.
+
+Returns
+-------
+str
+    Computed result.
+        """
         if url and url.startswith(WIKIDATA_ENTITY_PREFIX):
             return url.replace(WIKIDATA_ENTITY_PREFIX, "")
         return url
@@ -582,7 +642,20 @@ with app.setup:
         query: str,
         endpoint: str,
     ) -> pl.LazyFrame:
-        """Execute SPARQL query and return LazyFrame."""
+        """Execute SPARQL query and return LazyFrame.
+
+Parameters
+----------
+query : str
+    Query.
+endpoint : str
+    Endpoint.
+
+Returns
+-------
+pl.LazyFrame
+    Computed result.
+        """
         csv_bytes = execute_with_retry(query, endpoint, timeout=600)
         if not csv_bytes or len(csv_bytes) < 10:
             return pl.LazyFrame()
@@ -630,7 +703,20 @@ with app.setup:
     # ========================================================================
 
     def fetch_all_data(endpoint: str, progress_callback=None) -> LOTUSExportData:
-        """Fetch all required data from Wikidata."""
+        """Fetch all required data from Wikidata.
+
+Parameters
+----------
+endpoint : str
+    Endpoint.
+progress_callback : Any
+    None. Default is None.
+
+Returns
+-------
+LOTUSExportData
+    Computed result.
+        """
         queries = [
             (
                 "compound_taxon_reference",
@@ -675,9 +761,18 @@ with app.setup:
     # ========================================================================
 
     def fetch_npclassifier_cache(url: str | None = None) -> pl.DataFrame:
-        """
-        Fetch NPClassifier cache CSV from remote URL.
+        """Fetch NPClassifier cache CSV from remote URL.
         Returns DataFrame with columns: smiles, pathway, superclass, class, isglycoside, error
+
+Parameters
+----------
+url : str | None
+    None. Default is None.
+
+Returns
+-------
+pl.DataFrame
+    Computed result.
         """
         import urllib.request
 
@@ -701,9 +796,18 @@ with app.setup:
             return pl.DataFrame()
 
     def fetch_classyfire_cache(url: str | None = None) -> pl.DataFrame:
-        """
-        Fetch ClassyFire cache from remote URL or local file.
+        """Fetch ClassyFire cache from remote URL or local file.
         Expected columns: inchikey, chemontid, kingdom, superclass, class, direct_parent
+
+Parameters
+----------
+url : str | None
+    None. Default is None.
+
+Returns
+-------
+pl.DataFrame
+    Computed result.
         """
 
         def _empty_classyfire_df() -> pl.DataFrame:
@@ -793,11 +897,20 @@ with app.setup:
         return _empty_classyfire_df()
 
     def fetch_ott_taxonomy_cache(url: str | None = None) -> pl.DataFrame:
-        """
-        Fetch Open Tree of Life (OTT) taxonomy cache from remote URL or local file.
+        """Fetch Open Tree of Life (OTT) taxonomy cache from remote URL or local file.
         Expected columns: organism_name, organism_taxonomy_ottid, organism_taxonomy_01domain, etc.
 
         Maps to: organism_name, ott_id, domain, kingdom, phylum, class, order, family, tribe, genus, species, varietas
+
+Parameters
+----------
+url : str | None
+    None. Default is None.
+
+Returns
+-------
+pl.DataFrame
+    Computed result.
         """
         url = url or CONFIG.get("ott_cache_url")
         if not url:
@@ -950,8 +1063,7 @@ with app.setup:
         return _empty_ott_df()
 
     def compute_rdkit_properties(smiles_list: list[str]) -> pl.DataFrame:
-        """
-        Compute RDKit-derived structure properties from a list of SMILES.
+        """Compute RDKit-derived structure properties from a list of SMILES.
 
         Returns DataFrame with columns:
         - smiles (input SMILES)
@@ -965,6 +1077,16 @@ with app.setup:
         - inchikey (computed InChIKey)
 
         Based on: https://github.com/lotusnprod/lotus-processor/blob/main/src/2_curating/2_editing/structure/3_processingAndEnriching/chemosanitizer_functions.py
+
+Parameters
+----------
+smiles_list : list[str]
+    Smiles list.
+
+Returns
+-------
+pl.DataFrame
+    Computed result.
         """
         try:
             from rdkit import Chem
@@ -1073,25 +1195,22 @@ with app.setup:
         cid_list: list[str],
         progress_callback=None,
     ) -> pl.DataFrame:
-        """
-        Fetch comprehensive compound data from PubChem via SPARQL.
+        """Fetch comprehensive compound data from PubChem via SPARQL.
 
         Uses batched queries with VALUES clause for efficient filtering server-side.
         This avoids downloading the entire PubChem database (120M+ records).
 
-        Args:
-            cid_list: List of PubChem CIDs (as strings) to filter results
-            progress_callback: Optional callback(current, total) for progress updates
+Parameters
+----------
+cid_list : list[str]
+    Cid list.
+progress_callback : Any
+    None. Default is None.
 
-        Returns:
-            DataFrame with columns:
-            - cid: PubChem Compound ID
-            - pubchem_inchikey: InChIKey from PubChem
-            - pubchem_mass: Monoisotopic weight
-            - pubchem_smiles: Isomeric SMILES
-            - pubchem_smiles_2d: Connectivity SMILES (no stereochemistry)
-            - common_name: Common/traditional name (skos:prefLabel)
-            - iupac_name: Preferred IUPAC name
+Returns
+-------
+pl.DataFrame
+    Computed result.
         """
         schema = {
             "cid": pl.Utf8,
@@ -1190,17 +1309,21 @@ with app.setup:
         inchikey_list: list[str],
         progress_callback=None,
     ) -> pl.DataFrame:
-        """
-        Fetch PubChem compound data by InChIKey for compounds without CIDs.
+        """Fetch PubChem compound data by InChIKey for compounds without CIDs.
 
         Uses batched queries with VALUES clause for efficient filtering server-side.
 
-        Args:
-            inchikey_list: List of InChIKeys to look up
-            progress_callback: Optional callback(current, total) for progress updates
+Parameters
+----------
+inchikey_list : list[str]
+    Inchikey list.
+progress_callback : Any
+    None. Default is None.
 
-        Returns:
-            DataFrame with same schema as fetch_pubchem_compound_data
+Returns
+-------
+pl.DataFrame
+    Computed result.
         """
         schema = {
             "cid": pl.Utf8,
@@ -1300,13 +1423,35 @@ with app.setup:
     SUBSCRIPT_TO_NORMAL = str.maketrans("₀₁₂₃₄₅₆₇₈₉", "0123456789")
 
     def normalize_formula(formula: str | None) -> str | None:
-        """Convert subscript digits to normal digits in molecular formulas."""
+        """Convert subscript digits to normal digits in molecular formulas.
+
+Parameters
+----------
+formula : str | None
+    Formula.
+
+Returns
+-------
+str | None
+    Computed result.
+        """
         if formula is None:
             return None
         return formula.translate(SUBSCRIPT_TO_NORMAL)
 
     def normalize_blank_strings(df: pl.DataFrame) -> pl.DataFrame:
-        """Trim UTF-8 values and convert empty/whitespace-only cells and 'notClassified' to null."""
+        """Trim UTF-8 values and convert empty/whitespace-only cells and 'notClassified' to null.
+
+Parameters
+----------
+df : pl.DataFrame
+    Df.
+
+Returns
+-------
+pl.DataFrame
+    Computed result.
+        """
         utf8_cols = [name for name, dtype in df.schema.items() if dtype == pl.Utf8]
         if not utf8_cols:
             return df
@@ -1322,7 +1467,20 @@ with app.setup:
         )
 
     def extract_qids_from_lazyframe(lf: pl.LazyFrame, col: str) -> pl.LazyFrame:
-        """Extract QIDs from Wikidata URLs in a column."""
+        """Extract QIDs from Wikidata URLs in a column.
+
+Parameters
+----------
+lf : pl.LazyFrame
+    Lf.
+col : str
+    Col.
+
+Returns
+-------
+pl.LazyFrame
+    Computed result.
+        """
         return lf.with_columns(
             pl.col(col)
             .str.replace(WIKIDATA_ENTITY_PREFIX, "", literal=True)
@@ -1330,11 +1488,33 @@ with app.setup:
         )
 
     def collect_df(lf: pl.LazyFrame) -> pl.DataFrame:
-        """Collect LazyFrame to DataFrame with proper type casting."""
+        """Collect LazyFrame to DataFrame with proper type casting.
+
+Parameters
+----------
+lf : pl.LazyFrame
+    Lf.
+
+Returns
+-------
+pl.DataFrame
+    Computed result.
+        """
         return cast(pl.DataFrame, lf.collect())
 
     def process_compound_taxon_reference(lf: pl.LazyFrame) -> pl.LazyFrame:
-        """Process compound-taxon-reference triplets."""
+        """Process compound-taxon-reference triplets.
+
+Parameters
+----------
+lf : pl.LazyFrame
+    Lf.
+
+Returns
+-------
+pl.LazyFrame
+    Computed result.
+        """
         return (
             lf.pipe(extract_qids_from_lazyframe, "compound")
             .pipe(extract_qids_from_lazyframe, "taxon")
@@ -1361,8 +1541,7 @@ with app.setup:
         taxon_name_df: pl.DataFrame,
         reference_doi_df: pl.DataFrame,
     ) -> pl.DataFrame:
-        """
-        Build frozen.csv output.
+        """Build frozen.csv output.
 
         Columns:
         - structure_inchikey
@@ -1372,6 +1551,20 @@ with app.setup:
         - organism_wikidata
         - structure_wikidata
         - reference_wikidata
+
+Parameters
+----------
+compound_taxon_reference_df : pl.DataFrame
+    Compound taxon reference df.
+taxon_name_df : pl.DataFrame
+    Taxon name df.
+reference_doi_df : pl.DataFrame
+    Reference doi df.
+
+Returns
+-------
+pl.DataFrame
+    Computed result.
         """
         # Join with taxon names
         result = compound_taxon_reference_df.join(
@@ -1422,8 +1615,7 @@ with app.setup:
         pubchem_df: pl.DataFrame,
         rdkit_df: pl.DataFrame,
     ) -> pl.DataFrame:
-        """
-        Build frozen_metadata.csv output matching the old Zenodo format.
+        """Build frozen_metadata.csv output matching the old Zenodo format.
 
         Data priority: PubChem > RDKit > Wikidata
         - InChIKey, mass, SMILES from PubChem when available
@@ -1441,6 +1633,28 @@ with app.setup:
         - organism_taxonomy_gbifid, organism_taxonomy_ncbiid, organism_taxonomy_ottid
         - organism_taxonomy_01domain through organism_taxonomy_10varietas
         - reference_wikidata, reference_doi, manual_validation
+
+Parameters
+----------
+compound_taxon_reference_df : pl.DataFrame
+    Compound taxon reference df.
+data : LOTUSExportData
+    Data.
+npclassifier_df : pl.DataFrame
+    Npclassifier df.
+classyfire_df : pl.DataFrame
+    Classyfire df.
+ott_df : pl.DataFrame
+    Ott df.
+pubchem_df : pl.DataFrame
+    Pubchem df.
+rdkit_df : pl.DataFrame
+    Rdkit df.
+
+Returns
+-------
+pl.DataFrame
+    Computed result.
         """
         # Start with the triplets
         result = compound_taxon_reference_df.clone()
@@ -2349,7 +2563,8 @@ def footer():
 
 
 def main():
-    """Entry point for CLI mode."""
+    """Entry point for CLI mode.
+    """
     import argparse
     from datetime import datetime
     from pathlib import Path

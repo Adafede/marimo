@@ -18,7 +18,28 @@ def filter_range(
     transform: Callable[[pl.Expr], pl.Expr] | None = None,
     keep_nulls: bool = True,
 ) -> pl.DataFrame:
-    """Filter DataFrame by column value range."""
+    """Filter DataFrame by column value range.
+
+Parameters
+----------
+df : pl.DataFrame
+    Df.
+column : str
+    Column.
+min_val : Any | None
+    None. Default is None.
+max_val : Any | None
+    None. Default is None.
+transform : Callable[[pl.Expr], pl.Expr] | None
+    None. Default is None.
+keep_nulls : bool
+    True. Default is True.
+
+Returns
+-------
+pl.DataFrame
+    Computed result.
+    """
     if df.is_empty():
         return df
     if (min_val is None and max_val is None) or column not in df.columns:

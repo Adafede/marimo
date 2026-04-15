@@ -16,21 +16,29 @@ def render_with_highlights(
     width: int = 200,
     height: int = 200,
 ) -> str:
-    """
-    Render a molecule as SVG with highlighted substructures.
+    """Render a molecule as SVG with highlighted substructures.
 
     Deprecated: Use depict.with_highlights instead.
 
-    Args:
-        name: Display name for the molecule
-        smi: SMILES string
-        smarts_mols: List of (name, smarts, smarts_mol, rgb_color) tuples
-        match_counter: Optional defaultdict to count matches per SMARTS
-        width: SVG width in pixels
-        height: SVG height in pixels
+Parameters
+----------
+name : str
+    Name.
+smi : str
+    Smi.
+smarts_mols : list[SmartsEntry]
+    Smarts mols.
+match_counter : defaultdict | None
+    None. Default is None.
+width : int
+    Default is 200.
+height : int
+    Default is 200.
 
-    Returns:
-        HTML string with SVG and labels
+Returns
+-------
+str
+    Computed result.
     """
     return with_highlights(
         name=name,

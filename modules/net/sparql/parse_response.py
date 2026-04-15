@@ -19,6 +19,16 @@ def parse_sparql_response(response_bytes: bytes) -> pl.LazyFrame:
 
     The function returns a LazyFrame (not materialized). Callers should use
     `.collect()` when they need an eager DataFrame.
+
+Parameters
+----------
+response_bytes : bytes
+    Response bytes.
+
+Returns
+-------
+pl.LazyFrame
+    Computed result.
     """
     if not response_bytes:
         return pl.DataFrame().lazy()

@@ -20,27 +20,28 @@ def fold_change_credible_interval(
     probability: float = 0.89,
     log_base: float = 2,
 ) -> tuple[np.ndarray | float, np.ndarray | float]:
-    """
-    Compute credible interval for log fold-change relative to baseline.
+    """Compute credible interval for log fold-change relative to baseline.
 
     Transforms credible interval on probability scale [0, 1] to
     log fold-change scale: log_base(θ / baseline).
 
-    Args:
-        alpha: Posterior α
-        beta: Posterior β
-        baseline: Reference rate θ₀ for comparison
-        probability: Coverage probability (default 0.89)
-        log_base: Base for logarithm (default 2 for log₂)
+Parameters
+----------
+alpha : np.ndarray | float
+    Alpha.
+beta : np.ndarray | float
+    Beta.
+baseline : np.ndarray | float
+    Baseline.
+probability : float
+    Default is 0.89.
+log_base : float
+    Default is 2.
 
-    Returns:
-        Tuple of (lower_fc, upper_fc) on log fold-change scale
-
-    Example:
-        >>> # Posterior: ~40% success rate, baseline: 10%
-        >>> alpha, beta = 40, 60
-        >>> fc_lower, fc_upper = fold_change_credible_interval(40, 60, 0.1)
-        >>> # Returns approximately (1.5, 2.5) meaning 2^1.5 to 2^2.5 fold increase
+Returns
+-------
+tuple[np.ndarray | float, np.ndarray | float]
+    Computed result.
     """
     # Get CI on probability scale
     p_lower, p_upper = credible_interval(alpha, beta, probability)
@@ -65,8 +66,7 @@ def rope_decision(
     ci_probability: float = 0.89,
     log_base: float = 2,
 ) -> tuple[np.ndarray | str, np.ndarray | float, np.ndarray | float]:
-    """
-    Classify enrichment using ROPE (Region of Practical Equivalence).
+    """Classify enrichment using ROPE (Region of Practical Equivalence).
 
     ROPE is the interval [-ε, +ε] on log fold-change scale where differences
     are considered practically negligible.
@@ -77,25 +77,25 @@ def rope_decision(
         - "equivalent": CI entirely within [-ε, +ε] (negligible difference)
         - "undecided": CI overlaps ROPE boundaries (insufficient evidence)
 
-    Args:
-        alpha: Posterior α
-        beta: Posterior β
-        baseline: Reference rate θ₀
-        rope_width: Half-width ε of ROPE on log scale (default 0.5 = 1.4x fold-change)
-        ci_probability: CI coverage (default 0.89)
-        log_base: Base for logarithm (default 2)
+Parameters
+----------
+alpha : np.ndarray | float
+    Alpha.
+beta : np.ndarray | float
+    Beta.
+baseline : np.ndarray | float
+    Baseline.
+rope_width : float
+    Default is 0.5.
+ci_probability : float
+    Default is 0.89.
+log_base : float
+    Default is 2.
 
-    Returns:
-        Tuple of (decisions, p_above_rope, p_below_rope) where:
-            - decisions: Classification string or array
-            - p_above_rope: P(θ > baseline × base^ε)
-            - p_below_rope: P(θ < baseline × base^(-ε))
-
-    Example:
-        >>> # Moderate enrichment: posterior ~30%, baseline 10%
-        >>> alpha, beta = 30, 70
-        >>> decisions, p_above, p_below = rope_decision(30, 70, 0.1, rope_width=0.5)
-        >>> # Returns ("enriched", 0.99, 0.0) - strong evidence above ROPE
+Returns
+-------
+tuple[np.ndarray | str, np.ndarray | float, np.ndarray | float]
+    Computed result.
     """
     t = np.maximum(np.asarray(baseline), 1e-10)
     a = np.maximum(np.asarray(alpha), 1e-6)
@@ -156,29 +156,25 @@ def enrichment_strength(
     baseline: np.ndarray | float,
     log_base: float = 2,
 ) -> dict[str, np.ndarray | float]:
-    """
-    Compute comprehensive enrichment statistics.
+    """Compute comprehensive enrichment statistics.
 
     Returns posterior mean, mode, and fold-change metrics relative to baseline.
 
-    Args:
-        alpha: Posterior α
-        beta: Posterior β
-        baseline: Reference rate θ₀
-        log_base: Base for logarithm (default 2)
+Parameters
+----------
+alpha : np.ndarray | float
+    Alpha.
+beta : np.ndarray | float
+    Beta.
+baseline : np.ndarray | float
+    Baseline.
+log_base : float
+    Default is 2.
 
-    Returns:
-        Dictionary with keys:
-            - posterior_mean: E[θ]
-            - posterior_mode: mode of θ
-            - log_fold_change: log_base(E[θ] / baseline)
-            - fold_change: E[θ] / baseline on original scale
-
-    Example:
-        >>> stats = enrichment_strength(30, 70, 0.1)
-        >>> stats['posterior_mean']  # ~0.30
-        >>> stats['log_fold_change']  # ~1.58 (log₂(3))
-        >>> stats['fold_change']      # ~3.0
+Returns
+-------
+dict[str, np.ndarray | float]
+    Computed result.
     """
     from .beta import posterior_mean, posterior_mode
 
@@ -205,26 +201,25 @@ def hierarchical_prior_center(
     global_baseline: np.ndarray | float,
     hierarchical_weight: float = 0.2,
 ) -> np.ndarray | float:
-    """
-    Blend parent posterior with global baseline for hierarchical prior.
+    """Blend parent posterior with global baseline for hierarchical prior.
 
     prior_center = w × parent_posterior + (1-w) × global_baseline
 
     where w controls how much we trust the parent's evidence.
 
-    Args:
-        parent_posterior_mean: Posterior mean from parent taxon/group
-        global_baseline: Global dataset frequency θ₀
-        hierarchical_weight: Weight for parent (0 = pure global, 1 = pure parent)
-            Default 0.2 means 20% parent, 80% global
+Parameters
+----------
+parent_posterior_mean : np.ndarray | float
+    Parent posterior mean.
+global_baseline : np.ndarray | float
+    Global baseline.
+hierarchical_weight : float
+    Default is 0.2.
 
-    Returns:
-        Prior center for child's analysis
-
-    Example:
-        >>> # Parent taxon has 40% rate, global is 10%
-        >>> hierarchical_prior_center(0.4, 0.1, hierarchical_weight=0.2)
-        0.14  # 0.2 × 0.4 + 0.8 × 0.1
+Returns
+-------
+np.ndarray | float
+    Computed result.
     """
     if not (0 <= hierarchical_weight <= 1):
         raise ValueError(

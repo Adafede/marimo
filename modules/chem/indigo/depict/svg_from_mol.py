@@ -13,17 +13,23 @@ def svg_from_mol(
     aromatize: bool = True,
     coloring: bool = True,
 ) -> str:
-    """
-    Generate data URI for chemical structure depiction from an Indigo molecule.
+    """Generate data URI for chemical structure depiction from an Indigo molecule.
 
-    Args:
-        mol: IndigoObject molecule (must belong to the shared Indigo instance)
-        img_format: Output format ('svg' or 'png')
-        aromatize: Whether to aromatize the molecule
-        coloring: Whether to apply color rendering
+Parameters
+----------
+mol : IndigoObject | None
+    Mol.
+img_format : str
+    Default is 'svg'.
+aromatize : bool
+    True. Default is True.
+coloring : bool
+    True. Default is True.
 
-    Returns:
-        Data URI string or empty string if rendering fails
+Returns
+-------
+str
+    Computed result.
     """
     if mol is None:
         return ""

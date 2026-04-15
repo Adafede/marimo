@@ -10,15 +10,19 @@ def mol_from_smiles(
     smiles: str | None,
     aromatize: bool = True,
 ) -> IndigoObject | None:
-    """
-    Load molecule from SMILES string using the shared Indigo instance.
+    """Load molecule from SMILES string using the shared Indigo instance.
 
-    Args:
-        smiles: SMILES string to parse
-        aromatize: Whether to aromatize the molecule
+Parameters
+----------
+smiles : str | None
+    Smiles.
+aromatize : bool
+    True. Default is True.
 
-    Returns:
-        IndigoObject molecule or None if invalid/empty
+Returns
+-------
+IndigoObject | None
+    Computed result.
     """
     if not smiles:
         return None

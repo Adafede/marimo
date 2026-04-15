@@ -8,28 +8,35 @@ from rdkit.Chem import Mol
 
 
 def find_matches(mol: Mol, pattern: Mol) -> tuple[tuple[int, ...], ...]:
-    """
-    Find all substructure matches for a SMARTS pattern in a molecule.
+    """Find all substructure matches for a SMARTS pattern in a molecule.
 
-    Args:
-        mol: Target molecule to search
-        pattern: SMARTS pattern as Mol object
+Parameters
+----------
+mol : Mol
+    Mol.
+pattern : Mol
+    Pattern.
 
-    Returns:
-        Tuple of tuples containing atom indices for each match
+Returns
+-------
+tuple[tuple[int, ...], ...]
+    Computed result.
     """
     return mol.GetSubstructMatches(pattern)
 
 
 def iter_match_atoms(matches: tuple[tuple[int, ...], ...]) -> Iterator[int]:
-    """
-    Iterate over all atom indices from substructure matches.
+    """Iterate over all atom indices from substructure matches.
 
-    Args:
-        matches: Tuple of match tuples from GetSubstructMatches
+Parameters
+----------
+matches : tuple[tuple[int, ...], ...]
+    Matches.
 
-    Yields:
-        Individual atom indices
+Yields
+------
+int
+    Generated values.
     """
     for match in matches:
         yield from match

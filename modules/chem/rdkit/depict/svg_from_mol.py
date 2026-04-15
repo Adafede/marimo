@@ -16,18 +16,25 @@ def svg_from_mol(
     highlight_atoms: list[int] | None = None,
     highlight_colors: dict[int, tuple[float, float, float]] | None = None,
 ) -> str:
-    """
-    Draw molecule to SVG string.
+    """Draw molecule to SVG string.
 
-    Args:
-        mol: RDKit Mol object
-        width: SVG width in pixels
-        height: SVG height in pixels
-        highlight_atoms: List of atom indices to highlight
-        highlight_colors: Dict mapping atom index to RGB color tuple (0.0-1.0)
+Parameters
+----------
+mol : Mol
+    Mol.
+width : int
+    DEFAULT_WIDTH. Default is DEFAULT_WIDTH.
+height : int
+    DEFAULT_HEIGHT. Default is DEFAULT_HEIGHT.
+highlight_atoms : list[int] | None
+    None. Default is None.
+highlight_colors : dict[int, tuple[float, float, float]] | None
+    None. Default is None.
 
-    Returns:
-        SVG string
+Returns
+-------
+str
+    Computed result.
     """
     drawer = MolDraw2DSVG(width, height)
     drawer.DrawMolecule(

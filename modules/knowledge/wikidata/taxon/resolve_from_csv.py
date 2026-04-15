@@ -13,12 +13,34 @@ except ImportError:
 
 
 def extract_qid_from_url(url: str) -> str:
-    """Extract QID from Wikidata entity URL."""
+    """Extract QID from Wikidata entity URL.
+
+Parameters
+----------
+url : str
+    Url.
+
+Returns
+-------
+str
+    Computed result.
+    """
     return url.split("/")[-1] if "/" in url else url
 
 
 def parse_search_results(csv_bytes: bytes) -> list[tuple[str, str]]:
-    """Parse search results CSV into list of (qid, name) tuples."""
+    """Parse search results CSV into list of (qid, name) tuples.
+
+Parameters
+----------
+csv_bytes : bytes
+    Csv bytes.
+
+Returns
+-------
+list[tuple[str, str]]
+    Computed result.
+    """
     df = pl.scan_csv(source=io.BytesIO(csv_bytes))
     if df.is_empty():
         return []
@@ -31,7 +53,18 @@ def parse_search_results(csv_bytes: bytes) -> list[tuple[str, str]]:
 
 
 def parse_connectivity(csv_bytes: bytes) -> dict[str, int]:
-    """Parse connectivity CSV into qid -> compound_count mapping."""
+    """Parse connectivity CSV into qid -> compound_count mapping.
+
+Parameters
+----------
+csv_bytes : bytes
+    Csv bytes.
+
+Returns
+-------
+dict[str, int]
+    Computed result.
+    """
     df = pl.scan_csv(source=io.BytesIO(csv_bytes))
     return {
         extract_qid_from_url(row.get("taxon", "")): int(
@@ -43,7 +76,18 @@ def parse_connectivity(csv_bytes: bytes) -> dict[str, int]:
 
 
 def parse_details(csv_bytes: bytes) -> dict[str, dict[str, str | None]]:
-    """Parse details CSV into qid -> {description, parent} mapping."""
+    """Parse details CSV into qid -> {description, parent} mapping.
+
+Parameters
+----------
+csv_bytes : bytes
+    Csv bytes.
+
+Returns
+-------
+dict[str, dict[str, str | None]]
+    Computed result.
+    """
     df = pl.scan_csv(source=io.BytesIO(csv_bytes))
     return {
         extract_qid_from_url(row.get("taxon", "")): {
@@ -60,13 +104,21 @@ def resolve_from_csv(
     connectivity_csv: bytes | None = None,
     details_csv: bytes | None = None,
 ) -> tuple[list[tuple[str, str, str | None, str | None, int | None]], dict[str, int]]:
-    """
-    Parse taxon search results and enrich with connectivity data.
+    """Parse taxon search results and enrich with connectivity data.
 
-    Returns:
-        Tuple of:
-        - List of matches: (qid, name, description, parent, compound_count)
-        - Dict mapping qid -> compound_count
+Parameters
+----------
+search_results_csv : bytes
+    Search results csv.
+connectivity_csv : bytes | None
+    None. Default is None.
+details_csv : bytes | None
+    None. Default is None.
+
+Returns
+-------
+tuple[list[tuple[str, str, str | None, str | None, int | None]], dict[str, int]]
+    Computed result.
     """
     if not HAS_POLARS:
         raise ImportError("polars is required for taxon resolution")

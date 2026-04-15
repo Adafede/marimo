@@ -15,5 +15,22 @@ def filter_mass(
     mass_max: float | None = None,
     column: str = DEFAULT_MASS_COLUMN,
 ) -> pl.DataFrame:
-    """Filter DataFrame by mass range."""
+    """Filter DataFrame by mass range.
+
+Parameters
+----------
+df : pl.DataFrame
+    Df.
+mass_min : float | None
+    None. Default is None.
+mass_max : float | None
+    None. Default is None.
+column : str
+    DEFAULT_MASS_COLUMN. Default is DEFAULT_MASS_COLUMN.
+
+Returns
+-------
+pl.DataFrame
+    Computed result.
+    """
     return filter_range(df, column, mass_min, mass_max)

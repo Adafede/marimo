@@ -24,7 +24,13 @@ class FormulaFilters:
     i_state: str = "allowed"
 
     def is_active(self) -> bool:
-        """Check if any filter is active."""
+        """Check if any filter is active.
+
+Returns
+-------
+bool
+    Computed result.
+        """
         if self.exact_formula and self.exact_formula.strip():
             return True
         if any(r.is_active() for r in [self.c, self.h, self.n, self.o, self.p, self.s]):

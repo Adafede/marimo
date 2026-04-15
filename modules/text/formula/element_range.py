@@ -13,11 +13,28 @@ class ElementRange:
     max_val: int | None = None
 
     def is_active(self) -> bool:
-        """Check if range filter is active."""
+        """Check if range filter is active.
+
+Returns
+-------
+bool
+    Computed result.
+        """
         return self.min_val is not None or self.max_val is not None
 
     def matches(self, count: int) -> bool:
-        """Check if count is within range."""
+        """Check if count is within range.
+
+Parameters
+----------
+count : int
+    Count.
+
+Returns
+-------
+bool
+    Computed result.
+        """
         if not self.is_active():
             return True
         if self.min_val is not None and count < self.min_val:

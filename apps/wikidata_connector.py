@@ -110,7 +110,20 @@ with app.setup:
     # ── core helpers ──────────────────────────────────────────────────────────
 
     def sparql(query: str, timeout: int = 60) -> list[dict]:
-        """Execute SPARQL query via POST to avoid URL length limits."""
+        """Execute SPARQL query via POST to avoid URL length limits.
+
+Parameters
+----------
+query : str
+    Query.
+timeout : int
+    Default is 60.
+
+Returns
+-------
+list[dict]
+    Computed result.
+        """
         r = requests.post(
             QLEVER_ENDPOINT,
             data={"query": PREFIXES + query},
@@ -130,7 +143,18 @@ with app.setup:
         return uri.rsplit("/", 1)[-1]
 
     def fetch_labels_batch(entities: list[str]) -> dict[str, str]:
-        """Fetch labels for multiple entities in a single query."""
+        """Fetch labels for multiple entities in a single query.
+
+Parameters
+----------
+entities : list[str]
+    Entities.
+
+Returns
+-------
+dict[str, str]
+    Computed result.
+        """
         if not entities:
             return {}
         values = " ".join(f"wd:{e}" for e in entities)
@@ -147,7 +171,18 @@ with app.setup:
         return result
 
     def fetch_prop_labels_batch(pids: list[str]) -> dict[str, str]:
-        """Fetch property labels in a single query."""
+        """Fetch property labels in a single query.
+
+Parameters
+----------
+pids : list[str]
+    Pids.
+
+Returns
+-------
+dict[str, str]
+    Computed result.
+        """
         if not pids:
             return {}
         values = " ".join(f"wd:{p}" for p in pids)
@@ -173,9 +208,24 @@ with app.setup:
         blocklist: set[str],
         excluded_props: set[str],
     ) -> nx.Graph:
-        """
-        Fast multi-source BFS: expand from ALL terminals at once.
+        """Fast multi-source BFS: expand from ALL terminals at once.
         Two SPARQL queries per depth level (outgoing + incoming). Returns Steiner tree.
+
+Parameters
+----------
+terminals : list[str]
+    Terminals.
+max_depth : int
+    Max depth.
+blocklist : set[str]
+    Blocklist.
+excluded_props : set[str]
+    Excluded props.
+
+Returns
+-------
+nx.Graph
+    Computed result.
         """
         terminal_set = set(terminals)
         blocklist_set = set(blocklist)

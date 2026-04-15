@@ -25,7 +25,50 @@ def create_filters(
     br_state: str = "allowed",
     i_state: str = "allowed",
 ) -> FormulaFilters:
-    """Factory function to create FormulaFilters from individual values."""
+    """Factory function to create FormulaFilters from individual values.
+
+Parameters
+----------
+exact_formula : str
+    Default is ''.
+c_min : int
+    Default is 0.
+c_max : int | None
+    None. Default is None.
+h_min : int
+    Default is 0.
+h_max : int | None
+    None. Default is None.
+n_min : int
+    Default is 0.
+n_max : int | None
+    None. Default is None.
+o_min : int
+    Default is 0.
+o_max : int | None
+    None. Default is None.
+p_min : int
+    Default is 0.
+p_max : int | None
+    None. Default is None.
+s_min : int
+    Default is 0.
+s_max : int | None
+    None. Default is None.
+f_state : str
+    Default is 'allowed'.
+cl_state : str
+    Default is 'allowed'.
+br_state : str
+    Default is 'allowed'.
+i_state : str
+    Default is 'allowed'.
+
+Returns
+-------
+FormulaFilters
+    Computed result.
+    """
     return FormulaFilters(
         exact_formula=exact_formula.strip() if exact_formula else None,
         c=ElementRange(c_min, c_max),

@@ -16,7 +16,22 @@ def build_sachem_service(
     search_type: str,
     threshold: float,
 ) -> str:
-    """Build the SACHEM SERVICE clause."""
+    """Build the SACHEM SERVICE clause.
+
+Parameters
+----------
+structure_literal : str
+    Structure literal.
+search_type : str
+    Search .
+threshold : float
+    Threshold.
+
+Returns
+-------
+str
+    Computed result.
+    """
     is_multiline_literal = structure_literal.startswith(
         "'''",
     ) or structure_literal.startswith(
@@ -65,22 +80,27 @@ def query_sachem(
     threshold: float = 0.8,
     taxon_qid: str | None = None,
 ) -> str:
-    """
-    Build SACHEM chemical search query.
+    """Build SACHEM chemical search query.
 
     OPTIMIZATION: When taxon_qid is provided, we filter by taxonomic data FIRST
     (uses Wikidata's indexes, creates a much smaller set), then apply SACHEM
     SERVICE to the pre-filtered compounds. This is dramatically faster.
 
-    Args:
-        escaped_smiles: Structure string already formatted as a SPARQL literal
-            (quoted, escaped, and potentially long-string for multiline input)
-        search_type: Either "substructure" or "similarity"
-        threshold: Tanimoto similarity threshold (0.0-1.0, for similarity search)
-        taxon_qid: Optional QID to filter by taxon (e.g., "Q12345")
+Parameters
+----------
+escaped_smiles : str
+    Escaped smiles.
+search_type : str
+    Default is 'substructure'.
+threshold : float
+    Default is 0.8.
+taxon_qid : str | None
+    None. Default is None.
 
-    Returns:
-        Complete SPARQL query string
+Returns
+-------
+str
+    Computed result.
     """
     sachem_clause = build_sachem_service(
         structure_literal=escaped_smiles,
