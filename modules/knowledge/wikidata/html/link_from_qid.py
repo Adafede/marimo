@@ -19,7 +19,7 @@ def extract_qid_from_url_or_qid(value: str | int) -> str:
     Returns
     -------
     str
-        Return value produced by extract qid from url or qid.
+        String representation of qid from url or qid.
     """
     if value is None or value == "":
         return ""
@@ -56,7 +56,7 @@ def link_from_qid(url_or_qid: str, color: str = "#3377c4") -> str:
     Returns
     -------
     str
-        Return value produced by link from qid.
+        String representation of link from qid.
     """
     if not url_or_qid:
         return ""

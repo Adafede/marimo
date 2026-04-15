@@ -161,7 +161,7 @@ with app.setup:
             Returns
             -------
             dict
-                Return value produced by to filters dict.
+                Dictionary containing to filters dict.
             """
             filters: dict[str, Any] = {}
             if self.smiles:
@@ -264,7 +264,7 @@ with app.setup:
             Returns
             -------
             pl.LazyFrame
-                Return value produced by to denormalized.
+                LazyFrame containing to denormalized.
             """
             return (
                 self.facts.join(self.compound_meta, on="compound", how="left")
@@ -279,7 +279,7 @@ with app.setup:
             Returns
             -------
             'NormalizedDataset'
-                Empty normalized dataset with predefined schemas for all tables.
+                'NormalizedDataset' Empty normalized dataset with predefined schemas for all tables.
             """
             return cls(
                 facts=pl.LazyFrame(
@@ -321,12 +321,12 @@ with app.setup:
         def from_csv_bytes(cls, csv_bytes: bytes) -> "NormalizedDataset":
             """Parse CSV bytes in a streaming manner and build normalized tables.
 
-                                    This is the key memory optimization: instead of loading the entire
-                                    denormalized CSV into memory, we stream through it once and build
-                                    deduplicated lookup tables.
+                                                This is the key memory optimization: instead of loading the entire
+                                                denormalized CSV into memory, we stream through it once and build
+                                                deduplicated lookup tables.
 
-                                    Uses io.TextIOWrapper for true streaming without creating a full
-                                    string copy of the data.
+                                                Uses io.TextIOWrapper for true streaming without creating a full
+                                                string copy of the data.
 
             Parameters
             ----------
@@ -336,7 +336,7 @@ with app.setup:
             Returns
             -------
             'NormalizedDataset'
-                Normalized dataset built from streamed CSV rows.
+                'NormalizedDataset' Normalized dataset built from streamed CSV rows.
             """
             # Quick empty check without creating a copy via strip()
             if not csv_bytes or len(csv_bytes) < 10:
@@ -580,8 +580,8 @@ with app.setup:
         ) -> pl.LazyFrame:
             """Fetch compounds from Wikidata.
 
-                                    In WASM mode with use_normalized=True, this uses the memory-efficient
-                                    normalized storage that parses CSV streaming and deduplicates metadata.
+                                                In WASM mode with use_normalized=True, this uses the memory-efficient
+                                                normalized storage that parses CSV streaming and deduplicates metadata.
 
             Parameters
             ----------
@@ -597,7 +597,7 @@ with app.setup:
             Returns
             -------
             pl.LazyFrame
-                Return value produced by fetch compounds.
+                LazyFrame containing compounds.
             """
             query = self._build_query(qid, smiles, smiles_search_type, smiles_threshold)
             csv_bytes = execute_with_retry(query, self.endpoint)
@@ -686,7 +686,7 @@ with app.setup:
             Returns
             -------
             pl.LazyFrame
-                Return value produced by apply standard transforms.
+                LazyFrame containing apply standard transforms.
             """
             if from_normalized:
                 # Normalized data already has correct column names and types
@@ -976,7 +976,7 @@ with app.setup:
             Returns
             -------
             bool
-                Return value produced by is server error.
+                Result is server error.
             """
             status = TaxonResolutionService._extract_http_status(exc)
             if status is None:
@@ -1025,7 +1025,7 @@ with app.setup:
             Returns
             -------
             mo.Html
-                Return value produced by create sanitization notice.
+                Result create sanitization notice.
             """
             html = f"""
             <div style="line-height: 1.6; color: {CONFIG["color_hyperlink"]};">
@@ -1057,7 +1057,7 @@ with app.setup:
             Returns
             -------
             tuple[str, mo.Html]
-                Return value produced by resolve ambiguous.
+                Tuple containing resolve ambiguous.
             """
             qids = tuple(qid for qid, _ in matches if qid is not None)
             info = {qid: [0, "", "", ""] for qid in qids}
@@ -1136,7 +1136,7 @@ with app.setup:
             Returns
             -------
             mo.Html
-                Return value produced by create taxon warning html.
+                Result create taxon warning html.
             """
             match_type = "exact matches" if is_exact else "similar taxa"
             intro = (
@@ -1292,7 +1292,7 @@ with app.setup:
             Returns
             -------
             bytes
-                Return value produced by to bytes maplib.
+                Result to bytes maplib.
             """
             df_collected: pl.DataFrame = df.collect()
 
@@ -1344,7 +1344,7 @@ with app.setup:
             Returns
             -------
             bytes
-                Return value produced by to bytes rdflib.
+                Result to bytes rdflib.
             """
             df_collected: pl.DataFrame = df.collect()
 
@@ -1625,7 +1625,7 @@ with app.setup:
             Returns
             -------
             tuple[pl.DataFrame | None, pl.DataFrame | None]
-                Return value produced by build triples vectorized.
+                Tuple containing build triples vectorized.
             """
             wd_ns = WIKIDATA_NAMESPACES["wd"]
             wdt_ns = WIKIDATA_NAMESPACES["wdt"]
@@ -2052,7 +2052,7 @@ with app.setup:
             Returns
             -------
             dict
-                Return value produced by create metadata.
+                Dictionary containing metadata.
             """
 
             # Normalize taxon information
@@ -2212,7 +2212,7 @@ with app.setup:
             Returns
             -------
             str
-                Return value produced by normalize taxon display.
+                String representation of normalize taxon display.
             """
             if not taxon_input or taxon_input.strip() == "":
                 return "any taxon"
@@ -2241,7 +2241,7 @@ with app.setup:
             Returns
             -------
             str
-                Return value produced by get taxon description.
+                String representation of get taxon description.
             """
             smiles_info = filters.get("chemical_structure", {})
 
@@ -2268,7 +2268,7 @@ with app.setup:
             Returns
             -------
             str
-                Return value produced by create citation.
+                String representation of citation.
             """
             current_date = datetime.now().strftime("%B %d, %Y")
 
@@ -2305,7 +2305,7 @@ with app.setup:
             Returns
             -------
             str
-                Return value produced by build shareable url.
+                String representation of shareable url.
             """
             params = {}
 
@@ -2360,7 +2360,7 @@ with app.setup:
         Returns
         -------
         str
-            Return value produced by generate filename.
+            String representation of filename.
         """
         # Normalize taxon for filename
         if not taxon_name or taxon_name.strip() == "":

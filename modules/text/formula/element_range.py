@@ -18,7 +18,7 @@ class ElementRange:
         Returns
         -------
         bool
-            Return value produced by is active.
+            ``True`` if active; otherwise ``False``.
         """
         return self.min_val is not None or self.max_val is not None
 
@@ -33,7 +33,7 @@ class ElementRange:
         Returns
         -------
         bool
-            Return value produced by matches.
+            Result matches.
         """
         if not self.is_active():
             return True

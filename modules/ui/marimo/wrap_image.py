@@ -18,8 +18,8 @@ def wrap_image(
 ) -> mo.Html:
     """Wrap image HTML in mo.Html for mo.ui.table.
 
-            Takes an HTML img tag string and returns it wrapped in mo.Html
-            with consistent styling for table display.
+    Takes an HTML img tag string and returns it wrapped in mo.Html
+    with consistent styling for table display.
 
     Parameters
     ----------
@@ -35,7 +35,7 @@ def wrap_image(
     Returns
     -------
     mo.Html
-        Return value produced by wrap image.
+        Result wrap image.
     """
     if not html_str:
         return mo.Html("")

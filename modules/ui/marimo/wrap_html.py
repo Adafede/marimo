@@ -16,6 +16,6 @@ def wrap_html(html_str: str | None) -> mo.Html:
     Returns
     -------
     mo.Html
-        Return value produced by wrap html.
+        Result wrap html.
     """
     return mo.Html(html_str) if html_str else mo.Html("")

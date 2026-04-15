@@ -20,7 +20,7 @@ def parse(formula: str) -> dict[str, int]:
     Returns
     -------
     dict[str, int]
-        Return value produced by parse.
+        Dictionary containing parse.
     """
     if not formula:
         return {}

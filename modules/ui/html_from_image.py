@@ -26,7 +26,7 @@ def build_style(
     Returns
     -------
     str
-        Return value produced by build style.
+        String representation of style.
     """
     styles = {
         "max-width": max_width,
@@ -63,7 +63,7 @@ def html_from_image(
     Returns
     -------
     str
-        Return value produced by html from image.
+        String representation of html from image.
     """
     if not img:
         return ""

@@ -16,7 +16,7 @@ def extract_statement_id(url: str) -> str:
     Returns
     -------
     str
-        Return value produced by extract statement id.
+        String representation of statement id.
     """
     return url.split("/")[-1]
 
@@ -34,7 +34,7 @@ def link_from_statement(url: str, color: str = DEFAULT_LINK_COLOR) -> str:
     Returns
     -------
     str
-        Return value produced by link from statement.
+        String representation of link from statement.
     """
     if not url:
         return ""

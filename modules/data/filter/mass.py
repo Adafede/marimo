@@ -31,6 +31,6 @@ def filter_mass(
     Returns
     -------
     pl.DataFrame
-        Return value produced by filter mass.
+        DataFrame containing mass.
     """
     return filter_range(df, column, mass_min, mass_max)

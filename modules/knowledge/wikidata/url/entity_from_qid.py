@@ -16,6 +16,6 @@ def entity_from_qid(qid: str) -> str:
     Returns
     -------
     str
-        Return value produced by entity from qid.
+        String representation of entity from qid.
     """
     return f"{ENTITY_PREFIX}{qid}"

@@ -18,10 +18,10 @@ def posterior_probability_above(
 ) -> np.ndarray | float:
     """Compute P(θ > threshold | data) for Beta(α, β) posterior.
 
-            Uses the regularized incomplete beta function:
-                P(θ > t) = 1 - I_t(α, β)
+                Uses the regularized incomplete beta function:
+                    P(θ > t) = 1 - I_t(α, β)
 
-            where I_t is the regularized incomplete beta function.
+                where I_t is the regularized incomplete beta function.
 
     Parameters
     ----------
@@ -77,11 +77,11 @@ def credible_interval(
 ) -> tuple[np.ndarray | float, np.ndarray | float]:
     """Compute equal-tailed credible interval for Beta(α, β).
 
-            Returns the interval [L, U] such that:
-                P(θ < L) = (1 - probability) / 2
-                P(θ > U) = (1 - probability) / 2
+                Returns the interval [L, U] such that:
+                    P(θ < L) = (1 - probability) / 2
+                    P(θ > U) = (1 - probability) / 2
 
-            For symmetric distributions, this equals the HDI (highest density interval).
+                For symmetric distributions, this equals the HDI (highest density interval).
 
     Parameters
     ----------
@@ -134,8 +134,8 @@ def posterior_mode(
 ) -> np.ndarray | float:
     """Compute posterior mode (MAP estimate).
 
-            Mode = (α - 1) / (α + β - 2) when α > 1 and β > 1.
-            Otherwise returns the mean as a fallback.
+                Mode = (α - 1) / (α + β - 2) when α > 1 and β > 1.
+                Otherwise returns the mean as a fallback.
 
     Parameters
     ----------
@@ -224,9 +224,9 @@ def effective_sample_size(
 ) -> np.ndarray | float:
     """Compute effective sample size (ESS) contributed by data.
 
-            ESS = (α_post + β_post) - (α_prior + β_prior)
+                ESS = (α_post + β_post) - (α_prior + β_prior)
 
-            This measures how much information the data contributed beyond the prior.
+                This measures how much information the data contributed beyond the prior.
 
     Parameters
     ----------

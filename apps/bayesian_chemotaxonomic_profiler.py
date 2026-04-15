@@ -405,7 +405,7 @@ with app.setup:
         Returns
         -------
         str
-            Return value produced by get data path.
+            String representation of data path.
         """
         if _USE_LOCAL:
             return f"{LOCAL_BASE_PATH}/{filename}"
@@ -469,11 +469,11 @@ def write_parquet_stream(
 ) -> None:
     """Write a Polars DataFrame to Parquet in a memory-friendly way.
 
-            Strategy:
-            - Write the DataFrame in small row-group slices and convert each slice
-              to Arrow separately to avoid building one large Arrow Table in memory.
-            - If pyarrow is not available or fails, fall back to Polars' writer.
-            - Handles empty DataFrames safely.
+                Strategy:
+                - Write the DataFrame in small row-group slices and convert each slice
+                  to Arrow separately to avoid building one large Arrow Table in memory.
+                - If pyarrow is not available or fails, fall back to Polars' writer.
+                - Handles empty DataFrames safely.
 
     Parameters
     ----------
@@ -563,7 +563,7 @@ def validate_columns(
     Returns
     -------
     pl.DataFrame
-        Return value produced by validate columns.
+        DataFrame containing validate columns.
     """
     if df is None or df.is_empty():
         logging.warning(f"{name}: Empty dataframe")
@@ -588,10 +588,10 @@ def read_table(
 ) -> pl.DataFrame:
     """Read CSV/CSV.GZ from local or remote path and optionally validate columns.
 
-            Optimizations:
-            - For local files (and when not running under Pyodide), prefer `pl.scan_csv`
-              + collect(engine="streaming") to reduce peak memory.
-            - For remote/HTTP resources or Pyodide, fall back to `pl.read_csv`.
+                Optimizations:
+                - For local files (and when not running under Pyodide), prefer `pl.scan_csv`
+                  + collect(engine="streaming") to reduce peak memory.
+                - For remote/HTTP resources or Pyodide, fall back to `pl.read_csv`.
 
     Parameters
     ----------
@@ -607,7 +607,7 @@ def read_table(
     Returns
     -------
     pl.DataFrame
-        Return value produced by read table.
+        DataFrame containing table.
     """
     p = str(path)
 
@@ -650,7 +650,7 @@ def load_fragments(path: str, min_freq: int) -> pl.DataFrame:
     Returns
     -------
     pl.DataFrame
-        Return value produced by load fragments.
+        DataFrame containing fragments.
     """
     return read_table(
         path,
@@ -671,7 +671,7 @@ def load_compound_fragment_mapping(path: str) -> pl.DataFrame:
     Returns
     -------
     pl.DataFrame
-        Return value produced by load compound fragment mapping.
+        DataFrame containing compound fragment mapping.
     """
     return (
         pl.read_csv(
@@ -712,7 +712,7 @@ def build_compound_scaffold_table(
     Returns
     -------
     pl.DataFrame
-        Return value produced by build compound scaffold table.
+        DataFrame containing compound scaffold table.
     """
 
     if (
@@ -741,7 +741,7 @@ def build_compound_scaffold_table(
         Returns
         -------
         str | None
-            Return value produced by filter valid fragments.
+            Selected valid fragments.
         """
         if not fragments_str:
             return ""
@@ -791,7 +791,7 @@ def build_hierarchy_lineage(
     Returns
     -------
     pl.DataFrame
-        Return value produced by build hierarchy lineage.
+        DataFrame containing hierarchy lineage.
     """
     validate_columns(edges, {child, parent}, "hierarchy")
     e = edges.select([child, parent]).drop_nulls().unique()
@@ -888,7 +888,7 @@ def build_compound_lineage(compound_scaffold: pl.DataFrame) -> pl.DataFrame:
     Returns
     -------
     pl.DataFrame
-        Return value produced by build compound lineage.
+        DataFrame containing compound lineage.
     """
     validate_columns(compound_scaffold, {"compound", "scaffold"}, "compound_scaffold")
     return compound_scaffold.select(
@@ -911,15 +911,15 @@ def run_hierarchical_analysis(
 ) -> pl.LazyFrame:
     """Memory-optimized Bayesian enrichment analysis.
 
-            Returns a LazyFrame that scans parquet files on disk - data is only
-            materialized when needed, minimizing memory usage.
+                Returns a LazyFrame that scans parquet files on disk - data is only
+                materialized when needed, minimizing memory usage.
 
-            Memory optimizations:
-            - Process one rank at a time
-            - Batch CI/ROPE computation in chunks
-            - Use Float32 for intermediate calculations
-            - Drop columns early when not needed
-            - Return LazyFrame instead of DataFrame
+                Memory optimizations:
+                - Process one rank at a time
+                - Batch CI/ROPE computation in chunks
+                - Use Float32 for intermediate calculations
+                - Drop columns early when not needed
+                - Return LazyFrame instead of DataFrame
 
     Parameters
     ----------
@@ -939,7 +939,7 @@ def run_hierarchical_analysis(
     Returns
     -------
     pl.LazyFrame
-        Return value produced by run hierarchical analysis.
+        LazyFrame containing run hierarchical analysis.
     """
     start = time.time()
     if cfg is None:
@@ -1151,14 +1151,14 @@ def process_rank_minimal(
 ) -> pl.DataFrame:
     """Process single rank with phylogenetic independence-aware diversity weighting.
 
-            Returns DataFrame with only essential columns:
-            - compound_ancestor, taxon_ancestor, taxon_rank
-            - a_raw, n_source_taxa, n_eff_phylo (new: phylogenetic effective taxa)
-            - posterior_enrich_prob, log2_enrichment, rope_decision
-            - effective_sample_size, ci_lower, ci_upper
+                Returns DataFrame with only essential columns:
+                - compound_ancestor, taxon_ancestor, taxon_rank
+                - a_raw, n_source_taxa, n_eff_phylo (new: phylogenetic effective taxa)
+                - posterior_enrich_prob, log2_enrichment, rope_decision
+                - effective_sample_size, ci_lower, ci_upper
 
-            Key improvement: Uses phylogenetic distances to compute effective independent
-            taxa count. 5 sister species contribute less evidence than 3 distant organisms.
+                Key improvement: Uses phylogenetic distances to compute effective independent
+                taxa count. 5 sister species contribute less evidence than 3 distant organisms.
 
     Parameters
     ----------
@@ -1178,7 +1178,7 @@ def process_rank_minimal(
     Returns
     -------
     pl.DataFrame
-        Return value produced by process rank minimal.
+        DataFrame containing process rank minimal.
     """
 
     # Map to this rank
@@ -1611,8 +1611,8 @@ def process_rank_minimal(
 def compute_ci_rope(batch: pl.DataFrame, CI_PROB: float, ROPE_HW: float):
     """CI/ROPE computation using numpy.
 
-            Uses numpy for scipy functions but minimizes intermediate allocations.
-            Handles numerical edge cases for very small baseline rates.
+                Uses numpy for scipy functions but minimizes intermediate allocations.
+                Handles numerical edge cases for very small baseline rates.
 
     Parameters
     ----------
@@ -1695,8 +1695,8 @@ def discover_top_taxa(
 ) -> list[str]:
     """Select top N taxa with most distinctive chemistry at this rank.
 
-            Returns list of taxon IDs (taxon_ancestor).
-            Works with both LazyFrame and DataFrame.
+                Returns list of taxon IDs (taxon_ancestor).
+                Works with both LazyFrame and DataFrame.
 
     Parameters
     ----------
@@ -1718,7 +1718,7 @@ def discover_top_taxa(
     Returns
     -------
     list[str]
-        Return value produced by discover top taxa.
+        List of discover top taxa.
     """
     # Build query lazily
     rank_markers = (
@@ -1777,7 +1777,7 @@ def get_markers_for_top_taxa(
     top_n_per_taxon: int = TOP_N_MARKERS_PER_TAXON,
 ) -> pl.DataFrame:
     """Get top markers for each of the selected top taxa.
-            Works with both LazyFrame and DataFrame.
+                Works with both LazyFrame and DataFrame.
 
     Parameters
     ----------
@@ -1801,7 +1801,7 @@ def get_markers_for_top_taxa(
     Returns
     -------
     pl.DataFrame
-        Return value produced by get markers for top taxa.
+        DataFrame containing markers for top taxa.
     """
     # Handle empty top_taxa
     if not top_taxa:
@@ -1864,7 +1864,7 @@ def create_taxa_marker_heatmap(
     Returns
     -------
     alt.Chart | mo.Html
-        Return value produced by create taxa marker heatmap.
+        Constructed taxa marker heatmap.
     """
     if markers_df.is_empty():
         return mo.md(f"*No {rank}-level data*")
@@ -1979,7 +1979,7 @@ def create_taxa_summary_table(
     Returns
     -------
     pl.DataFrame
-        Return value produced by create taxa summary table.
+        DataFrame containing taxa summary table.
     """
     if markers_df.is_empty():
         return pl.DataFrame()
@@ -2029,7 +2029,7 @@ def create_markers_detail_table(
     Returns
     -------
     pl.DataFrame
-        Return value produced by create markers detail table.
+        DataFrame containing markers detail table.
     """
     if markers_df.is_empty():
         return pl.DataFrame()

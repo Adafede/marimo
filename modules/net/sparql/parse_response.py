@@ -9,16 +9,16 @@ import polars as pl
 def parse_sparql_response(response_bytes: bytes) -> pl.LazyFrame:
     """Parse SPARQL CSV response bytes into a Polars LazyFrame.
 
-            Memory-optimized implementation that returns a LazyFrame where possible:
-            - Prefer `pl.scan_csv(tmp_path)` (LazyFrame) so callers can call `.collect()`
-              when they need a materialized DataFrame. This minimizes peak memory.
-            - If PyArrow is available, use PyArrow's CSV reader and convert to Polars,
-              then return a LazyFrame via `.lazy()`.
-            - Fall back to in-memory `pl.read_csv(...).lazy()` with low_memory and
-              rechunk disabled.
+                Memory-optimized implementation that returns a LazyFrame where possible:
+                - Prefer `pl.scan_csv(tmp_path)` (LazyFrame) so callers can call `.collect()`
+                  when they need a materialized DataFrame. This minimizes peak memory.
+                - If PyArrow is available, use PyArrow's CSV reader and convert to Polars,
+                  then return a LazyFrame via `.lazy()`.
+                - Fall back to in-memory `pl.read_csv(...).lazy()` with low_memory and
+                  rechunk disabled.
 
-            The function returns a LazyFrame (not materialized). Callers should use
-            `.collect()` when they need an eager DataFrame.
+                The function returns a LazyFrame (not materialized). Callers should use
+                `.collect()` when they need an eager DataFrame.
 
     Parameters
     ----------
@@ -28,7 +28,7 @@ def parse_sparql_response(response_bytes: bytes) -> pl.LazyFrame:
     Returns
     -------
     pl.LazyFrame
-        Return value produced by parse sparql response.
+        LazyFrame containing sparql response.
     """
     if not response_bytes:
         return pl.DataFrame().lazy()

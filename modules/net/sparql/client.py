@@ -38,7 +38,7 @@ class Client:
         Returns
         -------
         bytes
-            Return value produced by request.
+            Result request.
         """
         headers = {
             "Accept": accept,
@@ -66,7 +66,7 @@ class Client:
         Returns
         -------
         bytes
-            Return value produced by query csv.
+            Result query csv.
         """
         return self._request(query, "text/csv")
 
@@ -81,6 +81,6 @@ class Client:
         Returns
         -------
         bytes
-            Return value produced by query json.
+            Result query json.
         """
         return self._request(query, "application/sparql-results+json")

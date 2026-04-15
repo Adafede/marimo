@@ -33,7 +33,7 @@ def create_label(name: str, smiles: str) -> str:
     Returns
     -------
     str
-        Return value produced by create label.
+        String representation of label.
     """
     if name != smiles:
         return f"<strong>{name}</strong><br><code>{smiles}</code>"
@@ -55,7 +55,7 @@ def wrap_in_container(svg: str, label: str, tooltips: list[str]) -> str:
     Returns
     -------
     str
-        Return value produced by wrap in container.
+        String representation of wrap in container.
     """
     tooltips_html = "<br>".join(tooltips)
     return (
@@ -93,7 +93,7 @@ def with_highlights(
     Returns
     -------
     str
-        Return value produced by with highlights.
+        String representation of with highlights.
     """
     mol = parse(smiles=smiles)
     if not mol:

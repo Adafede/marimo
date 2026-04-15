@@ -16,7 +16,7 @@ def query_taxon_details(values_clause_str: str) -> str:
     Returns
     -------
     str
-        Return value produced by query taxon details.
+        String representation of query taxon details.
     """
     return f"""
     {PREFIXES}

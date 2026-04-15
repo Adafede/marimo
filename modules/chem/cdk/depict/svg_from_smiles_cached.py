@@ -20,8 +20,8 @@ def svg_from_smiles_cached(
 ) -> str:
     """Generate URL for chemical structure depiction from SMILES (cached).
 
-            Handles None/empty SMILES gracefully by returning empty string.
-            Results are cached for performance.
+                Handles None/empty SMILES gracefully by returning empty string.
+                Results are cached for performance.
 
     Parameters
     ----------
@@ -39,7 +39,7 @@ def svg_from_smiles_cached(
     Returns
     -------
     str
-        Return value produced by svg from smiles cached.
+        String representation of svg from smiles cached.
     """
     if not smiles:
         return ""

@@ -27,7 +27,7 @@ def match_element(
     Returns
     -------
     bool
-        Return value produced by match element.
+        Result match element.
     """
     cnt = count_element(formula, element)
     if min_count is not None and cnt < min_count:

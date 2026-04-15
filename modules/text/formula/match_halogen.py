@@ -20,7 +20,7 @@ def match_halogen(formula: str, halogen: str, constraint: str) -> bool:
     Returns
     -------
     bool
-        Return value produced by match halogen.
+        Result match halogen.
     """
     cnt = count_element(formula, halogen)
     if constraint == "required":
