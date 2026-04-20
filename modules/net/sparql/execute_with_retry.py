@@ -133,9 +133,7 @@ def execute_with_retry(
                 body_preview = ""
                 if hasattr(e, "read"):
                     try:
-                        body_preview = e.read().decode("utf-8", errors="replace")[
-                            :400
-                        ]  # ty: ignore[call-non-callable]
+                        body_preview = e.read().decode("utf-8", errors="replace")[:400]  # ty: ignore[call-non-callable]
                     except Exception:
                         body_preview = ""
                 last_http_details = (status, body_preview)
