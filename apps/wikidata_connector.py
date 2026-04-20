@@ -625,7 +625,7 @@ def input_params():
     depth_slider = mo.ui.slider(
         start=1,
         stop=6,
-        value=3,
+        value=2,
         step=1,
         label="Max BFS depth",
     )
