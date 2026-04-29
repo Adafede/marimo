@@ -133,7 +133,7 @@ with app.setup:
     from scipy.special import betainc, betaincinv
     from urllib.parse import quote
 
-    _USE_LOCAL = False
+    _USE_LOCAL = True
     if _USE_LOCAL:
         sys.path.insert(0, ".")
 

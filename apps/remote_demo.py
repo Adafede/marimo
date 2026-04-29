@@ -25,12 +25,9 @@ def title():
 @app.cell
 def imports():
     # Toggle this flag for local vs remote development
-    _USE_LOCAL = False  # Set to True for local development
+    _USE_LOCAL = True  # Set to True for local development
     if _USE_LOCAL:
         import sys
-
-        # Add your local module directory to the path
-        # Adjust this path to where your "modules" folder is located locally
         sys.path.insert(0, ".")
     # Modules will be auto-inlined by the build script
     from modules.text.formula.parse import parse

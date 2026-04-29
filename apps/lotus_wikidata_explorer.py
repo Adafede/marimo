@@ -67,7 +67,7 @@ with app.setup:
         except ImportError:
             pass  # Fall back to rdflib
 
-    _USE_LOCAL = False
+    _USE_LOCAL = True
     if _USE_LOCAL:
         sys.path.insert(0, ".")
 

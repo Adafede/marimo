@@ -26,12 +26,9 @@ with app.setup:
         value: str = ""
 
     # Toggle this flag for local vs remote development
-    _USE_LOCAL = False  # Set to True for local development
+    _USE_LOCAL = True  # Set to True for local development
     if _USE_LOCAL:
         import sys
-
-        # Add your local module directory to the path
-        # Adjust this path to where your "modules" folder is located locally
         sys.path.insert(0, ".")
     from modules.text.strings.parse_labeled_lines import parse_labeled_lines
     from modules.utils.colors.hex_to_rgb_float import hex_to_rgb_float
