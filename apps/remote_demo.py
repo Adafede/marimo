@@ -28,6 +28,7 @@ def imports():
     _USE_LOCAL = True  # Set to True for local development
     if _USE_LOCAL:
         import sys
+
         sys.path.insert(0, ".")
     # Modules will be auto-inlined by the build script
     from modules.text.formula.parse import parse
