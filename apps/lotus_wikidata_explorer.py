@@ -10,8 +10,7 @@
 # output_max_bytes = 300_000_000
 # ///
 
-"""
-LOTUS Wikidata Explorer
+"""LOTUS Wikidata Explorer.
 
 Copyright (C) 2026 Adriano Rutz
 
@@ -150,9 +149,11 @@ with app.setup:
         formula_filters: FormulaFilters | None = None
 
         def has_mass_filter(self) -> bool:
+            """Return whether the mass range differs from the default bounds."""
             return self.mass_range != (0.0, 2000.0)
 
         def has_year_filter(self) -> bool:
+            """Return whether the publication year range differs from defaults."""
             return self.year_range != (1900, datetime.now().year)
 
         def to_filters_dict(self) -> dict:
@@ -162,6 +163,7 @@ with app.setup:
             -------
             dict
                 Dictionary containing to filters dict.
+
             """
             filters: dict[str, Any] = {}
             if self.smiles:
@@ -196,6 +198,7 @@ with app.setup:
 
         @classmethod
         def from_lazyframe(cls, df: pl.LazyFrame) -> "DatasetStats":
+            """Compute dataset statistics from a lazy Polars frame."""
             stats: pl.DataFrame = df.select(
                 [
                     pl.col("compound")
@@ -226,10 +229,21 @@ with app.setup:
     # ========================================================================
 
     class MemoryManager:
+        """Tune memory-sensitive execution parameters for WASM and native runtimes."""
+
         def __init__(self, is_wasm: bool):
+            """Initialize runtime memory mode.
+
+            Parameters
+            ----------
+            is_wasm : bool
+                Whether the app runs in a WASM environment.
+
+            """
             self.is_wasm = is_wasm
 
         def get_batch_size(self, format: str) -> int:
+            """Return export batch size tuned for runtime and output format."""
             sizes = {"csv": (2000, 10000), "json": (5000, 10000), "ttl": (500, 2000)}
             wasm_size, desktop_size = sizes.get(format, (1000, 5000))
             return wasm_size if self.is_wasm else desktop_size
@@ -240,8 +254,7 @@ with app.setup:
 
     @dataclass
     class NormalizedDataset:
-        """
-        Memory-efficient normalized storage for compound-taxon-reference data.
+        """Memory-efficient normalized storage for compound-taxon-reference data.
 
         Instead of storing denormalized rows with repeated metadata, we store:
         - facts: DataFrame with just IDs (compound, taxon, reference, statement, ref)
@@ -265,6 +278,7 @@ with app.setup:
             -------
             pl.LazyFrame
                 LazyFrame containing to denormalized.
+
             """
             return (
                 self.facts.join(self.compound_meta, on="compound", how="left")
@@ -280,6 +294,7 @@ with app.setup:
             -------
             'NormalizedDataset'
                 'NormalizedDataset' Empty normalized dataset with predefined schemas for all tables.
+
             """
             return cls(
                 facts=pl.LazyFrame(
@@ -337,6 +352,7 @@ with app.setup:
             -------
             'NormalizedDataset'
                 'NormalizedDataset' Normalized dataset built from streamed CSV rows.
+
             """
             # Quick empty check without creating a copy via strip()
             if not csv_bytes or len(csv_bytes) < 10:
@@ -567,7 +583,19 @@ with app.setup:
     # ========================================================================
 
     class WikidataQueryService:
+        """Fetch compound datasets from Wikidata and Sachem endpoints."""
+
         def __init__(self, endpoint: str, use_normalized: bool = False):
+            """Initialize query service settings.
+
+            Parameters
+            ----------
+            endpoint : str
+                SPARQL endpoint URL.
+            use_normalized : bool
+                Whether to parse responses into normalized intermediate tables.
+
+            """
             self.endpoint = endpoint
             self.use_normalized = use_normalized
 
@@ -598,6 +626,7 @@ with app.setup:
             -------
             pl.LazyFrame
                 LazyFrame containing compounds.
+
             """
             query = self._build_query(qid, smiles, smiles_search_type, smiles_threshold)
             csv_bytes = execute_with_retry(query, self.endpoint)
@@ -669,6 +698,8 @@ with app.setup:
                 return query_compounds_by_taxon(qid)
 
     class DataTransformService:
+        """Apply canonical post-processing steps to query result tables."""
+
         @staticmethod
         def apply_standard_transforms(
             df: pl.LazyFrame,
@@ -687,6 +718,7 @@ with app.setup:
             -------
             pl.LazyFrame
                 LazyFrame containing apply standard transforms.
+
             """
             if from_normalized:
                 # Normalized data already has correct column names and types
@@ -706,6 +738,7 @@ with app.setup:
 
         @staticmethod
         def rename_columns(df: pl.LazyFrame) -> pl.LazyFrame:
+            """Rename raw query columns to canonical internal names."""
             return df.rename(
                 {
                     "compoundLabel": "name",
@@ -719,6 +752,7 @@ with app.setup:
 
         @staticmethod
         def combine_smiles(df: pl.LazyFrame) -> pl.LazyFrame:
+            """Combine isomeric and connectivity SMILES into a single column."""
             return df.with_columns(
                 [
                     pl.coalesce(["compound_smiles_iso", "compound_smiles_conn"]).alias(
@@ -729,6 +763,7 @@ with app.setup:
 
         @staticmethod
         def extract_doi(df: pl.LazyFrame) -> pl.LazyFrame:
+            """Normalize DOI values by removing URL prefixes when present."""
             return df.with_columns(
                 [
                     pl.when(pl.col("ref_doi").cast(pl.Utf8).str.starts_with("http"))
@@ -745,6 +780,7 @@ with app.setup:
 
         @staticmethod
         def parse_dates(df: pl.LazyFrame) -> pl.LazyFrame:
+            """Parse publication date strings into date values."""
             return df.with_columns(
                 [
                     pl.when(
@@ -766,6 +802,7 @@ with app.setup:
 
         @staticmethod
         def cast_types(df: pl.LazyFrame) -> pl.LazyFrame:
+            """Cast key columns to stable numeric and float dtypes."""
             return df.with_columns(
                 [
                     pl.col("compound").cast(pl.UInt32),
@@ -786,6 +823,7 @@ with app.setup:
 
         @staticmethod
         def drop_old_columns(df: pl.LazyFrame) -> pl.LazyFrame:
+            """Drop intermediate raw columns no longer needed downstream."""
             to_drop = ["compound_smiles_iso", "compound_smiles_conn"]
             return df.drop(
                 [col for col in to_drop if col in df.collect_schema().names()],
@@ -793,6 +831,7 @@ with app.setup:
 
         @staticmethod
         def add_missing_columns(df: pl.LazyFrame) -> pl.LazyFrame:
+            """Add required columns that are absent from the current schema."""
             required = [
                 "compound",
                 "name",
@@ -818,14 +857,18 @@ with app.setup:
 
         @staticmethod
         def deduplicate(df: pl.LazyFrame) -> pl.LazyFrame:
+            """Deduplicate rows by compound, taxon, and reference identifiers."""
             return df.unique(
                 subset=["compound", "taxon", "reference"],
                 keep="first",
             )
 
     class FilterService:
+        """Apply user-selected numeric and formula filters to datasets."""
+
         @staticmethod
         def apply_filters(df: pl.LazyFrame, criteria: SearchCriteria) -> pl.LazyFrame:
+            """Apply all active search criteria to the dataset."""
             if criteria.has_year_filter():
                 df = FilterService.filter_by_year(df, criteria.year_range)
             if criteria.has_mass_filter():
@@ -839,6 +882,7 @@ with app.setup:
             df: pl.LazyFrame,
             year_range: tuple[int, int],
         ) -> pl.LazyFrame:
+            """Filter rows by inclusive publication year bounds."""
             year_start, year_end = year_range
             if year_start:
                 df = df.filter(pl.col("pub_date").dt.year() >= year_start)
@@ -851,6 +895,7 @@ with app.setup:
             df: pl.LazyFrame,
             mass_range: tuple[float, float],
         ) -> pl.LazyFrame:
+            """Filter rows by inclusive exact-mass bounds."""
             mass_min, mass_max = mass_range
             if mass_min:
                 df = df.filter(pl.col("mass") >= mass_min)
@@ -863,6 +908,7 @@ with app.setup:
             df: pl.LazyFrame,
             formula_filters: FormulaFilters,
         ) -> pl.LazyFrame:
+            """Filter rows by molecular formula criteria."""
             return df.filter(
                 pl.col("mf").map_batches(
                     lambda s: s.map_elements(
@@ -873,10 +919,21 @@ with app.setup:
             )
 
     class TaxonResolutionService:
+        """Resolve user taxon input to a single Wikidata taxon QID."""
+
         def __init__(self, endpoint: str):
+            """Initialize taxon resolution service.
+
+            Parameters
+            ----------
+            endpoint : str
+                SPARQL endpoint URL used for taxon lookup.
+
+            """
             self.endpoint = endpoint
 
         def resolve(self, taxon_input: str) -> tuple[str | None, mo.Html | None]:
+            """Resolve free-text or QID taxon input to a target QID."""
             taxon_input = str(taxon_input).strip()
 
             if not taxon_input:
@@ -977,6 +1034,7 @@ with app.setup:
             -------
             bool
                 Result is server error.
+
             """
             status = TaxonResolutionService._extract_http_status(exc)
             if status is None:
@@ -985,6 +1043,7 @@ with app.setup:
 
         @staticmethod
         def _extract_http_status(exc: Exception) -> int | None:
+            """Extract an HTTP status code from nested exception metadata."""
             for source in (exc, getattr(exc, "__cause__", None)):
                 if source is None:
                     continue
@@ -1026,6 +1085,7 @@ with app.setup:
             -------
             mo.Html
                 Result create sanitization notice.
+
             """
             html = f"""
             <div style="line-height: 1.6; color: {CONFIG["color_hyperlink"]};">
@@ -1058,6 +1118,7 @@ with app.setup:
             -------
             tuple[str, mo.Html]
                 Tuple containing resolve ambiguous.
+
             """
             qids = tuple(qid for qid, _ in matches if qid is not None)
             info = {qid: [0, "", "", ""] for qid in qids}
@@ -1137,6 +1198,7 @@ with app.setup:
             -------
             mo.Html
                 Result create taxon warning html.
+
             """
             match_type = "exact matches" if is_exact else "similar taxa"
             intro = (
@@ -1194,17 +1256,31 @@ with app.setup:
     # ========================================================================
 
     class ExportStrategy(ABC):
+        """Abstract base class for dataset export serializers."""
+
         def __init__(self, memory: MemoryManager):
+            """Initialize export strategy.
+
+            Parameters
+            ----------
+            memory : MemoryManager
+                Memory manager used to adapt export behavior.
+
+            """
             self.memory = memory
 
         def export(self, df: pl.LazyFrame) -> bytes:
+            """Serialize a lazy dataframe to bytes with the concrete strategy."""
             return self._to_bytes(df)
 
         @abstractmethod
         def _to_bytes(self, df: pl.LazyFrame) -> bytes:
+            """Serialize a lazy dataframe to bytes."""
             pass
 
     class CSVExportStrategy(ExportStrategy):
+        """Export datasets as CSV bytes."""
+
         def _to_bytes(self, df: pl.LazyFrame) -> bytes:
             if self.memory.is_wasm:
                 # WASM: collect and write to buffer (no file system)
@@ -1232,6 +1308,8 @@ with app.setup:
                 return result
 
     class JSONExportStrategy(ExportStrategy):
+        """Export datasets as NDJSON bytes."""
+
         def _to_bytes(self, df: pl.LazyFrame) -> bytes:
             if self.memory.is_wasm:
                 # WASM: collect and write NDJSON to buffer
@@ -1268,6 +1346,20 @@ with app.setup:
             qid: str,
             filters: dict,
         ):
+            """Initialize TTL export strategy context.
+
+            Parameters
+            ----------
+            memory : MemoryManager
+                Memory manager used to choose backend implementation.
+            taxon_input : str
+                User-provided taxon input string.
+            qid : str
+                Resolved Wikidata QID for the selected taxon scope.
+            filters : dict
+                Active search filter values used in export metadata.
+
+            """
             super().__init__(memory)
             self.taxon_input = taxon_input
             self.qid = qid
@@ -1293,6 +1385,7 @@ with app.setup:
             -------
             bytes
                 Result to bytes maplib.
+
             """
             df_collected: pl.DataFrame = df.collect()
 
@@ -1345,6 +1438,7 @@ with app.setup:
             -------
             bytes
                 Result to bytes rdflib.
+
             """
             df_collected: pl.DataFrame = df.collect()
 
@@ -1626,6 +1720,7 @@ with app.setup:
             -------
             tuple[pl.DataFrame | None, pl.DataFrame | None]
                 Tuple containing build triples vectorized.
+
             """
             wd_ns = WIKIDATA_NAMESPACES["wd"]
             wdt_ns = WIKIDATA_NAMESPACES["wdt"]
@@ -1863,7 +1958,19 @@ with app.setup:
     # ========================================================================
 
     class LOTUSExplorer:
+        """Facade coordinating search, filtering, and export workflows."""
+
         def __init__(self, config: dict, is_wasm: bool = False):
+            """Initialize application services.
+
+            Parameters
+            ----------
+            config : dict
+                Runtime configuration dictionary.
+            is_wasm : bool
+                Whether the app runs in a WASM environment.
+
+            """
             self.config = config
             self.is_wasm = is_wasm
             self.memory = MemoryManager(is_wasm)
@@ -1880,6 +1987,7 @@ with app.setup:
             self,
             taxon_input: str,
         ) -> tuple[str | None, mo.Html | None]:
+            """Resolve taxon input through the taxon resolution service."""
             return self.taxon_service.resolve(taxon_input)
 
         def search(
@@ -1887,6 +1995,7 @@ with app.setup:
             criteria: SearchCriteria,
             qid: str,
         ) -> tuple[pl.LazyFrame, DatasetStats]:
+            """Run query, transformation, and filtering for one search request."""
             raw_data = self.query_service.fetch_compounds(
                 qid,
                 criteria.smiles,
@@ -1905,6 +2014,7 @@ with app.setup:
             return filtered_data, stats
 
         def export(self, df: pl.LazyFrame, format: str, **kwargs) -> bytes:
+            """Export query results using the requested output format."""
             if format == "csv":
                 strategy = CSVExportStrategy(self.memory)
             elif format == "json":
@@ -1925,6 +2035,7 @@ with app.setup:
             df: pl.LazyFrame,
             include_rdf_ref: bool = False,
         ) -> pl.LazyFrame:
+            """Project internal columns to the public export schema."""
             exprs = [
                 pl.col("name").alias("compound_name"),
                 pl.col("smiles").alias("compound_smiles"),
@@ -1960,6 +2071,7 @@ with app.setup:
             return df.select(exprs)
 
         def build_display_dataframe(self, df: pl.LazyFrame, limit: int) -> pl.DataFrame:
+            """Build a collected dataframe formatted for UI display."""
             df = df.select(
                 [
                     pl.col("smiles").alias("Compound Depiction"),
@@ -1987,6 +2099,7 @@ with app.setup:
             filters: dict,
             df: pl.LazyFrame,
         ) -> tuple[str, str]:
+            """Compute query and result hashes for shareable identifiers."""
             # Normalize components for hash (use consistent representation)
             normalized_qid = qid if qid and qid.strip() else "*"
             normalized_taxon = (
@@ -2053,8 +2166,8 @@ with app.setup:
             -------
             dict
                 Dictionary containing metadata.
-            """
 
+            """
             # Normalize taxon information
             effective_taxon = self._normalize_taxon_display(taxon_input, qid)
             taxon_description = self._get_taxon_description(taxon_input, qid, filters)
@@ -2213,6 +2326,7 @@ with app.setup:
             -------
             str
                 String representation of normalize taxon display.
+
             """
             if not taxon_input or taxon_input.strip() == "":
                 return "any taxon"
@@ -2242,6 +2356,7 @@ with app.setup:
             -------
             str
                 String representation of get taxon description.
+
             """
             smiles_info = filters.get("chemical_structure", {})
 
@@ -2269,6 +2384,7 @@ with app.setup:
             -------
             str
                 String representation of citation.
+
             """
             current_date = datetime.now().strftime("%B %d, %Y")
 
@@ -2306,6 +2422,7 @@ with app.setup:
             -------
             str
                 String representation of shareable url.
+
             """
             params = {}
 
@@ -2361,6 +2478,7 @@ with app.setup:
         -------
         str
             String representation of filename.
+
         """
         # Normalize taxon for filename
         if not taxon_name or taxon_name.strip() == "":
@@ -2396,6 +2514,7 @@ with app.setup:
 
 @app.cell
 def md_title():
+    """Render the application title."""
     mo.md("""
     # LOTUS Wikidata Explorer
     """)
@@ -2404,6 +2523,7 @@ def md_title():
 
 @app.cell
 def ui_help():
+    """Render help text with API usage examples."""
     mo.accordion(
         {
             "Help & API": mo.md("""
@@ -2418,6 +2538,7 @@ def ui_help():
 
 @app.cell
 def url_api_defaults():
+    """Parse URL parameters and derive initial UI defaults."""
     query_params = mo.query_params()
 
     def _to_float(value: str | list[str] | None, default: float) -> float:
@@ -2448,6 +2569,7 @@ def url_api_defaults():
 
 @app.cell
 def ui_search_inputs(url_api_defaults):
+    """Create core search and filter input widgets."""
     taxon_input = mo.ui.text(
         value=url_api_defaults["taxon"],
         label="Taxon Name or QID",
@@ -2547,6 +2669,7 @@ def ui_search_inputs(url_api_defaults):
 
 @app.cell
 def ketcher_helper():
+    """Render optional Ketcher helper content."""
     mo.accordion(
         {
             "✏️ Ketcher Structure Editor: draw or look up a structure": mo.vstack(
@@ -2603,6 +2726,7 @@ def ui_search_panel(
     year_filter,
     year_start,
 ):
+    """Assemble and display the complete search control panel."""
     structure_fields = [smiles_input, smiles_search_type]
     if smiles_search_type.value == "similarity":
         structure_fields.append(smiles_threshold)
@@ -2670,6 +2794,7 @@ def execute_search(
     year_filter,
     year_start,
 ):
+    """Execute search workflow and return query outputs."""
     def _backend_error_callout(
         context: str,
         exc: Exception,
@@ -2806,6 +2931,7 @@ def display_results(
     stats,
     taxon_warning,
 ):
+    """Display result statistics, tables, and preview exports."""
     if results is None or stats is None:
         _out = mo.Html("")
     elif stats.n_entries == 0:
@@ -2990,6 +3116,7 @@ def generate_downloads(
     results,
     run_button,
 ):
+    """Create download buttons for CSV, JSON, TTL, and metadata exports."""
     if not run_button.value:
         _out = mo.Html("")
     else:
@@ -3050,6 +3177,7 @@ def generate_downloads(
 
 @app.cell
 def ui_disclaimer():
+    """Render runtime-specific disclaimer notices."""
     if IS_PYODIDE:
         _out = mo.callout(
             mo.md(f"""
@@ -3075,6 +3203,7 @@ def ui_disclaimer():
 
 @app.cell
 def footer():
+    """Render footer links for data sources, tools, and licenses."""
     mo.md("""
     ---
     **Data:**

@@ -15,6 +15,7 @@ def is_valid(value: str) -> bool:
     -------
     bool
         ``True`` if valid; otherwise ``False``.
+
     """
     if not value:
         return False

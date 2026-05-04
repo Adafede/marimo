@@ -12,8 +12,10 @@ RENDERER = IndigoRenderer(INDIGO)
 
 # Expose for other modules
 def get_indigo():
+    """Return the shared Indigo instance."""
     return INDIGO
 
 
 def get_renderer():
+    """Return the shared Indigo renderer instance."""
     return RENDERER

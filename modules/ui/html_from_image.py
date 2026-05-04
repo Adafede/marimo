@@ -27,6 +27,7 @@ def build_style(
     -------
     str
         String representation of style.
+
     """
     styles = {
         "max-width": max_width,
@@ -64,6 +65,7 @@ def html_from_image(
     -------
     str
         String representation of html from image.
+
     """
     if not img:
         return ""

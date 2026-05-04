@@ -15,6 +15,7 @@ def hex_to_rgb_float(hex_color: str) -> tuple[float, float, float]:
     -------
     tuple[float, float, float]
         Tuple containing hex to rgb float.
+
     """
     hex_color = hex_color.lstrip("#")
     r = int(hex_color[0:2], 16) / 255.0

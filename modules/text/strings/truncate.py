@@ -19,6 +19,7 @@ def truncate(text: str, max_length: int, suffix: str = "...") -> str:
     -------
     str
         String representation of truncate.
+
     """
     if len(text) <= max_length:
         return text

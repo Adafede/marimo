@@ -8,6 +8,8 @@
 # ]
 # ///
 
+"""Marimo notebook for NPClassifier enrichment analysis and export."""
+
 import marimo
 
 __generated_with = "0.23.0"
@@ -32,6 +34,8 @@ with app.setup:
 
     @dataclass
     class Settings:
+        """Command-line and runtime settings for NPClassifier requests."""
+
         smiles_file: str = field(
             default="",
             metadata={"help": "Path to input file with one SMILES per line"},
@@ -62,6 +66,7 @@ with app.setup:
 
 @app.function
 def load_cache(cache_path: Path = CACHE_PATH) -> dict:
+    """Load cached NPClassifier responses from disk."""
     if cache_path.exists():
         try:
             return json.loads(cache_path.read_text())
@@ -73,7 +78,8 @@ def load_cache(cache_path: Path = CACHE_PATH) -> dict:
 @app.function
 def save_cache(cache: dict, cache_path: Path = CACHE_PATH) -> None:
     """Atomic write via tmp-file rename. Skips 5xx errors so transient failures aren't persisted.
-                Also writes a CSV sidecar next to the JSON file.
+
+    Also write a CSV sidecar next to the JSON file.
 
     Parameters
     ----------
@@ -81,6 +87,7 @@ def save_cache(cache: dict, cache_path: Path = CACHE_PATH) -> None:
         Cache.
     cache_path : Path
         CACHE_PATH. Default is CACHE_PATH.
+
     """
     clean = {k: v for k, v in cache.items() if not is_server_error(v)}
 
@@ -117,12 +124,14 @@ def save_cache(cache: dict, cache_path: Path = CACHE_PATH) -> None:
 
 @app.function
 def is_server_error(result: dict) -> bool:
+    """Return whether a classification result reports an HTTP 5xx error."""
     err = result.get("error", "")
     return isinstance(err, str) and err.startswith("HTTP 5")
 
 
 @app.function
 def parse_smiles_file(text: str) -> list[str]:
+    """Parse and sanitize SMILES candidates from raw text content."""
     import re
 
     _chem = re.compile(r"[CNOSPFBrIcnops(\[=@#]")
@@ -169,6 +178,7 @@ def parse_smiles_file(text: str) -> list[str]:
 
 @app.function
 def classify_one(smiles: str, retries: int = 3) -> tuple[str, dict]:
+    """Classify one SMILES string using the NPClassifier API."""
     url = "https://npclassifier.gnps2.org/classify?smiles=" + urllib.parse.quote(
         smiles,
         safe="",
@@ -205,6 +215,7 @@ def classify_batch(
     save_every: int = 50,
     progress_cb=None,
 ) -> dict:
+    """Classify uncached SMILES strings in parallel and persist progress."""
     to_fetch = [s for s in smiles_list if s not in cache]
     if not to_fetch:
         return cache

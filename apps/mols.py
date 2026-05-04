@@ -6,6 +6,8 @@
 # ]
 # ///
 
+"""Interactive marimo app for SMARTS highlighting and MCS exploration."""
+
 import marimo
 
 __generated_with = "0.21.1"
@@ -23,6 +25,8 @@ with app.setup:
 
     @dataclass
     class MockInput:
+        """Fallback input object used when interactive UI elements are unavailable."""
+
         value: str = ""
 
     # Toggle this flag for local vs remote development
@@ -68,18 +72,21 @@ with app.setup:
 
 @app.cell
 def message_md():
+    """Display the RDKit availability message."""
     message
     return
 
 
 @app.cell
 def stop_rdkit():
+    """Stop execution when RDKit is unavailable."""
     mo.stop(predicate=not rdkit_available)
     return
 
 
 @app.cell
 def input_smiles():
+    """Create a text area for SMILES input."""
     if rdkit_available:
         smi_input = mo.ui.text_area(
             label="## Enter SMILES (one per line)",
@@ -95,6 +102,7 @@ def input_smiles():
 
 @app.cell
 def py_find_mcs(smi_input):
+    """Compute and display an automatic MCS suggestion from input SMILES."""
     if rdkit_available:
         smiles_list = parse_labeled_lines(smi_input.value)
         valid_mols = parse_smiles_list(smiles_list=smiles_list)
@@ -119,6 +127,7 @@ def py_find_mcs(smi_input):
 
 @app.cell
 def input_smarts():
+    """Create a text area for SMARTS patterns."""
     if rdkit_available:
         smarts_input = mo.ui.text_area(
             label="## Enter SMARTS patterns (one per line)",
@@ -134,6 +143,7 @@ def input_smarts():
 
 @app.cell
 def input_toggle(smarts_input):
+    """Create toggle switches for enabling SMARTS highlights."""
     smarts_list = parse_labeled_lines(smarts_input.value)
     toggles = {
         smarts: mo.ui.switch(value=True, label=name) for name, smarts in smarts_list
@@ -147,6 +157,7 @@ def input_toggle(smarts_input):
 
 @app.cell
 def button_submit():
+    """Create the render trigger button."""
     if rdkit_available:
         submit_button = mo.ui.button(label="Render Molecules")
     else:
@@ -157,6 +168,7 @@ def button_submit():
 
 @app.cell
 def py_generate_html(smarts_input, smi_input, submit_button, toggles):
+    """Render highlighted molecule depictions and summary HTML."""
     if not rdkit_available:
         html = ""
 
@@ -238,6 +250,7 @@ def py_generate_html(smarts_input, smi_input, submit_button, toggles):
 
 @app.cell
 def html_display(html):
+    """Display generated HTML output in the notebook."""
     mo.Html(html)
     return
 

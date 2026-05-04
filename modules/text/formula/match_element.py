@@ -28,6 +28,7 @@ def match_element(
     -------
     bool
         Result match element.
+
     """
     cnt = count_element(formula, element)
     if min_count is not None and cnt < min_count:

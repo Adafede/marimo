@@ -13,5 +13,6 @@ def compute_2d_coords(mol: Mol) -> None:
     ----------
     mol : Mol
         Mol.
+
     """
     Compute2DCoords(mol)

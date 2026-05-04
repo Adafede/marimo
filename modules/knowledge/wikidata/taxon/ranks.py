@@ -15,6 +15,7 @@ def normalize_rank(rank: str) -> str:
     -------
     str
         String representation of rank.
+
     """
     if rank is None:
         return ""
@@ -43,6 +44,7 @@ def get_rank_label(rank: str) -> str:
     -------
     str
         String representation of rank label.
+
     """
     if rank is None:
         return "Unknown"
@@ -148,6 +150,7 @@ def get_rank_order(rank: str) -> int:
     -------
     int
         Numeric value for rank order.
+
     """
     if rank is None:
         return 999

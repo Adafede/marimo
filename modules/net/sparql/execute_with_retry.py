@@ -41,6 +41,7 @@ def execute_with_retry(
     -------
     bytes
         Result execute with retry.
+
     """
     if not query or not query.strip():
         raise ValueError("SPARQL query cannot be empty")

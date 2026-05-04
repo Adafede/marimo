@@ -20,5 +20,6 @@ def parse_many(smiles_list: list[tuple[str, str]]) -> list[Mol]:
     -------
     list[Mol]
         List of many.
+
     """
     return [mol for _, smi in smiles_list if (mol := MolFromSmiles(smi)) is not None]

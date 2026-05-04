@@ -8,8 +8,7 @@
 # output_max_bytes = 1_073_741_824
 # ///
 
-"""
-LOTUS PubChem Tree Generator
+"""LOTUS PubChem Tree Generator.
 
 Generates JSON files for PubChem classification matching:
 https://pubchem.ncbi.nlm.nih.gov/classification/#hid=115
@@ -311,6 +310,7 @@ with app.setup:
         -------
         str
             String representation of qid.
+
         """
         if url and url.startswith(WIKIDATA_ENTITY_PREFIX):
             return url.replace(WIKIDATA_ENTITY_PREFIX, "")
@@ -336,6 +336,7 @@ with app.setup:
         -------
         pl.LazyFrame
             LazyFrame containing execute query.
+
         """
         csv_bytes = execute_with_retry(query, endpoint, timeout=600)
         if not csv_bytes or len(csv_bytes) < 10:
@@ -389,6 +390,7 @@ with app.setup:
             -------
             dict
                 Dictionary containing to dict.
+
             """
             result = {"QID": self.wikidata_qid}
             if self.ncbi_taxid:
@@ -397,8 +399,7 @@ with app.setup:
 
     @dataclass
     class Descriptors:
-        """
-        Chemical structure descriptors for a compound.
+        """Chemical structure descriptors for a compound.
 
         Field names are singular (descriptor type), but hold lists since a compound
         may have multiple values (rare). Output uses single value when unique.
@@ -422,6 +423,7 @@ with app.setup:
             -------
             str | list[str] | None
                 Result simplify.
+
             """
             if not values:
                 return None
@@ -436,6 +438,7 @@ with app.setup:
             -------
             dict
                 Dictionary containing to dict.
+
             """
             result = {}
             if self.inchikey:
@@ -455,6 +458,7 @@ with app.setup:
             -------
             bool
                 ``True`` if empty; otherwise ``False``.
+
             """
             return not (self.inchikey or self.smiles or self.smarts or self.cxsmiles)
 
@@ -473,6 +477,7 @@ with app.setup:
             -------
             str
                 String representation of qid.
+
             """
             return self.identifiers.wikidata_qid
 
@@ -494,6 +499,7 @@ with app.setup:
             -------
             dict
                 Dictionary containing to node dict.
+
             """
             node: dict = {
                 "Name": self.name,
@@ -521,6 +527,7 @@ with app.setup:
         -------
         tuple[set[str], dict[str, list[str]]]
             Tuple containing compounds with taxa.
+
         """
         # Group InChIKeys by compound
         compound_inchikeys = (
@@ -558,6 +565,7 @@ with app.setup:
         -------
         LOTUSData
             Retrieved all data.
+
         """
         queries = [
             (
@@ -640,6 +648,7 @@ with app.setup:
         -------
         pl.LazyFrame
             LazyFrame containing qids from lazyframe.
+
         """
         return lf.with_columns(
             pl.col(col)
@@ -659,6 +668,7 @@ with app.setup:
         -------
         pl.DataFrame
             DataFrame containing collect df.
+
         """
         return cast(pl.DataFrame, lf.collect())
 
@@ -674,6 +684,7 @@ with app.setup:
         -------
         pl.LazyFrame
             LazyFrame containing process compound taxon.
+
         """
         return lf.pipe(extract_qids_from_lazyframe, "compound").pipe(
             extract_qids_from_lazyframe,
@@ -692,6 +703,7 @@ with app.setup:
         -------
         pl.LazyFrame
             LazyFrame containing process taxon ncbi.
+
         """
         return lf.pipe(extract_qids_from_lazyframe, "taxon")
 
@@ -707,6 +719,7 @@ with app.setup:
         -------
         pl.LazyFrame
             LazyFrame containing process taxon parent.
+
         """
         return lf.pipe(extract_qids_from_lazyframe, "taxon").pipe(
             extract_qids_from_lazyframe,
@@ -725,6 +738,7 @@ with app.setup:
         -------
         pl.LazyFrame
             LazyFrame containing process taxon name.
+
         """
         return lf.pipe(extract_qids_from_lazyframe, "taxon")
 
@@ -740,6 +754,7 @@ with app.setup:
         -------
         pl.LazyFrame
             LazyFrame containing process compound parent.
+
         """
         return lf.pipe(extract_qids_from_lazyframe, "compound").pipe(
             extract_qids_from_lazyframe,
@@ -758,6 +773,7 @@ with app.setup:
         -------
         pl.LazyFrame
             LazyFrame containing process compound label.
+
         """
         return (
             lf.pipe(extract_qids_from_lazyframe, "compound")
@@ -782,6 +798,7 @@ with app.setup:
         -------
         pl.LazyFrame
             LazyFrame containing process compound smiles.
+
         """
         return lf.pipe(extract_qids_from_lazyframe, "compound")
 
@@ -797,6 +814,7 @@ with app.setup:
         -------
         pl.LazyFrame
             LazyFrame containing process reference doi.
+
         """
         return (
             lf.pipe(extract_qids_from_lazyframe, "compound")
@@ -816,6 +834,7 @@ with app.setup:
         -------
         pl.LazyFrame
             LazyFrame containing process reference pmid.
+
         """
         return (
             lf.pipe(extract_qids_from_lazyframe, "compound")
@@ -842,6 +861,7 @@ with app.setup:
         -------
         dict[str, dict[str, dict]]
             Dictionary containing reference map.
+
         """
         reference_map: dict[str, dict[str, dict]] = {}
 
@@ -898,6 +918,7 @@ with app.setup:
         -------
         pl.DataFrame
             DataFrame containing combine smiles.
+
         """
         iso_df = collect_df(smiles_iso)
         can_df = collect_df(smiles_can)
@@ -939,9 +960,10 @@ with app.setup:
         cxsmiles: pl.LazyFrame,
     ) -> tuple[dict, dict, dict]:
         """Build mappings for SMILES, SMARTS, and CXSMILES.
-                                Each mapping returns lists of values per compound.
 
-                                Returns (smiles_map, smarts_map, cxsmiles_map)
+        Each mapping returns lists of values per compound.
+
+        Returns (smiles_map, smarts_map, cxsmiles_map).
 
         Parameters
         ----------
@@ -958,6 +980,7 @@ with app.setup:
         -------
         tuple[dict, dict, dict]
             Tuple containing structure maps.
+
         """
         # Combine SMILES (prefer isomeric over canonical)
         smiles_df = combine_smiles(smiles_iso, smiles_can)
@@ -1044,6 +1067,7 @@ with app.setup:
         -------
         dict[str, Descriptors]
             Dictionary containing descriptor map.
+
         """
         inchikey_map = inchikey_map or {}
 
@@ -1116,6 +1140,7 @@ with app.setup:
         -------
         list[dict]
             List of biological tree.
+
         """
         # Step 1: Get all taxa that directly have compounds
         taxa_with_compounds = set(compound_taxon["taxon"].unique().to_list())
@@ -1205,6 +1230,7 @@ with app.setup:
             -------
             dict | None
                 Dictionary containing node.
+
             """
             if taxon_qid in visited:
                 return None
@@ -1321,6 +1347,7 @@ with app.setup:
         -------
         list[dict]
             List of compound tree.
+
         """
         # Build parent-child relationships
         parent_map_data = (
@@ -1361,6 +1388,7 @@ with app.setup:
             -------
             dict | None
                 Dictionary containing node.
+
             """
             if compound_qid in visited:
                 return None
@@ -1430,6 +1458,7 @@ with app.setup:
         -------
         tuple[dict, int, int]
             Tuple containing tree to display.
+
         """
         max_depth = int(CONFIG["preview_max_depth"])
         max_children = int(CONFIG["preview_max_children"])
@@ -1502,6 +1531,7 @@ with app.setup:
         -------
         DataStats
             Computed stats.
+
         """
         compound_taxon_df = collect_df(data.compound_taxon)
         taxon_ncbi_df = collect_df(data.taxon_ncbi)
@@ -1533,6 +1563,7 @@ with app.setup:
         -------
         int
             Numeric value for count tree nodes.
+
         """
         count = 0
         for node in tree:
@@ -1568,6 +1599,7 @@ with app.setup:
         -------
         pl.DataFrame
             DataFrame containing npclassifier cache.
+
         """
         import urllib.request
 
@@ -1618,6 +1650,7 @@ with app.setup:
         -------
         list[dict]
             List of npclassifier tree.
+
         """
         smiles_to_qid = smiles_to_qid or {}
 
@@ -1785,6 +1818,7 @@ with app.setup:
         -------
         tuple[dict[str, list[str]], dict[str, str]]
             Tuple containing smiles to inchikey map.
+
         """
         smiles_to_inchikey: dict[str, list[str]] = {}
         smiles_to_qid: dict[str, str] = {}
@@ -1839,6 +1873,7 @@ with app.setup:
         -------
         dict
             Dictionary containing npclassifier tree to pubchem.
+
         """
         if not tree:
             return {}
@@ -1913,6 +1948,7 @@ with app.setup:
         -------
         dict
             Dictionary containing tree to pubchem format.
+
         """
         if tree_type == "biological":
             return convert_bio_node_to_pubchem(tree)
@@ -1952,6 +1988,7 @@ with app.setup:
         -------
         dict
             Dictionary containing bio node to pubchem.
+
         """
         if not nodes:
             return {}
@@ -2075,6 +2112,7 @@ with app.setup:
         -------
         dict
             Dictionary containing chem node to pubchem.
+
         """
         if not nodes:
             return {}
@@ -2127,6 +2165,7 @@ with app.setup:
 
 @app.cell
 def md_title():
+    """Render the application title."""
     mo.md("""
     # LOTUS PubChem Tree Generator
 
@@ -2144,6 +2183,7 @@ def md_title():
 
 @app.cell
 def wasm_warning():
+    """Show runtime limitations when running in WASM."""
     if IS_PYODIDE:
         mo.stop(
             True,
@@ -2173,6 +2213,7 @@ def wasm_warning():
 
 @app.cell
 def ui_controls():
+    """Render top-level controls for data fetch and export format."""
     run_button = mo.ui.run_button(label="Fetch Data from Wikidata")
     run_button
     return (run_button,)
@@ -2180,6 +2221,7 @@ def ui_controls():
 
 @app.cell
 def fetch_data(run_button):
+    """Fetch source datasets needed to build PubChem trees."""
     mo.stop(not run_button.value, mo.md("Click **Fetch Data from Wikidata** to start"))
 
     start_time = time.time()
@@ -2229,6 +2271,7 @@ def fetch_data(run_button):
 
 @app.cell
 def display_stats(stats):
+    """Display high-level dataset statistics."""
     mo.stop(stats is None)
 
     mo.vstack(
@@ -2285,6 +2328,7 @@ def display_stats(stats):
 
 @app.cell
 def build_trees_button(data):
+    """Render trigger button for tree construction."""
     mo.stop(data is None)
 
     build_trees_btn = mo.ui.run_button(label="Build Trees")
@@ -2294,6 +2338,7 @@ def build_trees_button(data):
 
 @app.cell
 def build_trees(build_trees_btn, data):
+    """Build biological and chemical trees from fetched data."""
     mo.stop(data is None)
     mo.stop(
         build_trees_btn is None or not build_trees_btn.value,
@@ -2450,6 +2495,7 @@ def build_trees(build_trees_btn, data):
 
 @app.cell
 def display_previews(biological_tree, chemical_tree, npclassifier_tree):
+    """Display preview tables for generated tree outputs."""
     mo.stop(biological_tree is None or chemical_tree is None)
 
     bio_display, bio_shown, bio_total = tree_to_display(biological_tree)
@@ -2510,6 +2556,7 @@ def display_previews(biological_tree, chemical_tree, npclassifier_tree):
 
 @app.cell
 def download_buttons(biological_tree, chemical_tree, npclassifier_tree):
+    """Render download buttons for generated export artifacts."""
     mo.stop(biological_tree is None or chemical_tree is None)
 
     date_str = datetime.now().strftime("%Y%m%d")
@@ -2535,6 +2582,7 @@ def download_buttons(biological_tree, chemical_tree, npclassifier_tree):
         -------
         dict
             Dictionary containing tree output.
+
         """
         is_biological = tree_type == "biological"
         is_npclassifier = source == "npclassifier"
@@ -2735,6 +2783,7 @@ def download_buttons(biological_tree, chemical_tree, npclassifier_tree):
 
 @app.cell
 def footer():
+    """Render footer links and attribution text."""
     mo.md("""
     ---
     **Data:**
@@ -3005,6 +3054,7 @@ Examples:
                 -------
                 dict
                     Dictionary containing cli tree output.
+
                 """
                 is_biological = tree_type == "biological"
                 is_npclassifier = source == "npclassifier"

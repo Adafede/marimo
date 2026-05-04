@@ -26,6 +26,7 @@ def validate(
     -------
     tuple[bool, str | None]
         Tuple containing validate.
+
     """
     if not smiles or not smiles.strip():
         return True, None

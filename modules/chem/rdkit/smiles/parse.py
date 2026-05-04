@@ -17,6 +17,7 @@ def parse(smiles: str) -> Mol | None:
     -------
     Mol | None
         Result parse.
+
     """
     if not smiles:
         return None

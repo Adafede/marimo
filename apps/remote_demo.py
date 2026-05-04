@@ -5,6 +5,8 @@
 # ]
 # ///
 
+"""Minimal marimo app demonstrating remote module imports."""
+
 import marimo
 
 __generated_with = "0.21.1"
@@ -16,6 +18,7 @@ with app.setup:
 
 @app.cell
 def title():
+    """Render the demo title markdown."""
     mo.md("""
     # Remote Import Demo
     """)
@@ -24,6 +27,7 @@ def title():
 
 @app.cell
 def imports():
+    """Import helper functions used in the demo cells."""
     # Toggle this flag for local vs remote development
     _USE_LOCAL = True  # Set to True for local development
     if _USE_LOCAL:
@@ -39,12 +43,14 @@ def imports():
 
 @app.cell
 def example_1(parse):
+    """Show formula parsing output."""
     mo.show_code(parse("C₆H₁₂O₆"), position="above")
     return
 
 
 @app.cell
 def example_2(svg_from_smiles):
+    """Show a rendered structure image from a SMILES string."""
     mo.show_code(mo.image(svg_from_smiles("CCO")), position="above")
     return
 

@@ -24,6 +24,7 @@ def find_mcs(mols: list[Mol]) -> tuple[str | None, str | None]:
     -------
     tuple[str | None, str | None]
         Tuple containing mcs.
+
     """
     if len(mols) < MIN_MOLECULES:
         return None, ERROR_INSUFFICIENT

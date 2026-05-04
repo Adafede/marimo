@@ -21,5 +21,6 @@ def styled_anchor(url: str, text: str, color: str = DEFAULT_LINK_COLOR) -> str:
     -------
     str
         String representation of styled anchor.
+
     """
     return f'<a href="{url}" target="_blank" style="color:{color};">{text}</a>'

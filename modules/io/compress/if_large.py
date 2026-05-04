@@ -25,6 +25,7 @@ def compress_if_large(
     -------
     tuple[bytes, bool]
         Tuple containing compress if large.
+
     """
     if len(data) < threshold:
         return data, False

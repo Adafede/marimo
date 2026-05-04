@@ -17,5 +17,6 @@ def wiki_from_qid(qid: str) -> str:
     -------
     str
         String representation of wiki from qid.
+
     """
     return f"{WIKI_PREFIX}{qid}"

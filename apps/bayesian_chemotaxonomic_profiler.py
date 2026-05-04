@@ -15,8 +15,7 @@
 #     # "vl-convert-python==1.9.0.post1",
 # ]
 # ///
-"""
-Bayesian Chemotaxonomic Scaffold Discovery
+"""Bayesian Chemotaxonomic Scaffold Discovery.
 
 Discover scaffold-taxon associations while accounting for sampling bias.
 
@@ -110,6 +109,7 @@ GNU Affero General Public License for more details.
 
 You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 """
 
 import marimo
@@ -406,6 +406,7 @@ with app.setup:
         -------
         str
             String representation of data path.
+
         """
         if _USE_LOCAL:
             return f"{LOCAL_BASE_PATH}/{filename}"
@@ -485,6 +486,7 @@ def write_parquet_stream(
         Default is 'snappy'.
     row_group_size : int
         Default is 2000.
+
     """
     # Fast-path for empty frames
     try:
@@ -564,6 +566,7 @@ def validate_columns(
     -------
     pl.DataFrame
         DataFrame containing validate columns.
+
     """
     if df is None or df.is_empty():
         logging.warning(f"{name}: Empty dataframe")
@@ -608,6 +611,7 @@ def read_table(
     -------
     pl.DataFrame
         DataFrame containing table.
+
     """
     p = str(path)
 
@@ -651,6 +655,7 @@ def load_fragments(path: str, min_freq: int) -> pl.DataFrame:
     -------
     pl.DataFrame
         DataFrame containing fragments.
+
     """
     return read_table(
         path,
@@ -672,6 +677,7 @@ def load_compound_fragment_mapping(path: str) -> pl.DataFrame:
     -------
     pl.DataFrame
         DataFrame containing compound fragment mapping.
+
     """
     return (
         pl.read_csv(
@@ -713,8 +719,8 @@ def build_compound_scaffold_table(
     -------
     pl.DataFrame
         DataFrame containing compound scaffold table.
-    """
 
+    """
     if (
         mapping is None
         or mapping.is_empty()
@@ -742,6 +748,7 @@ def build_compound_scaffold_table(
         -------
         str | None
             Selected valid fragments.
+
         """
         if not fragments_str:
             return ""
@@ -792,6 +799,7 @@ def build_hierarchy_lineage(
     -------
     pl.DataFrame
         DataFrame containing hierarchy lineage.
+
     """
     validate_columns(edges, {child, parent}, "hierarchy")
     e = edges.select([child, parent]).drop_nulls().unique()
@@ -889,6 +897,7 @@ def build_compound_lineage(compound_scaffold: pl.DataFrame) -> pl.DataFrame:
     -------
     pl.DataFrame
         DataFrame containing compound lineage.
+
     """
     validate_columns(compound_scaffold, {"compound", "scaffold"}, "compound_scaffold")
     return compound_scaffold.select(
@@ -940,6 +949,7 @@ def run_hierarchical_analysis(
     -------
     pl.LazyFrame
         LazyFrame containing run hierarchical analysis.
+
     """
     start = time.time()
     if cfg is None:
@@ -1179,8 +1189,8 @@ def process_rank_minimal(
     -------
     pl.DataFrame
         DataFrame containing process rank minimal.
-    """
 
+    """
     # Map to this rank
     rank_map = (
         taxon_lineage.filter(pl.col("taxon_rank") == rank)
@@ -1622,8 +1632,8 @@ def compute_ci_rope(batch: pl.DataFrame, CI_PROB: float, ROPE_HW: float):
         Ci prob.
     ROPE_HW : float
         Rope hw.
-    """
 
+    """
     # Extract to numpy (unavoidable for scipy)
     alpha = np.maximum(batch["alpha_post"].to_numpy(), 1e-6)
     beta = np.maximum(batch["beta_post"].to_numpy(), 1e-6)
@@ -1719,6 +1729,7 @@ def discover_top_taxa(
     -------
     list[str]
         List of discover top taxa.
+
     """
     # Build query lazily
     rank_markers = (
@@ -1777,7 +1788,8 @@ def get_markers_for_top_taxa(
     top_n_per_taxon: int = TOP_N_MARKERS_PER_TAXON,
 ) -> pl.DataFrame:
     """Get top markers for each of the selected top taxa.
-                Works with both LazyFrame and DataFrame.
+
+    Works with both LazyFrame and DataFrame.
 
     Parameters
     ----------
@@ -1802,6 +1814,7 @@ def get_markers_for_top_taxa(
     -------
     pl.DataFrame
         DataFrame containing markers for top taxa.
+
     """
     # Handle empty top_taxa
     if not top_taxa:
@@ -1865,6 +1878,7 @@ def create_taxa_marker_heatmap(
     -------
     alt.Chart | mo.Html
         Constructed taxa marker heatmap.
+
     """
     if markers_df.is_empty():
         return mo.md(f"*No {rank}-level data*")
@@ -1980,6 +1994,7 @@ def create_taxa_summary_table(
     -------
     pl.DataFrame
         DataFrame containing taxa summary table.
+
     """
     if markers_df.is_empty():
         return pl.DataFrame()
@@ -2030,6 +2045,7 @@ def create_markers_detail_table(
     -------
     pl.DataFrame
         DataFrame containing markers detail table.
+
     """
     if markers_df.is_empty():
         return pl.DataFrame()
@@ -2758,8 +2774,8 @@ def lineage_profile_viz(markers):
     ----------
     markers : Any
         Markers.
-    """
 
+    """
     mo.md("---")
 
     # Find "good examples" - scaffolds with consistent enrichment across ranks
@@ -3141,8 +3157,8 @@ def methods_summary(
         Effective config.
     markers : Any
         Markers.
-    """
 
+    """
     # Count key statistics - collect lazily
     n_compounds = compound_scaffold.get_column("compound_smiles").n_unique()
     n_taxa_s = compound_taxon.get_column("taxon").n_unique()

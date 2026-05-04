@@ -21,6 +21,7 @@ def values_clause(variable: str, values: Sequence[str], prefix: str = "") -> str
     -------
     str
         String representation of values clause.
+
     """
     if not values:
         return ""

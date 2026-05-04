@@ -19,5 +19,6 @@ def count_element(formula: str, element: str) -> int:
     -------
     int
         Numeric value for count element.
+
     """
     return parse(formula).get(element, 0)

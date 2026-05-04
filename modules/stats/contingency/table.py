@@ -1,5 +1,4 @@
-"""
-Contingency table construction with diversity weighting.
+"""Contingency table construction with diversity weighting.
 
 Handles 2×2 contingency tables for enrichment analysis:
 
@@ -36,6 +35,7 @@ def diversity_weight(
     -------
     np.ndarray | int
         Rounded diversity-weighted counts as integer values.
+
     """
     items = np.asarray(n_items, dtype=np.float32)
     sources = np.asarray(n_sources, dtype=np.float32)
@@ -75,6 +75,7 @@ def contingency_table_2x2(
     -------
     dict[str, np.ndarray | int]
         Dictionary with contingency cells ``a``, ``b``, ``c``, ``c_eff``, ``d``, and total size ``N``.
+
     """
     a_r = np.asarray(a_raw, dtype=np.int32)
     f_tot = np.asarray(feature_total, dtype=np.int32)
@@ -140,6 +141,7 @@ def contingency_from_presence(
     -------
     dict[str, np.ndarray | int]
         Contingency table dictionary, including metadata such as ``a_raw`` and optionally ``n_sources``.
+
     """
     a_raw = np.asarray(feature_in_group, dtype=np.int32)
 
@@ -185,6 +187,7 @@ def observed_rate(
     -------
     np.ndarray | float
         Observed rates computed as ``a / group_total``.
+
     """
     numerator = np.asarray(a, dtype=np.float32)
     denominator = np.maximum(np.asarray(group_total, dtype=np.float32), 1e-10)
@@ -214,6 +217,7 @@ def baseline_rate(
     -------
     np.ndarray | float
         Baseline rates clipped to at least ``min_rate``.
+
     """
     rate = np.asarray(feature_total, dtype=np.float32) / universe_size
     return np.maximum(rate, min_rate)

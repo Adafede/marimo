@@ -17,5 +17,6 @@ def normalize(formula: str) -> str:
     -------
     str
         String representation of normalize.
+
     """
     return formula.translate(SUBSCRIPT_MAP)

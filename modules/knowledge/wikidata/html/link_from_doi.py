@@ -19,6 +19,7 @@ def extract_doi(doi: str) -> str:
     -------
     str
         String representation of doi.
+
     """
     return doi.split("doi.org/")[-1] if "doi.org/" in doi else doi
 
@@ -37,6 +38,7 @@ def link_from_doi(doi: str, color: str = DEFAULT_LINK_COLOR) -> str:
     -------
     str
         String representation of link from doi.
+
     """
     if not doi:
         return ""

@@ -23,6 +23,7 @@ def mol_from_smiles(
     -------
     IndigoObject | None
         Result mol from smiles.
+
     """
     if not smiles:
         return None

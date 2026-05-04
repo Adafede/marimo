@@ -31,6 +31,7 @@ def build_sachem_service(
     -------
     str
         String representation of sachem service.
+
     """
     is_multiline_literal = structure_literal.startswith(
         "'''",
@@ -101,6 +102,7 @@ def query_sachem(
     -------
     str
         String representation of query sachem.
+
     """
     sachem_clause = build_sachem_service(
         structure_literal=escaped_smiles,

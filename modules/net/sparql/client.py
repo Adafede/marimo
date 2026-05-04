@@ -21,6 +21,18 @@ class Client:
         timeout: int = 120,
         user_agent: str = "adafedemarimo/1.0",
     ):
+        """Initialize a SPARQL HTTP client.
+
+        Parameters
+        ----------
+        endpoint : str
+            SPARQL endpoint URL.
+        timeout : int
+            Request timeout in seconds.
+        user_agent : str
+            User-Agent header value sent with requests.
+
+        """
         self.endpoint = endpoint
         self.timeout = timeout
         self.user_agent = user_agent
@@ -39,6 +51,7 @@ class Client:
         -------
         bytes
             Result request.
+
         """
         headers = {
             "Accept": accept,
@@ -67,6 +80,7 @@ class Client:
         -------
         bytes
             Result query csv.
+
         """
         return self._request(query, "text/csv")
 
@@ -82,5 +96,6 @@ class Client:
         -------
         bytes
             Result query json.
+
         """
         return self._request(query, "application/sparql-results+json")

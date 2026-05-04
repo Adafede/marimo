@@ -36,6 +36,7 @@ def wrap_image(
     -------
     mo.Html
         Result wrap image.
+
     """
     if not html_str:
         return mo.Html("")

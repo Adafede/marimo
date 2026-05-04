@@ -33,6 +33,7 @@ def filter_formula(
     -------
     pl.DataFrame
         DataFrame containing formula.
+
     """
     if df.is_empty() or column not in df.columns:
         return df

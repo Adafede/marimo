@@ -40,6 +40,7 @@ def svg_from_smiles_cached(
     -------
     str
         String representation of svg from smiles cached.
+
     """
     if not smiles:
         return ""

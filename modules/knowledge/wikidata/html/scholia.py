@@ -17,5 +17,6 @@ def scholia_url(qid: str) -> str:
     -------
     str
         String representation of scholia url.
+
     """
     return f"{SCHOLIA_BASE}{qid}"

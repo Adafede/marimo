@@ -15,6 +15,7 @@ def query_taxon_search(taxon_name: str) -> str:
     -------
     str
         String representation of query taxon search.
+
     """
     return f"""
     PREFIX wdt: <http://www.wikidata.org/prop/direct/>

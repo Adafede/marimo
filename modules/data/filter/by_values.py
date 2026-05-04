@@ -28,6 +28,7 @@ def filter_by_values(
     -------
     pl.DataFrame
         DataFrame containing by values.
+
     """
     if column not in df.columns:
         return df

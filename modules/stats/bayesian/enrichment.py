@@ -1,5 +1,4 @@
-"""
-Bayesian enrichment analysis using fold-change and ROPE methodology.
+"""Bayesian enrichment analysis using fold-change and ROPE methodology.
 
 ROPE = Region of Practical Equivalence: a region around the null value
 where differences are considered negligible for practical purposes.
@@ -42,6 +41,7 @@ def fold_change_credible_interval(
     -------
     tuple[np.ndarray | float, np.ndarray | float]
         Tuple containing fold change credible interval.
+
     """
     # Get CI on probability scale
     p_lower, p_upper = credible_interval(alpha, beta, probability)
@@ -96,6 +96,7 @@ def rope_decision(
     -------
     tuple[np.ndarray | str, np.ndarray | float, np.ndarray | float]
         Tuple containing rope decision.
+
     """
     t = np.maximum(np.asarray(baseline), 1e-10)
     a = np.maximum(np.asarray(alpha), 1e-6)
@@ -175,6 +176,7 @@ def enrichment_strength(
     -------
     dict[str, np.ndarray | float]
         Dictionary containing enrichment strength.
+
     """
     from .beta import posterior_mean, posterior_mode
 
@@ -220,6 +222,7 @@ def hierarchical_prior_center(
     -------
     np.ndarray | float
         Result hierarchical prior center.
+
     """
     if not (0 <= hierarchical_weight <= 1):
         raise ValueError(

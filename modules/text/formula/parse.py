@@ -21,6 +21,7 @@ def parse(formula: str) -> dict[str, int]:
     -------
     dict[str, int]
         Dictionary containing parse.
+
     """
     if not formula:
         return {}

@@ -17,6 +17,7 @@ def serialize_range(element_range: ElementRange) -> dict[str, int | None] | None
     -------
     dict[str, int | None] | None
         Dictionary containing serialize range.
+
     """
     if not element_range.is_active():
         return None

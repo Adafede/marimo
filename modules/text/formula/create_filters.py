@@ -25,7 +25,7 @@ def create_filters(
     br_state: str = "allowed",
     i_state: str = "allowed",
 ) -> FormulaFilters:
-    """Factory function to create FormulaFilters from individual values.
+    """Create `FormulaFilters` from individual values.
 
     Parameters
     ----------
@@ -68,6 +68,7 @@ def create_filters(
     -------
     FormulaFilters
         Constructed filters.
+
     """
     return FormulaFilters(
         exact_formula=exact_formula.strip() if exact_formula else None,

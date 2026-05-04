@@ -30,6 +30,7 @@ class FormulaFilters:
         -------
         bool
             ``True`` if active; otherwise ``False``.
+
         """
         if self.exact_formula and self.exact_formula.strip():
             return True

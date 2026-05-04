@@ -5,6 +5,8 @@
 # ]
 # ///
 
+"""Interactive Fibonacci sequence calculator notebook built with marimo."""
+
 import marimo
 
 __generated_with = "0.17.7"
@@ -41,6 +43,7 @@ def _(n):
 
 @app.function
 def fibonacci(n):
+    """Return the first ``n`` values of the Fibonacci sequence."""
     sequence = [0, 1]
     for i in range(2, n):
         sequence.append(sequence[i - 1] + sequence[i - 2])

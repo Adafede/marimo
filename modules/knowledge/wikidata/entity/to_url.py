@@ -19,5 +19,6 @@ def to_url(qid: str, prefix: str = ENTITY_PREFIX) -> str:
     -------
     str
         String representation of to url.
+
     """
     return f"{prefix}{qid}"

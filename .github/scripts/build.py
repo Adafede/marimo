@@ -1,5 +1,4 @@
-"""
-Build script for marimo notebooks.
+"""Build script for marimo notebooks.
 
 This script exports marimo notebooks to HTML/WebAssembly format and generates
 an index.html file that lists all the notebooks. It handles both regular notebooks
@@ -37,16 +36,16 @@ from loguru import logger
 def copy_public_directories(source_dir: Path, output_dir: Path) -> None:
     """Copy all public/ directories from source to output directory.
 
-                This function recursively finds all 'public' directories in the source
-                and copies them to the corresponding location in the output directory,
-                preserving the directory structure.
+    The copy preserves each directory's relative path below ``source_dir`` and
+    replaces any pre-existing destination directory.
 
     Parameters
     ----------
     source_dir : Path
-        Source dir.
+        Root directory scanned recursively for ``public`` directories.
     output_dir : Path
-        Output dir.
+        Root output directory where matching ``public`` paths are written.
+
     """
     if not source_dir.exists():
         logger.warning(f"Source directory not found: {source_dir}")
@@ -84,17 +83,18 @@ def copy_public_directories(source_dir: Path, output_dir: Path) -> None:
 
 
 def find_imported_modules(notebook_path: Path) -> Set[str]:
-    """Find all modules imported from 'modules.*' in the notebook.
+    """Find ``modules.*`` imports declared in a notebook script.
 
     Parameters
     ----------
     notebook_path : Path
-        Notebook path.
+        Path to the notebook Python file.
 
     Returns
     -------
     Set[str]
-        Set of imported modules.
+        Imported module paths such as ``modules.text.strings``.
+
     """
     with open(notebook_path) as f:
         content = f.read()
@@ -113,19 +113,20 @@ def find_imported_modules(notebook_path: Path) -> Set[str]:
 
 
 def find_module_dependencies(module_path: Path, module_name: str) -> Set[str]:
-    """Recursively find all dependencies of a module.
+    """Find direct module dependencies referenced by a module source file.
 
     Parameters
     ----------
     module_path : Path
-        Module path.
+        Filesystem path to the module source.
     module_name : str
-        Module name.
+        Dotted module path used to resolve relative imports.
 
     Returns
     -------
     Set[str]
-        Set of module dependencies.
+        Absolute dotted module paths found in import statements.
+
     """
     if not module_path.exists():
         return set()
@@ -172,19 +173,20 @@ def find_module_dependencies(module_path: Path, module_name: str) -> Set[str]:
 
 
 def get_all_required_modules(notebook_path: Path, public_path: Path) -> Set[str]:
-    """Get all modules required by the notebook, including transitive dependencies.
+    """Resolve the transitive closure of notebook module dependencies.
 
     Parameters
     ----------
     notebook_path : Path
-        Notebook path.
+        Path to the notebook Python file.
     public_path : Path
-        Public path.
+        Repository root used to locate module source files.
 
     Returns
     -------
     Set[str]
-        Set of all required modules.
+        All direct and transitive ``modules.*`` dependencies.
+
     """
     direct_imports = find_imported_modules(notebook_path)
 
@@ -212,19 +214,20 @@ def get_all_required_modules(notebook_path: Path, public_path: Path) -> Set[str]
 
 
 def convert_relative_to_absolute_imports(code: str, module_name: str) -> str:
-    """Convert relative imports to absolute imports in module code.
+    """Convert relative import statements in module code to absolute imports.
 
     Parameters
     ----------
     code : str
-        Code.
+        Module source code.
     module_name : str
-        Module name.
+        Dotted module path for the source code being rewritten.
 
     Returns
     -------
     str
-        String representation of relative to absolute imports.
+        Rewritten source code with relative imports normalized.
+
     """
     module_parts = module_name.split(".")
 
@@ -254,18 +257,18 @@ def convert_relative_to_absolute_imports(code: str, module_name: str) -> str:
 
 
 def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
-    """Inline only required modules into the notebook.
+    """Inline required local modules directly into a notebook script.
 
     Parameters
     ----------
     notebook_path : Path
-        Notebook path.
+        Path to the source notebook.
     output_path : Path
-        Output path.
+        Path where the transformed notebook is written.
     public_path : Path
-        Public path.
-    """
+        Repository root used to resolve ``modules.*`` imports.
 
+    """
     # Get all required modules
     required_modules = get_all_required_modules(notebook_path, public_path)
 
@@ -346,21 +349,22 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
         indent: str,
         aliases: dict | None = None,
     ) -> str:
-        """Get inlined code for a module, including its transitive dependencies.
+        """Return inlined code for a module and its transitive dependencies.
 
         Parameters
         ----------
         module_path : str
-            Module path.
+            Dotted module path.
         indent : str
-            Indent.
+            Indentation prefix used at the import site.
         aliases : dict | None
-            None. Default is None.
+            Optional mapping of imported symbol names to aliases.
 
         Returns
         -------
         str
-            String representation of inlined code with deps.
+            Inlined code block, including alias assignments when applicable.
+
         """
         result_parts = []
 
@@ -460,25 +464,26 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
         return "\n".join(result_parts)
 
     def parse_import_aliases(import_text: str) -> dict:
-        """Parse import statement to extract name -> alias mappings.
+        """Parse import targets into ``name -> alias`` mappings.
 
-                                Examples:
-                                    'foo, bar' -> {'foo': 'foo', 'bar': 'bar'}
-                                    'foo as f, bar as b' -> {'foo': 'f', 'bar': 'b'}
-                                    '(
-                            foo as f,
-                            bar,
-                        )' -> {'foo': 'f', 'bar': 'bar'}
+        Examples
+        --------
+        ``"foo, bar"`` -> ``{"foo": "foo", "bar": "bar"}``
+
+        ``"foo as f, bar as b"`` -> ``{"foo": "f", "bar": "b"}``
+
+        ``"(foo as f, bar)"`` -> ``{"foo": "f", "bar": "bar"}``
 
         Parameters
         ----------
         import_text : str
-            Import text.
+            Raw text after the ``import`` keyword.
 
         Returns
         -------
         dict
-            Dictionary containing import aliases.
+            Mapping from original symbol names to in-scope aliases.
+
         """
         aliases = {}
         # Remove parentheses and normalize whitespace
@@ -590,6 +595,14 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
 
 
 def inject_simpleanalytics(html_path: Path) -> None:
+    """Inject the Simple Analytics script tag before ``</body>``.
+
+    Parameters
+    ----------
+    html_path : Path
+        Path to the exported HTML file.
+
+    """
     html = html_path.read_text()
 
     script = """
@@ -610,26 +623,23 @@ def _export_html_wasm(
 ) -> bool:
     """Export a single marimo notebook to HTML/WebAssembly format.
 
-                This function takes a marimo notebook (.py file) and exports it to HTML/WebAssembly format.
-                If as_app is True, the notebook is exported in "run" mode with code hidden, suitable for
-                applications. Otherwise, it's exported in "edit" mode, suitable for interactive notebooks.
-
-                For apps, if a modules/ directory exists, modules will be automatically
-                inlined before export, and the inlined version is saved alongside the HTML.
+    When ``as_app`` is true, the notebook is exported in run mode and local
+    modules are inlined before export if available.
 
     Parameters
     ----------
     notebook_path : Path
-        Notebook path.
+        Path to the notebook source file.
     output_dir : Path
-        Output dir.
+        Output root directory.
     as_app : bool
-        False. Default is False.
+        Whether to export in app/run mode. Default is ``False``.
 
     Returns
     -------
     bool
-        Result export html wasm.
+        ``True`` when export succeeds, otherwise ``False``.
+
     """
     inlined_path = None
     notebook_to_export = notebook_path
@@ -701,22 +711,19 @@ def _generate_index(
     notebooks_data: List[dict] | None = None,
     apps_data: List[dict] | None = None,
 ) -> None:
-    """Generate an index.html file that lists all the notebooks.
-
-                This function creates an HTML index page that displays links to all the exported
-                notebooks. The index page includes the marimo logo and displays each notebook
-                with a formatted title and a link to open it.
+    """Generate the ``index.html`` page for exported notebooks and apps.
 
     Parameters
     ----------
     output_dir : Path
-        Output dir.
+        Output root directory where ``index.html`` is written.
     template_file : Path
-        Template file.
+        Jinja template file used to render the index page.
     notebooks_data : List[dict] | None
-        None. Default is None.
+        Notebook metadata for rendering notebook entries.
     apps_data : List[dict] | None
-        None. Default is None.
+        App metadata for rendering app entries.
+
     """
     logger.info("Generating index.html")
 
@@ -755,23 +762,20 @@ def _generate_index(
 def _export(folder: Path, output_dir: Path, as_app: bool = False) -> List[dict]:
     """Export all marimo notebooks in a folder to HTML/WebAssembly format.
 
-                This function finds all Python files in the specified folder and exports them
-                to HTML/WebAssembly format using the export_html_wasm function. It returns a
-                list of dictionaries containing the data needed for the template.
-
     Parameters
     ----------
     folder : Path
-        Folder.
+        Root folder scanned recursively for notebook scripts.
     output_dir : Path
-        Output dir.
+        Output root directory.
     as_app : bool
-        False. Default is False.
+        Whether to export files as apps (run mode). Default is ``False``.
 
     Returns
     -------
     List[dict]
-        List of export.
+        Metadata records for successfully exported notebooks.
+
     """
     # Check if the folder exists
     if not folder.exists():
@@ -816,25 +820,19 @@ def main(
     output_dir: Union[str, Path] = "_site",
     template: Union[str, Path] = "templates/tailwind.html.j2",
 ) -> None:
-    """Main function to export marimo notebooks.
+    """Export marimo notebooks.
 
-                This function:
-                1. Parses command line arguments
-                2. Exports all marimo notebooks in the 'notebooks' and 'apps' directories
-                3. For apps, automatically inlines modules from modules/ directories
-                4. Copies all public/ directories to the output directory
-                5. Generates an index.html file that lists all the notebooks
-
-                Command line arguments:
-                    --output-dir: Directory where the exported files will be saved (default: _site)
-                    --template: Path to the template file (default: templates/index.html.j2)
+    The build process exports notebooks and apps, copies ``public`` assets, and
+    renders the HTML index page.
 
     Parameters
     ----------
     output_dir : Union[str, Path]
-        Default is '_site'.
+        Output directory. Default is ``"_site"``.
     template : Union[str, Path]
-        Default is 'templates/tailwind.html.j2'.
+        Template path used for index generation.
+        Default is ``"templates/tailwind.html.j2"``.
+
     """
     logger.info("Starting marimo build process")
 

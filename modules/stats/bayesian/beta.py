@@ -1,5 +1,4 @@
-"""
-Beta distribution utilities for Bayesian inference.
+"""Beta distribution utilities for Bayesian inference.
 
 Provides computations for Beta posterior distributions including:
 - Posterior probabilities relative to thresholds
@@ -36,6 +35,7 @@ def posterior_probability_above(
     -------
     np.ndarray | float
         Posterior probabilities that ``theta`` is greater than ``threshold``.
+
     """
     a = np.maximum(np.asarray(alpha), 1e-6)
     b = np.maximum(np.asarray(beta), 1e-6)
@@ -63,6 +63,7 @@ def posterior_probability_below(
     -------
     np.ndarray | float
         Posterior probabilities that ``theta`` is less than ``threshold``.
+
     """
     a = np.maximum(np.asarray(alpha), 1e-6)
     b = np.maximum(np.asarray(beta), 1e-6)
@@ -96,6 +97,7 @@ def credible_interval(
     -------
     tuple[np.ndarray | float, np.ndarray | float]
         Lower and upper bounds of the equal-tailed credible interval.
+
     """
     a = np.maximum(np.asarray(alpha), 0.01)
     b = np.maximum(np.asarray(beta), 0.01)
@@ -122,6 +124,7 @@ def posterior_mean(
     -------
     np.ndarray | float
         Posterior mean values.
+
     """
     a = np.asarray(alpha)
     b = np.asarray(beta)
@@ -148,6 +151,7 @@ def posterior_mode(
     -------
     np.ndarray | float
         Posterior mode (MAP) estimates.
+
     """
     a = np.asarray(alpha)
     b = np.asarray(beta)
@@ -181,6 +185,7 @@ def posterior_variance(
     -------
     np.ndarray | float
         Posterior variance values.
+
     """
     a = np.asarray(alpha)
     b = np.asarray(beta)
@@ -205,6 +210,7 @@ def beta_prior_params(
     -------
     tuple[float, float]
         Prior parameters ``(alpha, beta)`` for the Beta distribution.
+
     """
     if not (0 < mean < 1):
         raise ValueError(f"mean must be in (0, 1), got {mean}")
@@ -243,6 +249,7 @@ def effective_sample_size(
     -------
     np.ndarray | float
         Effective sample size contributed by the observed data.
+
     """
     return (
         np.asarray(alpha_post)

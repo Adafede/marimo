@@ -40,6 +40,7 @@ def check_element_filters(formula: str, filters: FormulaFilters) -> bool:
     -------
     bool
         Result check element filters.
+
     """
     return all(
         not getattr(filters, attr).is_active()
@@ -67,6 +68,7 @@ def check_halogen_filters(formula: str, filters: FormulaFilters) -> bool:
     -------
     bool
         Result check halogen filters.
+
     """
     return all(
         match_halogen(
@@ -92,6 +94,7 @@ def match_filters(formula: str, filters: FormulaFilters) -> bool:
     -------
     bool
         Result match filters.
+
     """
     if not formula:
         return True

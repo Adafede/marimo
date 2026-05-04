@@ -19,6 +19,7 @@ class ElementRange:
         -------
         bool
             ``True`` if active; otherwise ``False``.
+
         """
         return self.min_val is not None or self.max_val is not None
 
@@ -34,6 +35,7 @@ class ElementRange:
         -------
         bool
             Result matches.
+
         """
         if not self.is_active():
             return True

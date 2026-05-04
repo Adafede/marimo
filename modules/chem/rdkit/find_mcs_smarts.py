@@ -20,6 +20,7 @@ def find_mcs_smarts(
     -------
     tuple[str | None, str | None]
         Tuple containing mcs smarts.
+
     """
     valid_mols = parse_many(smiles_list=smiles_list)
     return find_mcs(mols=valid_mols)

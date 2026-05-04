@@ -25,6 +25,7 @@ def select_best(
     -------
     tuple[str | None, bool, list[Any]]
         Tuple containing best.
+
     """
     if not matches:
         return None, False, []

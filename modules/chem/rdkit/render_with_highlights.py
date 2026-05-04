@@ -39,6 +39,7 @@ def render_with_highlights(
     -------
     str
         String representation of render with highlights.
+
     """
     return with_highlights(
         name=name,

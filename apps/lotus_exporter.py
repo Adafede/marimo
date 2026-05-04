@@ -9,8 +9,7 @@
 # output_max_bytes = 1_073_741_824
 # ///
 
-"""
-LOTUS Data Exporter
+"""LOTUS Data Exporter.
 
 Generates CSV/TSV files matching the Zenodo LOTUS data exports:
 - https://doi.org/10.5281/zenodo.5794106 (frozen.csv + frozen_metadata.csv)
@@ -365,7 +364,8 @@ with app.setup:
         verbose: bool = False,
     ) -> pl.DataFrame:
         """Drop rows where any critical structure field is null.
-                                These rows have no usable chemical data and should not be published.
+
+        These rows have no usable chemical data and should not be published.
 
         Parameters
         ----------
@@ -378,6 +378,7 @@ with app.setup:
         -------
         pl.DataFrame
             Input rows with missing critical structure fields removed.
+
         """
         before = len(df)
         mask = pl.all_horizontal(
@@ -394,12 +395,14 @@ with app.setup:
 
     def fetch_latest_zenodo_frozen() -> pl.DataFrame:
         """Fetch the latest frozen.csv from Zenodo to inherit manual_validation.
-                                Uses the Zenodo API to find the latest version and download frozen.csv.
+
+        Uses the Zenodo API to find the latest version and download frozen.csv.
 
         Returns
         -------
         pl.DataFrame
             Previously published ``frozen.csv`` records loaded from Zenodo.
+
         """
         import urllib.request
         import json
@@ -469,7 +472,8 @@ with app.setup:
         old_df: pl.DataFrame,
     ) -> pl.DataFrame:
         """Inherit manual_validation from previous version.
-                                Matches on structure_inchikey + organism_wikidata + reference_wikidata.
+
+        Matches on structure_inchikey + organism_wikidata + reference_wikidata.
 
         Parameters
         ----------
@@ -482,6 +486,7 @@ with app.setup:
         -------
         pl.DataFrame
             New dataset with ``manual_validation`` values inherited where keys match prior releases.
+
         """
         if len(old_df) == 0:
             return new_df
@@ -525,7 +530,8 @@ with app.setup:
         name: str,
     ) -> dict:
         """Compute changes between new and old versions.
-                                Returns dict with added, removed counts and samples.
+
+        Return a dictionary with added and removed counts and samples.
 
         Parameters
         ----------
@@ -542,6 +548,7 @@ with app.setup:
         -------
         dict
             Summary counts for added, removed, unchanged, and total records.
+
         """
         if len(old_df) == 0:
             return {
@@ -600,8 +607,8 @@ with app.setup:
             Changes.
         output_path : str
             Output path.
-        """
 
+        """
         with open(output_path, "w") as f:
             f.write("=" * 60 + "\n")
             f.write("LOTUS Data Export - Changes Report\n")
@@ -633,6 +640,7 @@ with app.setup:
         -------
         str
             URL (or original value).
+
         """
         if url and url.startswith(WIKIDATA_ENTITY_PREFIX):
             return url.replace(WIKIDATA_ENTITY_PREFIX, "")
@@ -655,6 +663,7 @@ with app.setup:
         -------
         pl.LazyFrame
             Polars frame.
+
         """
         csv_bytes = execute_with_retry(query, endpoint, timeout=600)
         if not csv_bytes or len(csv_bytes) < 10:
@@ -716,6 +725,7 @@ with app.setup:
         -------
         LOTUSExportData
             Bundle containing all fetched datasets required for export.
+
         """
         queries = [
             (
@@ -762,7 +772,8 @@ with app.setup:
 
     def fetch_npclassifier_cache(url: str | None = None) -> pl.DataFrame:
         """Fetch NPClassifier cache CSV from remote URL.
-                                Returns DataFrame with columns: smiles, pathway, superclass, class, isglycoside, error
+
+        Return columns: smiles, pathway, superclass, class, isglycoside, error.
 
         Parameters
         ----------
@@ -773,6 +784,7 @@ with app.setup:
         -------
         pl.DataFrame
             SMILES entry.
+
         """
         import urllib.request
 
@@ -797,7 +809,8 @@ with app.setup:
 
     def fetch_classyfire_cache(url: str | None = None) -> pl.DataFrame:
         """Fetch ClassyFire cache from remote URL or local file.
-                                Expected columns: inchikey, chemontid, kingdom, superclass, class, direct_parent
+
+        Expect columns: inchikey, chemontid, kingdom, superclass, class, direct_parent.
 
         Parameters
         ----------
@@ -808,6 +821,7 @@ with app.setup:
         -------
         pl.DataFrame
             InChIKey.
+
         """
 
         def _empty_classyfire_df() -> pl.DataFrame:
@@ -898,9 +912,10 @@ with app.setup:
 
     def fetch_ott_taxonomy_cache(url: str | None = None) -> pl.DataFrame:
         """Fetch Open Tree of Life (OTT) taxonomy cache from remote URL or local file.
-                                Expected columns: organism_name, organism_taxonomy_ottid, organism_taxonomy_01domain, etc.
 
-                                Maps to: organism_name, ott_id, domain, kingdom, phylum, class, order, family, tribe, genus, species, varietas
+        Expect columns: organism_name, organism_taxonomy_ottid, organism_taxonomy_01domain, etc.
+
+        Map to: organism_name, ott_id, domain, kingdom, phylum, class, order, family, tribe, genus, species, varietas.
 
         Parameters
         ----------
@@ -911,6 +926,7 @@ with app.setup:
         -------
         pl.DataFrame
             OTT taxonomy cache table mapped to the export taxonomy columns.
+
         """
         url = url or CONFIG.get("ott_cache_url")
         if not url:
@@ -1087,6 +1103,7 @@ with app.setup:
         -------
         pl.DataFrame
             RDKit-derived structure properties for valid input SMILES.
+
         """
         try:
             from rdkit import Chem
@@ -1211,6 +1228,7 @@ with app.setup:
         -------
         pl.DataFrame
             CIDs.
+
         """
         schema = {
             "cid": pl.Utf8,
@@ -1324,6 +1342,7 @@ with app.setup:
         -------
         pl.DataFrame
             InChIKeys.
+
         """
         schema = {
             "cid": pl.Utf8,
@@ -1434,6 +1453,7 @@ with app.setup:
         -------
         str | None
             ASCII digits.
+
         """
         if formula is None:
             return None
@@ -1451,6 +1471,7 @@ with app.setup:
         -------
         pl.DataFrame
             UTF-8 text values and blanks set to null.
+
         """
         utf8_cols = [name for name, dtype in df.schema.items() if dtype == pl.Utf8]
         if not utf8_cols:
@@ -1480,6 +1501,7 @@ with app.setup:
         -------
         pl.LazyFrame
             Wikidata entity prefixes removed from ``col``.
+
         """
         return lf.with_columns(
             pl.col(col)
@@ -1499,6 +1521,7 @@ with app.setup:
         -------
         pl.DataFrame
             DataFrame.
+
         """
         return cast(pl.DataFrame, lf.collect())
 
@@ -1514,6 +1537,7 @@ with app.setup:
         -------
         pl.LazyFrame
             QIDs for compound, taxon, and reference.
+
         """
         return (
             lf.pipe(extract_qids_from_lazyframe, "compound")
@@ -1565,6 +1589,7 @@ with app.setup:
         -------
         pl.DataFrame
             Final ``frozen.csv`` table in the expected publication schema.
+
         """
         # Join with taxon names
         result = compound_taxon_reference_df.join(
@@ -1655,6 +1680,7 @@ with app.setup:
         -------
         pl.DataFrame
             Final ``frozen_metadata.csv`` table in the legacy Zenodo format.
+
         """
         # Start with the triplets
         result = compound_taxon_reference_df.clone()
@@ -2288,6 +2314,7 @@ with app.setup:
 
 @app.cell
 def md_title():
+    """Render the application title."""
     mo.md("""
     # LOTUS Data Exporter
 
@@ -2306,6 +2333,7 @@ def md_title():
 
 @app.cell
 def wasm_warning():
+    """Show runtime limitations when running in WASM."""
     if IS_PYODIDE:
         mo.stop(
             True,
@@ -2331,6 +2359,7 @@ def wasm_warning():
 
 @app.cell
 def ui_controls():
+    """Render top-level execution controls."""
     run_button = mo.ui.run_button(label="Fetch Data from Wikidata")
     run_button
     return (run_button,)
@@ -2338,6 +2367,7 @@ def ui_controls():
 
 @app.cell
 def fetch_data(run_button):
+    """Fetch upstream data and construct export tables."""
     import time
 
     mo.stop(not run_button.value, mo.md("Click **Fetch Data from Wikidata** to start"))
@@ -2481,6 +2511,7 @@ def display_stats(
     pubchem_df,
     rdkit_df,
 ):
+    """Display summary statistics for fetched and enriched datasets."""
     mo.stop(data is None)
 
     # Collect stats
@@ -2541,6 +2572,7 @@ def display_stats(
 
 @app.cell
 def footer():
+    """Render footer links and attribution text."""
     mo.md("""
     ---
     **Data:**

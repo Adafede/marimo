@@ -30,6 +30,7 @@ def svg_from_mol(
     -------
     str
         String representation of svg from mol.
+
     """
     if mol is None:
         return ""

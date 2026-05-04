@@ -7,8 +7,7 @@
 # ]
 # ///
 
-"""
-Wikidata Connector
+"""Wikidata Connector.
 
 Copyright (C) 2026 Adriano Rutz
 
@@ -123,6 +122,7 @@ with app.setup:
         -------
         list[dict]
             SPARQL variable name.
+
         """
         r = requests.post(
             QLEVER_ENDPOINT,
@@ -154,6 +154,7 @@ with app.setup:
         -------
         dict[str, str]
             QID.
+
         """
         if not entities:
             return {}
@@ -182,6 +183,7 @@ with app.setup:
         -------
         dict[str, str]
             PID.
+
         """
         if not pids:
             return {}
@@ -209,6 +211,7 @@ with app.setup:
         excluded_props: set[str],
     ) -> nx.Graph:
         """Fast multi-source BFS: expand from ALL terminals at once.
+
         Two SPARQL queries per depth level (outgoing + incoming). Returns Steiner tree.
 
         Parameters
@@ -226,6 +229,7 @@ with app.setup:
         -------
         nx.Graph
             Steiner-like connector graph spanning the reachable terminal nodes; edge metadata includes the linking property identifier.
+
         """
         terminal_set = set(terminals)
         blocklist_set = set(blocklist)

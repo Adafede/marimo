@@ -19,6 +19,7 @@ def extract_from_url(url: str | None, prefix: str = ENTITY_PREFIX) -> str | None
     -------
     str | None
         Extracted from url.
+
     """
     if url is None:
         return None

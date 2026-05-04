@@ -1,5 +1,4 @@
-"""
-Classical statistics for 2×2 contingency tables.
+"""Classical statistics for 2×2 contingency tables.
 
 Provides diagnostic metrics like sensitivity, specificity, precision, etc.
 """
@@ -31,6 +30,7 @@ def sensitivity(
     -------
     np.ndarray | float
         Sensitivity values clipped to the interval ``[0, 1]``.
+
     """
     numerator = np.asarray(a, dtype=np.float32)
     denominator = (
@@ -65,6 +65,7 @@ def specificity(
     -------
     np.ndarray | float
         Specificity values clipped to the interval ``[0, 1]``.
+
     """
     numerator = np.asarray(d, dtype=np.float32)
     denominator = (
@@ -99,6 +100,7 @@ def precision(
     -------
     np.ndarray | float
         Precision values clipped to the interval ``[0, 1]``.
+
     """
     numerator = np.asarray(a, dtype=np.float32)
     denominator = (
@@ -133,6 +135,7 @@ def false_positive_rate(
     -------
     np.ndarray | float
         False-positive-rate values clipped to the interval ``[0, 1]``.
+
     """
     numerator = np.asarray(b, dtype=np.float32)
     denominator = (
@@ -167,6 +170,7 @@ def false_negative_rate(
     -------
     np.ndarray | float
         False-negative-rate values clipped to the interval ``[0, 1]``.
+
     """
     numerator = np.asarray(c, dtype=np.float32)
     denominator = (
@@ -217,6 +221,7 @@ def likelihood_ratio_positive(
     -------
     np.ndarray | float
         Positive likelihood ratio (LR+) values.
+
     """
     if sens is not None and fpr is not None:
         s = np.asarray(sens)
@@ -266,6 +271,7 @@ def likelihood_ratio_negative(
     -------
     np.ndarray | float
         Negative likelihood ratio (LR-) values.
+
     """
     if sens is not None and spec is not None:
         fnr = 1 - np.asarray(sens)
@@ -310,6 +316,7 @@ def f1_score(
     -------
     np.ndarray | float
         F1 score values.
+
     """
     if prec is not None and sens is not None:
         p = np.asarray(prec)
@@ -349,6 +356,7 @@ def contingency_stats(
     -------
     dict[str, np.ndarray | float]
         LR+, LR-, and F1 metrics.
+
     """
     sens = sensitivity(a, c, continuity_correction)
     spec = specificity(b, d, continuity_correction)

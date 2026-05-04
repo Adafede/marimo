@@ -29,6 +29,7 @@ def parse_sparql_response(response_bytes: bytes) -> pl.LazyFrame:
     -------
     pl.LazyFrame
         LazyFrame containing sparql response.
+
     """
     if not response_bytes:
         return pl.DataFrame().lazy()

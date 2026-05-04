@@ -39,6 +39,7 @@ def filter_range(
     -------
     pl.DataFrame
         DataFrame containing range.
+
     """
     if df.is_empty():
         return df
