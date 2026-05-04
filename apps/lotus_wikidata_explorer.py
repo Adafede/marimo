@@ -2795,6 +2795,7 @@ def execute_search(
     year_start,
 ):
     """Execute search workflow and return query outputs."""
+
     def _backend_error_callout(
         context: str,
         exc: Exception,
