@@ -1,2 +1,1 @@
 """RDKit integration helpers."""
-

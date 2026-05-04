@@ -1,2 +1,1 @@
 """RDKit SMILES parsing helpers."""
-

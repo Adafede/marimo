@@ -1,2 +1,1 @@
 """Wikidata entity identifier helpers."""
-

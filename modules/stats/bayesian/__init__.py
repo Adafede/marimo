@@ -1,2 +1,1 @@
 """Bayesian statistics helpers."""
-

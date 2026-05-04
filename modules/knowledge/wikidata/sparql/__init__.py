@@ -1,2 +1,1 @@
 """Wikidata SPARQL query builders."""
-

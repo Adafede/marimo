@@ -1,2 +1,1 @@
 """Wikidata taxon resolution helpers."""
-

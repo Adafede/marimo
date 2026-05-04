@@ -1,2 +1,1 @@
 """RDF utilities."""
-

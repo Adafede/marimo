@@ -1,2 +1,1 @@
 """Color conversion helpers."""
-

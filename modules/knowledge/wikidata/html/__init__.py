@@ -1,2 +1,1 @@
 """Wikidata HTML rendering helpers."""
-

@@ -1,2 +1,1 @@
 """Indigo-based depiction helpers."""
-

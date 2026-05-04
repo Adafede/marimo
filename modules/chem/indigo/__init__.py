@@ -1,2 +1,1 @@
 """Indigo toolkit integration helpers."""
-

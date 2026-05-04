@@ -1,2 +1,1 @@
 """Indigo molecule construction helpers."""
-
