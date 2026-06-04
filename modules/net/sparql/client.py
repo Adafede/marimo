@@ -1,0 +1,101 @@
+"""SPARQL HTTP client class."""
+
+__all__ = ["Client"]
+
+import sys
+import urllib.parse
+import urllib.request
+
+if "pyodide" in sys.modules:
+    import pyodide_http
+
+    pyodide_http.patch_all()
+
+
+class Client:
+    """Simple SPARQL client using urllib."""
+
+    def __init__(
+        self,
+        endpoint: str,
+        timeout: int = 120,
+        user_agent: str = "adafedemarimo/1.0",
+    ):
+        """Initialize a SPARQL HTTP client.
+
+        Parameters
+        ----------
+        endpoint : str
+            SPARQL endpoint URL.
+        timeout : int
+            Request timeout in seconds.
+        user_agent : str
+            User-Agent header value sent with requests.
+
+        """
+        self.endpoint = endpoint
+        self.timeout = timeout
+        self.user_agent = user_agent
+
+    def _request(self, query: str, accept: str) -> bytes:
+        """Execute HTTP request to SPARQL endpoint.
+
+        Parameters
+        ----------
+        query : str
+            Query.
+        accept : str
+            Accept.
+
+        Returns
+        -------
+        bytes
+            Result request.
+
+        """
+        headers = {
+            "Accept": accept,
+            "Content-Type": "application/x-www-form-urlencoded",
+            "User-Agent": self.user_agent,
+        }
+        data = urllib.parse.urlencode(query={"query": query}).encode(encoding="utf-8")
+        req = urllib.request.Request(
+            url=self.endpoint,
+            data=data,
+            headers=headers,
+            method="POST",
+        )
+        with urllib.request.urlopen(url=req, timeout=self.timeout) as response:
+            return response.read()
+
+    def query_csv(self, query: str) -> bytes:
+        """Execute query returning CSV bytes.
+
+        Parameters
+        ----------
+        query : str
+            Query.
+
+        Returns
+        -------
+        bytes
+            Result query csv.
+
+        """
+        return self._request(query, "text/csv")
+
+    def query_json(self, query: str) -> bytes:
+        """Execute query returning JSON bytes.
+
+        Parameters
+        ----------
+        query : str
+            Query.
+
+        Returns
+        -------
+        bytes
+            Result query json.
+
+        """
+        return self._request(query, "application/sparql-results+json")

@@ -1,0 +1,136 @@
+"""Serialize FormulaFilters to dictionary."""
+
+__all__ = ["serialize_filters"]
+
+from typing import Any
+
+from .filters import FormulaFilters
+from .serialize_range import serialize_range
+
+DEFAULT_ELEMENT_NAMES: dict[str, str] = {
+    "c": "carbon",
+    "h": "hydrogen",
+    "n": "nitrogen",
+    "o": "oxygen",
+    "p": "phosphorus",
+    "s": "sulfur",
+}
+
+DEFAULT_HALOGEN_NAMES: dict[str, str] = {
+    "f": "fluorine",
+    "cl": "chlorine",
+    "br": "bromine",
+    "i": "iodine",
+}
+
+# Element filter configuration: (key, attribute_name)
+ELEMENT_ATTRS = (
+    ("c", "c"),
+    ("h", "h"),
+    ("n", "n"),
+    ("o", "o"),
+    ("p", "p"),
+    ("s", "s"),
+)
+
+# Halogen filter configuration: (key, attribute_name)
+HALOGEN_ATTRS = (
+    ("f", "f_state"),
+    ("cl", "cl_state"),
+    ("br", "br_state"),
+    ("i", "i_state"),
+)
+
+
+def serialize_elements(
+    filters: FormulaFilters,
+    element_names: dict[str, str],
+) -> dict[str, dict[str, int | None]]:
+    """Serialize element range filters to dictionary.
+
+    Parameters
+    ----------
+    filters : FormulaFilters
+        Filters.
+    element_names : dict[str, str]
+        Element names.
+
+    Returns
+    -------
+    dict[str, dict[str, int | None]]
+        Dictionary containing serialize elements.
+
+    """
+    return {
+        element_names.get(key, key): range_dict
+        for key, attr in ELEMENT_ATTRS
+        if (range_dict := serialize_range(element_range=getattr(filters, attr)))
+    }
+
+
+def serialize_halogens(
+    filters: FormulaFilters,
+    halogen_names: dict[str, str],
+) -> dict[str, str]:
+    """Serialize active halogen filters to dictionary.
+
+    Parameters
+    ----------
+    filters : FormulaFilters
+        Filters.
+    halogen_names : dict[str, str]
+        Halogen names.
+
+    Returns
+    -------
+    dict[str, str]
+        Dictionary containing serialize halogens.
+
+    """
+    return {
+        halogen_names.get(key, key): getattr(filters, attr)
+        for key, attr in HALOGEN_ATTRS
+        if getattr(filters, attr) != "allowed"
+    }
+
+
+def serialize_filters(
+    filters: FormulaFilters | None,
+    element_names: dict[str, str] | None = None,
+    halogen_names: dict[str, str] | None = None,
+) -> dict[str, Any] | None:
+    """Convert FormulaFilters to dictionary for metadata export.
+
+    Parameters
+    ----------
+    filters : FormulaFilters | None
+        Filters.
+    element_names : dict[str, str] | None
+        None. Default is None.
+    halogen_names : dict[str, str] | None
+        None. Default is None.
+
+    Returns
+    -------
+    dict[str, Any] | None
+        Dictionary containing serialize filters.
+
+    """
+    if not filters or not filters.is_active():
+        return None
+
+    element_names = element_names or DEFAULT_ELEMENT_NAMES
+    halogen_names = halogen_names or DEFAULT_HALOGEN_NAMES
+
+    result: dict[str, Any] = {}
+
+    if filters.exact_formula and filters.exact_formula.strip():
+        result["exact_formula"] = filters.exact_formula.strip()
+
+    result.update(serialize_elements(filters=filters, element_names=element_names))
+
+    active_halogens = serialize_elements(filters=filters, element_names=halogen_names)
+    if active_halogens:
+        result["halogens"] = active_halogens
+
+    return result if result else None

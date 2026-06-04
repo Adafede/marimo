@@ -1,0 +1,4 @@
+[default.extend-words]
+# FPR = False Positive Rate (standard statistics terminology)
+FPR = "FPR"
+fpr = "fpr"

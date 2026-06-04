@@ -1,0 +1,29 @@
+---
+on:
+  push:
+    branches: ['main']
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: codeberg-small
+    container:
+      image: ghcr.io/mcanouil/quarto-codespaces:latest
+    steps:
+      - uses: https://github.com/actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Build
+        run: |
+          uv run .github/scripts/build.py
+
+      # This is only done on Codeberg but we still need the GitHub hosted files (128MB limit)
+      - name: Cleanup
+        run: |
+          rm -f _site/apps/public/mortar/*.csv
+          rm -f _site/apps/public/mortar/*.smi
+
+      - uses: actions/git-pages@v2
+        with:
+          site: https://adafede.codeberg.page/marimo
+          token: ${{ forge.token }}
+          source: _site/

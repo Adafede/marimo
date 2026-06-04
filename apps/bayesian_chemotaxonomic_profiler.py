@@ -1,0 +1,3251 @@
+# /// script
+# requires-python = "==3.13.*"
+# dependencies = [
+#     "aiohttp==3.13.5",
+#     "altair==6.0.0",
+#     "cmcrameri==1.9",
+#     "marimo",
+#     "numpy==2.4.4",
+#     "polars==1.39.3",
+#     "pyarrow==23.0.1",
+#     "requests==2.33.1",
+#     "scipy==1.17.1",
+#     "simple-parsing==0.1.8",
+#     # "vegafusion==2.0.3",
+#     # "vl-convert-python==1.9.0.post1",
+# ]
+# ///
+"""Bayesian Chemotaxonomic Scaffold Discovery.
+
+Discover scaffold-taxon associations while accounting for sampling bias.
+
+===========================================================================
+FOR NON-STATISTICIANS: What This Tool Does
+===========================================================================
+
+QUESTION: "Is this chemical scaffold PRACTICALLY enriched in this taxon?"
+
+CHALLENGE: Our data is extremely sparse:
+- Only a very small number of known taxa have any chemistry reported
+- Most studied taxa have only 3-5 compounds reported
+- Most compounds are known from only 1-2 species
+
+NAIVE APPROACH (wrong): Count how many taxa have the scaffold vs don't.
+→ Problem: This treats "unstudied" as "doesn't have it", which is unfair.
+
+OUR APPROACH: Bayesian inference with ROPE-based decision-making
+1. Only count INVESTIGATED taxa as evidence
+2. Weight observations by phylogenetic diversity (5 species from 1 genus < 3 species from different phyla)
+3. Use 89% credible intervals following Kruschke (2015)
+4. Use ROPE (Region of Practical Equivalence) for decisions
+
+===========================================================================
+KEY CONCEPTS
+===========================================================================
+
+ROPE (Region of Practical Equivalence)
+--------------------------------------
+Instead of asking "is the effect different from zero?" (point-null), ROPE
+asks "is the effect PRACTICALLY different from baseline?"
+
+ROPE = [-ε, +ε] on log₂ fold-change scale (default ε = 0.1)
+This means fold-changes between 0.93× and 1.07× are "no practical effect"
+
+DECISIONS:
+- enriched:   CI entirely above +ε → practically enriched
+- depleted:   CI entirely below -ε → practically depleted
+- equivalent: CI entirely within ROPE → no practical difference
+- undecided:  CI overlaps ROPE boundaries → need more data
+
+Credible Interval (CI)
+----------------------
+We use 89% CI following Kruschke (2015):
+- 89% is a prime number, reminding us the choice is arbitrary
+- 95% is a frequentist convention with no Bayesian justification
+- We compute equal-tailed intervals, which equal HDI for symmetric distributions
+
+ESS (Effective Sample Size)
+---------------------------
+ESS = (α_post + β_post) - (α_prior + β_prior)
+Measures how much the data contributed beyond the prior.
+ESS < 3 indicates insufficient data for reliable inference.
+
+n_eff_phylo (Phylogenetic Effective Taxa)
+-----------------------------------------
+Accounts for phylogenetic non-independence between source organisms.
+Formula: n_eff = n² / Σᵢⱼ similarity(dᵢⱼ)
+where similarity(d) = exp(-decay_rate × d) and d = taxonomic distance.
+- 5 sister species (same genus): n_eff ≈ 2.5
+- 5 species from different families: n_eff ≈ 4.5
+- 3 species from different phyla: n_eff ≈ 3.0
+This rewards finding compounds in phylogenetically diverse organisms.
+
+===========================================================================
+
+Model
+-----
+Prior:     Beta(θ₀λ, (1-θ₀)λ) centered on scaffold's observed frequency
+Posterior: Beta(α₀ + a_eff, β₀ + c_eff)
+Decision:  Based on CI position relative to ROPE
+
+References
+----------
+- John K. Kruschke (2015) Doing Bayesian Data Analysis (Second Edition). Academic Press. https://doi.org/10.1016/B978-0-12-405888-0.00001-5
+- Gelman et al. (2008) A weakly informative default prior distribution for logistic and other regression models. The Annals of Applied Statistics. 2(4):1360-1383. https://doi.org/10.1214/08-AOAS191
+- Rutz et al. (2022) The LOTUS initiative for open knowledge management in natural products research. eLife 11:e70780. https://doi.org/10.7554/eLife.70780
+
+
+Copyright (C) 2026 Adriano Rutz
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as published
+by the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+"""
+
+import marimo
+
+__generated_with = "0.23.0"
+app = marimo.App(width="medium", app_title="Bayesian Chemotaxonomic Markers")
+
+with app.setup:
+    import gc
+    import logging
+    import os
+    import sys
+    import tempfile
+    import time
+    from typing import Iterable, Final, Literal, TypedDict
+
+    import altair as alt
+    import marimo as mo
+    import numpy as np
+    import polars as pl
+    from scipy.special import betainc, betaincinv
+    from urllib.parse import quote
+
+    _USE_LOCAL = True
+    if _USE_LOCAL:
+        sys.path.insert(0, ".")
+
+    from modules.chem.cdk.depict.svg_from_smiles import svg_from_smiles
+    from modules.knowledge.wikidata.taxon.ranks import get_rank_label, get_rank_order
+    from modules.net.sparql.execute_with_retry import execute_with_retry
+    from modules.net.sparql.parse_response import parse_sparql_response
+
+    # alt.data_transformers.enable("vegafusion")
+
+    # Patch urllib for Pyodide/WASM (browser) compatibility
+    IS_PYODIDE = "pyodide" in sys.modules
+    if IS_PYODIDE:
+        import pyodide_http
+
+        pyodide_http.patch_all()
+
+    class StatisticalConstantsDict(TypedDict):
+        """Core statistical constants used throughout the analysis."""
+
+        # Laplace smoothing for ratio computation
+        continuity_correction: float
+        # Minimum baseline rate to prevent numerical issues
+        min_theta_0: float
+        # Credible interval probability mass (89% following Kruschke 2015)
+        ci_prob: float
+        # ROPE half-width on log2 fold-change scale
+        rope_half_width: float
+        # Minimum effective sample size for reliable inference
+        min_ess: int
+        # Phylogenetic distance decay rate for independence weighting
+        # Higher values = faster decay (close relatives contribute less)
+        phylo_decay_rate: float
+
+    class FilteringThresholdsDict(TypedDict):
+        """Minimal filtering thresholds for feature and group inclusion."""
+
+        # Minimum compounds required for a scaffold to be analyzed
+        min_frequency_scaffold: int
+        # Minimum compounds required for a taxon to be analyzed
+        min_frequency_taxa: int
+        # Whether to include full compounds as scaffolds
+        include_compounds_as_scaffolds: bool
+
+    class BayesianPriorsDict(TypedDict):
+        """Bayesian prior parameters for enrichment analysis."""
+
+        # Prior strength λ (pseudo-observation count)
+        prior_strength: float
+        # Enable hierarchical prior flow from parent to child taxa
+        hierarchical_prior_flow: bool
+        # Weight for parent posterior in hierarchical prior (0-1)
+        hierarchical_weight: float
+
+    class DataPathsDict(TypedDict):
+        """File paths for input data."""
+
+        path_can_smi: str
+        path_frags_cdk: str
+        path_frags_ert: str
+        path_frags_sru: str
+        path_items_cdk: str
+        path_items_ert: str
+        path_items_sru: str
+
+    class EnrichmentConfigDict(TypedDict):
+        """Complete configuration for chemotaxonomic enrichment analysis."""
+
+        # SPARQL endpoint
+        qlever_endpoint: str
+        # Data paths
+        data_paths: DataPathsDict
+        # Statistical constants
+        stats: StatisticalConstantsDict
+        # Filtering thresholds
+        filtering: FilteringThresholdsDict
+        # Bayesian priors
+        priors: BayesianPriorsDict
+
+    # ========================================================================
+    # STATISTICAL CONSTANTS
+    # ========================================================================
+    # All "magic numbers" are defined here for transparency and easy adjustment.
+
+    # CONTINUITY_CORRECTION = 0.5 (Laplace smoothing)
+    # ------------------------------------------------
+    # When computing ratios like sensitivity = a/(a+c), we add 0.5 to avoid
+    # division by zero and extreme values from small samples. This is
+    # "Laplace smoothing" or "add-half" correction.
+    # Value of 0.5 is conventional (Agresti & Coull, 1998)
+    # https://doi.org/10.1080/00031305.1998.10480550
+
+    # MIN_THETA_0 = 1e-6 (Baseline floor)
+    # -----------------------------------
+    # The baseline rate θ₀ is the scaffold's observed frequency. For extremely
+    # rare scaffolds, this could approach zero, causing numerical issues.
+    # Floor of 1e-6 (0.0001%) prevents division by zero.
+
+    # CI_PROB = 0.89 (Credible Interval probability mass)
+    # --------------------------------------------------
+    # Following Kruschke (2015):
+    # - 89% is a prime number, reminding us the choice is arbitrary
+    # - 95% is a frequentist convention with no Bayesian justification
+    # We compute Equal-Tailed Intervals (ETI), which equal HDI for symmetric
+    # distributions and are a close approximation for moderately skewed ones.
+
+    # ROPE_HALF_WIDTH = 0.1 (Region of Practical Equivalence)
+    # -------------------------------------------------------
+    # ROPE defines "practically equivalent to baseline" as [θ₀ - ε, θ₀ + ε].
+    # Default ε = 0.1 means ±10% on log2 scale is considered "no meaningful effect".
+    #
+    # Example: If baseline θ₀ = 0.05 (5%), ROPE is [0.04, 0.06] on log2 scale.
+    # A posterior entirely above ROPE → practically enriched.
+    # A posterior overlapping ROPE → undecided.
+    # A posterior entirely below ROPE → practically depleted.
+    #
+    # The value 0.1 (≈ ±0.14 log2 fold-change) follows Cohen's "small effect"
+    # convention adapted to proportions. Adjust based on domain knowledge.
+
+    # MIN_ESS = 3 (Minimum Effective Sample Size for "reliable" inference)
+    # --------------------------------------------------------------------
+    # The "rule of three": with fewer than 3 observations, we cannot reliably
+    # distinguish signal from noise. This is NOT arbitrary:
+    # - With n=1, any binary outcome has 100% frequency
+    # - With n=2, we can only observe 0%, 50%, or 100%
+    # - With n=3, we start to see meaningful variation
+    # This threshold flags results as "needs more data" rather than filtering.
+
+    # PHYLO_DECAY_RATE = 0.5 (Phylogenetic Independence Decay)
+    # --------------------------------------------------------
+    # Controls how quickly phylogenetic similarity decays with taxonomic
+    # distance. Used to compute effective independent taxa count.
+    #
+    # Formula: similarity(d) = exp(-decay_rate × d)
+    # where d = taxonomic distance (number of ranks separating two taxa)
+    #
+    # With decay_rate = 0.5:
+    # - Same species (d=0): similarity = 1.0 (fully correlated)
+    # - 1 rank apart (d=1): similarity = 0.61 (e.g., same genus)
+    # - 2 ranks apart (d=2): similarity = 0.37 (e.g., same family)
+    # - 4 ranks apart (d=4): similarity = 0.14 (e.g., same order)
+    # - 6 ranks apart (d=6): similarity = 0.05 (essentially independent)
+    #
+    # The effective independent taxa count (n_eff) is computed as:
+    #   n_eff = n² / Σᵢⱼ similarity(dᵢⱼ)
+    #
+    # This is the phylogenetic analog of Kish's effective sample size.
+    # When all taxa are identical: n_eff = 1
+    # When all taxa are fully independent: n_eff = n
+
+    STATISTICAL_CONSTANTS: Final[StatisticalConstantsDict] = {
+        "continuity_correction": 0.5,
+        "min_theta_0": 1e-6,
+        "ci_prob": 0.89,
+        "rope_half_width": 0.1,
+        "min_ess": 3,
+        "phylo_decay_rate": 0.5,
+    }
+
+    # ====================================================================
+    # FILTERING THRESHOLDS
+    # ====================================================================
+    # We use MINIMAL filtering to let the Bayesian model handle edge cases.
+    # The model naturally assigns low confidence (wide CI) to poorly-sampled
+    # cases, so aggressive pre-filtering would just lose information.
+
+    # min_frequency_scaffold = 2: Require scaffold in ≥2 compounds
+    # Why 2? A scaffold appearing in only 1 compound gives no statistical
+    # power - we can't distinguish "enriched" from "noise" with n=1.
+
+    # min_frequency_taxa = 2: Require taxon to have ≥2 compounds reported
+    # Same reasoning: with only 1 compound, any scaffold is either 100% or 0%
+    # present, which is meaningless for enrichment analysis.
+
+    FILTERING_THRESHOLDS: Final[FilteringThresholdsDict] = {
+        "min_frequency_scaffold": 2,
+        "min_frequency_taxa": 2,
+        "include_compounds_as_scaffolds": True,
+    }
+
+    # ====================================================================
+    # BAYESIAN PRIOR PARAMETERS
+    # ====================================================================
+    #
+    # PRIOR STRENGTH (λ) = 1.0: How much weight does our prior belief get?
+    # --------------------------------------------------------------------
+    # Think of this as "pseudo-observations" from prior knowledge.
+    # λ=1 means the prior contributes roughly 1 pseudo-observation.
+    #
+    # Why 1 and not 5, 10, or 20?
+    # - λ=1 is a "weakly informative" prior (Gelman et al., 2008)
+    # - With λ=1, a single real observation already outweighs the prior
+    # - This is appropriate for our sparse data where most taxa have
+    #   only 1-5 compounds reported
+    # - Higher values (5, 10) would require more data to "overcome" the
+    #   prior, making small but real signals harder to detect
+    #
+    # We initially tested λ=5 (a common default) but found it:
+    # - Required 5+ observations to show significant enrichment
+    # - Suppressed real signals in genera with only 2-3 compounds
+    # - For our SPARSE data, this was too conservative
+    #
+    # We also tested "adaptive priors" that scaled λ with scaffold frequency
+    # (e.g., λ = base × log₂(total+1), capped at 20) but found:
+    # - Ubiquitous scaffolds got λ≈15-20, overwhelming small sample signals
+    # - The cap of 20 was arbitrary with no principled justification
+    # - The true Bayesian P(θ>θ₀) formula already handles ubiquitous
+    #   scaffolds correctly via the high θ₀ baseline
+    #
+    # CONCLUSION: Use constant λ=1, let θ₀ handle ubiquity naturally.
+
+    # HIERARCHICAL PRIOR FLOW: Should child taxa inherit parent information?
+    # --------------------------------------------------------------------
+    # When True, priors at lower ranks (Genus, Species) are influenced by
+    # posteriors at higher ranks (Family, Order).
+    #
+    # INTERPRETATION: All comparisons are against the GLOBAL baseline θ₀.
+    # - If a scaffold is enriched in Gentianaceae vs the dataset,
+    #   it's MORE likely to be enriched in Gentiana vs the dataset.
+    # - NOT testing "enriched in Gentiana vs other Gentianaceae genera"
+    #
+    # The prior center becomes:
+    #   prior_center = w × parent_posterior + (1-w) × θ₀
+    #
+    # This provides gentle guidance: "Your parent family is enriched, so you
+    # (child genus) are slightly more likely to be enriched too, but your
+    # own data will dominate."
+
+    # HIERARCHICAL WEIGHT (w) = 0.1: How much does parent influence child?
+    # -------------------------------------------------------------------
+    # The prior center for a child taxon is:
+    #   prior_center = w × parent_posterior + (1-w) × global_baseline
+    #
+    # With w=0.1:
+    # - 90% of the prior comes from global baseline (the scaffold's frequency)
+    # - 10% comes from the parent taxon's posterior
+    #
+    # Why 0.1 (10%) and not 0.5 (50%)?
+    # - We want the CHILD'S OWN DATA to dominate, not the parent's
+    # - Parent information is a gentle nudge, not a strong constraint
+    # - Higher values would make it hard for a genus to show different
+    #   enrichment than its family, even with strong evidence
+    # - 0.1 is a common choice for "weak shrinkage" in hierarchical models
+
+    BAYESIAN_PRIORS: Final[BayesianPriorsDict] = {
+        "prior_strength": 1.0,
+        "hierarchical_prior_flow": True,
+        "hierarchical_weight": 0.1,
+    }
+
+    # ====================================================================
+    # DEFAULT DATA PATHS
+    # ====================================================================
+    # The base URL where your files are hosted
+    REMOTE_BASE_URL = (
+        "https://github.com/Adafede/marimo/raw/refs/heads/main/apps/public/mortar"
+    )
+    LOCAL_BASE_PATH = "apps/public/mortar"
+    PROXY = "https://corsproxy.marimo.app/"
+
+    def get_data_path(filename: str) -> str:
+        """Return local path or proxied remote URL depending on _USE_LOCAL.
+
+        Parameters
+        ----------
+        filename : str
+            Filename.
+
+        Returns
+        -------
+        str
+            String representation of data path.
+
+        """
+        if _USE_LOCAL:
+            return f"{LOCAL_BASE_PATH}/{filename}"
+        else:
+            return f"{PROXY}{REMOTE_BASE_URL}/{filename}"
+
+    DEFAULT_DATA_PATHS: Final[DataPathsDict] = {
+        "path_can_smi": get_data_path("lotus_canonical.smi"),
+        "path_frags_cdk": get_data_path("Fragments_Scaffold_Generator.csv"),
+        "path_frags_ert": get_data_path("Fragments_Ertl_algorithm.csv"),
+        "path_frags_sru": get_data_path("Fragments_Sugar_Removal_Utility.csv"),
+        "path_items_cdk": get_data_path("Items_Scaffold_Generator.csv"),
+        "path_items_ert": get_data_path("Items_Ertl_algorithm.csv"),
+        "path_items_sru": get_data_path("Items_Sugar_Removal_Utility.csv"),
+    }
+
+    # ====================================================================
+    # COMPLETE DEFAULT CONFIGURATION
+    # ====================================================================
+
+    DEFAULT_CONFIG: Final[EnrichmentConfigDict] = {
+        "qlever_endpoint": "https://qlever.dev/api/wikidata",
+        "data_paths": DEFAULT_DATA_PATHS,
+        "stats": STATISTICAL_CONSTANTS,
+        "filtering": FILTERING_THRESHOLDS,
+        "priors": BAYESIAN_PRIORS,
+    }
+    STANDARD_RANKS = [
+        "Kingdom",
+        "Phylum",
+        "Class",
+        "Order",
+        "Family",
+        "Genus",
+        "Species",
+    ]
+    FOCAL_RANKS = ["Kingdom", "Order", "Family", "Genus"]
+
+    MIN_OBS = 3
+    MIN_PROB = 0.89
+    MIN_LOG2FC = 1.5
+    MIN_ESS = 3
+
+    TOP_N_TAXA = 10
+    TOP_N_MARKERS_PER_TAXON = 10
+
+
+@app.function
+def write_parquet_stream(
+    df: pl.DataFrame,
+    path: str,
+    compression: Literal[
+        "lz4",
+        "uncompressed",
+        "snappy",
+        "gzip",
+        "brotli",
+        "zstd",
+    ] = "snappy",
+    row_group_size: int = 2000,
+) -> None:
+    """Write a Polars DataFrame to Parquet in a memory-friendly way.
+
+                Strategy:
+                - Write the DataFrame in small row-group slices and convert each slice
+                  to Arrow separately to avoid building one large Arrow Table in memory.
+                - If pyarrow is not available or fails, fall back to Polars' writer.
+                - Handles empty DataFrames safely.
+
+    Parameters
+    ----------
+    df : pl.DataFrame
+        Df.
+    path : str
+        Path.
+    compression : Literal['lz4', 'uncompressed', 'snappy', 'gzip', 'brotli', 'zstd']
+        Default is 'snappy'.
+    row_group_size : int
+        Default is 2000.
+
+    """
+    # Fast-path for empty frames
+    try:
+        if df is None or df.is_empty():
+            df.write_parquet(path, compression=compression)
+            return
+    except Exception:
+        # Continue to robust writer if emptiness cannot be determined
+        pass
+
+    try:
+        import pyarrow.parquet as pq
+
+        total = int(df.height)
+        # Write first chunk to establish schema
+        first_end = min(row_group_size, total)
+        first_chunk = df[0:first_end]
+        first_table = first_chunk.to_arrow()
+
+        with pq.ParquetWriter(
+            path,
+            first_table.schema,
+            compression=compression,
+        ) as writer:
+            writer.write_table(first_table)
+
+            for start in range(first_end, total, row_group_size):
+                end = min(start + row_group_size, total)
+                chunk = df[start:end]
+                if chunk.is_empty():
+                    continue
+                writer.write_table(chunk.to_arrow())
+
+        return
+    except Exception:
+        # Best-effort fallbacks using Polars' writer
+        try:
+            df.write_parquet(path, compression=compression)
+            return
+        except Exception:
+            df.write_parquet(path, compression="uncompressed")
+            return
+
+
+@app.function
+def smiles_to_img_urls(smiles_list):
+    q = quote  # local binding = faster
+    base = "https://www.simolecule.com/cdkdepict/depict/cow/svg"
+
+    return [f"{base}?smi={q(s)}" for s in smiles_list]
+
+
+@app.function
+def smiles_to_thumbs(smiles_list, size: int = 120):
+    urls = smiles_to_img_urls(smiles_list)
+    return [mo.image(src=url, width=size, height=size) for url in urls]
+
+
+@app.function
+def validate_columns(
+    df: pl.DataFrame,
+    required: Iterable[str],
+    name: str,
+) -> pl.DataFrame:
+    """Validate dataframe has required columns with helpful error messages.
+
+    Parameters
+    ----------
+    df : pl.DataFrame
+        Df.
+    required : Iterable[str]
+        Required.
+    name : str
+        Name.
+
+    Returns
+    -------
+    pl.DataFrame
+        DataFrame containing validate columns.
+
+    """
+    if df is None or df.is_empty():
+        logging.warning(f"{name}: Empty dataframe")
+        return df
+    missing = set(required) - set(df.columns)
+    if missing:
+        raise ValueError(
+            f"{name}: Missing columns {sorted(missing)}\n"
+            f"  Available: {sorted(df.columns)}\n"
+            f"  Required: {sorted(required)}",
+        )
+    logging.debug(f"{name}: ✓ {df.height:,} rows")
+    return df
+
+
+@app.function
+def read_table(
+    path: str,
+    separator: str = ",",
+    expected: Iterable[str] | None = None,
+    name: str = "table",
+) -> pl.DataFrame:
+    """Read CSV/CSV.GZ from local or remote path and optionally validate columns.
+
+                Optimizations:
+                - For local files (and when not running under Pyodide), prefer `pl.scan_csv`
+                  + collect(engine="streaming") to reduce peak memory.
+                - For remote/HTTP resources or Pyodide, fall back to `pl.read_csv`.
+
+    Parameters
+    ----------
+    path : str
+        Path.
+    separator : str
+        Default is ','.
+    expected : Iterable[str] | None
+        None. Default is None.
+    name : str
+        Default is 'table'.
+
+    Returns
+    -------
+    pl.DataFrame
+        DataFrame containing table.
+
+    """
+    p = str(path)
+
+    try:
+        if (not IS_PYODIDE) and os.path.exists(p):
+            lf = pl.scan_csv(p, separator=separator, rechunk=False)
+            if expected:
+                lf = lf.select(list(expected))
+            df = lf.collect(engine="streaming")
+        else:
+            df = pl.read_csv(
+                p,
+                low_memory=True,
+                rechunk=False,
+                separator=separator,
+            )
+    except Exception:
+        # Final fallback to direct read
+        df = pl.read_csv(
+            p,
+            low_memory=True,
+            rechunk=False,
+            separator=separator,
+        )
+
+    return validate_columns(df, expected, name) if expected else df
+
+
+@app.function
+def load_fragments(path: str, min_freq: int) -> pl.DataFrame:
+    """Load fragment SMILES, filtering by minimum molecule frequency.
+
+    Parameters
+    ----------
+    path : str
+        Path.
+    min_freq : int
+        Min freq.
+
+    Returns
+    -------
+    pl.DataFrame
+        DataFrame containing fragments.
+
+    """
+    return read_table(
+        path,
+        expected={"SMILES", "MoleculeFrequency"},
+        name="fragments",
+    ).filter(pl.col("MoleculeFrequency") >= min_freq)
+
+
+@app.function
+def load_compound_fragment_mapping(path: str) -> pl.DataFrame:
+    """Parse compound-to-fragment mapping file.
+
+    Parameters
+    ----------
+    path : str
+        Path.
+
+    Returns
+    -------
+    pl.DataFrame
+        DataFrame containing compound fragment mapping.
+
+    """
+    return (
+        pl.read_csv(
+            path,
+            low_memory=True,
+            rechunk=False,
+            new_columns=["raw"],
+            truncate_ragged_lines=True,
+            separator="\n",
+        )
+        .with_columns(
+            [
+                pl.col("raw").str.extract(r"^([^,]+)", 1).alias("compound_name"),
+                pl.col("raw").str.replace(r"^[^,]+,", "").alias("fragments_str"),
+            ],
+        )
+        .select(["compound_name", "fragments_str"])
+    )
+
+
+@app.function
+def build_compound_scaffold_table(
+    compounds: pl.DataFrame,
+    mapping: pl.DataFrame,
+    fragments: pl.DataFrame,
+) -> pl.DataFrame:
+    """Build compound-scaffold table with minimal memory footprint.
+
+    Parameters
+    ----------
+    compounds : pl.DataFrame
+        Compounds.
+    mapping : pl.DataFrame
+        Mapping.
+    fragments : pl.DataFrame
+        Fragments.
+
+    Returns
+    -------
+    pl.DataFrame
+        DataFrame containing compound scaffold table.
+
+    """
+    if (
+        mapping is None
+        or mapping.is_empty()
+        or compounds.is_empty()
+        or fragments.is_empty()
+    ):
+        return pl.DataFrame({"compound_smiles": [], "scaffold": []})
+
+    unique = compounds.select("compound_smiles").unique()
+
+    # Create set of valid fragments for fast lookup
+    valid_scaffolds = set(fragments.get_column("SMILES").to_list())
+
+    # Filter fragments_str BEFORE exploding
+    # This reduces the explosion size
+    def filter_valid_fragments(fragments_str: str) -> str | None:
+        """Keep only valid fragments in comma-separated string.
+
+        Parameters
+        ----------
+        fragments_str : str
+            Fragments str.
+
+        Returns
+        -------
+        str | None
+            Selected valid fragments.
+
+        """
+        if not fragments_str:
+            return ""
+        frags = fragments_str.split(",")
+        valid = [f for f in frags if f in valid_scaffolds]
+        return ",".join(valid) if valid else None
+
+    mapping_filtered = mapping.with_columns(
+        pl.col("fragments_str")
+        .map_elements(filter_valid_fragments, return_dtype=pl.Utf8)
+        .alias("fragments_str"),
+    ).drop_nulls(subset=["fragments_str"])
+
+    # Now explode only the filtered data
+    exploded = (
+        pl.concat([unique, mapping_filtered], how="horizontal")
+        .with_columns(pl.col("fragments_str").str.split(","))
+        .explode("fragments_str")
+        .rename({"fragments_str": "scaffold"})
+        .select(["compound_smiles", "scaffold"])
+        .unique()
+    )
+
+    return exploded
+
+
+@app.function
+def build_hierarchy_lineage(
+    edges: pl.DataFrame,
+    child: str,
+    parent: str,
+    focus: pl.Series | None = None,
+) -> pl.DataFrame:
+    """Build ancestor lineage from parent-child edges via BFS traversal.
+
+    Parameters
+    ----------
+    edges : pl.DataFrame
+        Edges.
+    child : str
+        Child.
+    parent : str
+        Parent.
+    focus : pl.Series | None
+        None. Default is None.
+
+    Returns
+    -------
+    pl.DataFrame
+        DataFrame containing hierarchy lineage.
+
+    """
+    validate_columns(edges, {child, parent}, "hierarchy")
+    e = edges.select([child, parent]).drop_nulls().unique()
+    if e.is_empty():
+        return pl.DataFrame({child: [], "ancestor": [], "distance": []})
+
+    # If focus provided, filter edges to relevant subgraph first
+    if focus is not None:
+        focus_set = set(focus.drop_nulls().unique().to_list())
+
+        # Only keep edges where child is in focus or could lead to focus
+        # This requires building ancestors incrementally
+        relevant_nodes = focus_set.copy()
+
+        # Add all ancestors of focus nodes
+        for _ in range(50):  # Max depth
+            parent_edges = e.filter(pl.col(child).is_in(list(relevant_nodes)))
+            if parent_edges.is_empty():
+                break
+            new_parents = set(parent_edges.get_column(parent).unique().to_list())
+            if new_parents.issubset(relevant_nodes):
+                break
+            relevant_nodes.update(new_parents)
+
+        # Filter edge table to relevant subgraph
+        e = e.filter(pl.col(child).is_in(list(relevant_nodes)))
+        logging.info(f"Lineage graph reduced: {len(relevant_nodes):,} relevant nodes")
+
+    # Now build lineage on smaller graph
+    nodes = (
+        pl.DataFrame({child: focus.drop_nulls().unique()})
+        if focus is not None
+        else pl.DataFrame({child: e.get_column(child).unique()})
+    )
+    current = (
+        nodes.join(e, on=child, how="inner")
+        .rename({parent: "ancestor"})
+        .with_columns(pl.lit(1).cast(pl.UInt8).alias("distance"))
+        .unique()
+    )
+
+    rows, visited = (
+        [],
+        pl.DataFrame(
+            {
+                child: pl.Series([], dtype=e.schema[child]),
+                "ancestor": pl.Series([], dtype=e.schema[parent]),
+            },
+        ),
+    )
+    for _ in range(50):  # Max depth
+        if current.is_empty():
+            break
+        rows.append(current)
+        visited = pl.concat([visited, current.select(child, "ancestor")]).unique()
+        current = (
+            current.join(e, left_on="ancestor", right_on=child, how="inner")
+            .select(
+                [
+                    pl.col(child),
+                    pl.col(parent).alias("ancestor"),
+                    (pl.col("distance") + 1).cast(pl.UInt8).alias("distance"),
+                ],
+            )
+            .join(visited, on=[child, "ancestor"], how="anti")
+            .unique()
+        )
+
+    lineage = (
+        pl.concat(rows).unique()
+        if rows
+        else pl.DataFrame({child: [], "ancestor": [], "distance": []})
+    )
+    all_nodes = nodes.get_column(child).unique()
+    self_loops = pl.DataFrame(
+        {
+            child: all_nodes,
+            "ancestor": all_nodes,
+            "distance": pl.Series([0] * len(all_nodes), dtype=pl.UInt8),
+        },
+    )
+    return pl.concat([lineage, self_loops]).unique().sort([child, "distance"])
+
+
+@app.function
+def build_compound_lineage(compound_scaffold: pl.DataFrame) -> pl.DataFrame:
+    """Map compounds to their scaffolds (flat, distance=0).
+
+    Parameters
+    ----------
+    compound_scaffold : pl.DataFrame
+        Compound scaffold.
+
+    Returns
+    -------
+    pl.DataFrame
+        DataFrame containing compound lineage.
+
+    """
+    validate_columns(compound_scaffold, {"compound", "scaffold"}, "compound_scaffold")
+    return compound_scaffold.select(
+        [
+            pl.col("compound"),
+            pl.col("scaffold").alias("compound_ancestor"),
+            pl.lit(0).cast(pl.UInt8).alias("compound_distance"),
+        ],
+    ).unique()
+
+
+@app.function
+def run_hierarchical_analysis(
+    compound_taxon: pl.DataFrame,
+    compound_lineage: pl.DataFrame,
+    taxon_lineage: pl.DataFrame,
+    taxon_name: pl.DataFrame,
+    taxon_rank: pl.DataFrame | None = None,
+    cfg: EnrichmentConfigDict | dict | None = None,
+) -> pl.LazyFrame:
+    """Memory-optimized Bayesian enrichment analysis.
+
+                Returns a LazyFrame that scans parquet files on disk - data is only
+                materialized when needed, minimizing memory usage.
+
+                Memory optimizations:
+                - Process one rank at a time
+                - Batch CI/ROPE computation in chunks
+                - Use Float32 for intermediate calculations
+                - Drop columns early when not needed
+                - Return LazyFrame instead of DataFrame
+
+    Parameters
+    ----------
+    compound_taxon : pl.DataFrame
+        Compound taxon.
+    compound_lineage : pl.DataFrame
+        Compound lineage.
+    taxon_lineage : pl.DataFrame
+        Taxon lineage.
+    taxon_name : pl.DataFrame
+        Taxon name.
+    taxon_rank : pl.DataFrame | None
+        None. Default is None.
+    cfg : EnrichmentConfigDict | dict | None
+        None. Default is None.
+
+    Returns
+    -------
+    pl.LazyFrame
+        LazyFrame containing run hierarchical analysis.
+
+    """
+    start = time.time()
+    if cfg is None:
+        try:
+            cfg = DEFAULT_CONFIG
+        except NameError:
+            cfg = {
+                "filtering": {
+                    "min_frequency_scaffold": 2,
+                    "min_frequency_taxa": 2,
+                    "include_compounds_as_scaffolds": True,
+                },
+                "stats": {
+                    "continuity_correction": 0.5,
+                    "min_theta_0": 1e-6,
+                    "ci_prob": 0.89,
+                    "rope_half_width": 0.1,
+                    "min_ess": 3,
+                    "phylo_decay_rate": 0.5,
+                },
+                "priors": {
+                    "prior_strength": 1.0,
+                    "hierarchical_prior_flow": True,
+                    "hierarchical_weight": 0.1,
+                },
+            }
+
+    logging.info("=" * 55)
+    logging.info("BAYESIAN ANALYSIS")
+    logging.info("=" * 55)
+
+    # Environment-specific settings - smaller batches for WASM
+    BATCH_SIZE = 1000 if IS_PYODIDE else 5000
+
+    # Build base evidence with MINIMAL columns
+    base_evidence = (
+        compound_taxon.join(compound_lineage, on="compound", how="inner")
+        .select(["compound", "taxon", "compound_ancestor"])
+        .unique()
+    )
+
+    if base_evidence.is_empty():
+        return pl.LazyFrame()
+
+    # Minimal scaffold filtering - only require appearing in ≥2 compounds
+    # The Bayesian model handles ubiquitous scaffolds through θ₀ (baseline)
+    scaffold_freq = base_evidence.group_by("compound_ancestor").agg(
+        pl.col("compound").n_unique().alias("n_compounds"),
+    )
+
+    keep_scaffolds = scaffold_freq.filter(
+        pl.col("n_compounds") >= cfg["filtering"]["min_frequency_scaffold"],
+    ).select("compound_ancestor")
+
+    logging.info(
+        f"Scaffolds: {keep_scaffolds.height} (≥{cfg['filtering']['min_frequency_scaffold']} compounds)",
+    )
+
+    base_evidence = base_evidence.join(
+        keep_scaffolds,
+        on="compound_ancestor",
+        how="inner",
+    )
+
+    if base_evidence.is_empty():
+        return pl.LazyFrame()
+
+    N = int(base_evidence.get_column("compound").n_unique())
+    logging.info(f"Universe: {N} compounds")
+
+    # Get valid ranks
+    valid_ranks_df = (
+        taxon_lineage.filter(pl.col("taxon_rank").is_not_null())
+        .group_by("taxon_rank")
+        .agg(pl.col("taxon_ancestor").n_unique().alias("n_taxa"))
+        .filter(pl.col("n_taxa") >= 3)
+    )
+
+    if valid_ranks_df.is_empty():
+        return pl.LazyFrame()
+
+    valid_ranks = valid_ranks_df.get_column("taxon_rank").to_list()
+
+    # Import rank ordering
+    try:
+        valid_ranks = [r for r in valid_ranks if get_rank_order(r) < 999]
+        valid_ranks = sorted(valid_ranks, key=get_rank_order)
+    except Exception:
+        pass
+
+    if not valid_ranks:
+        logging.warning("No valid ranks found - aborting")
+        return pl.LazyFrame()
+
+    logging.info(f"Ranks: {len(valid_ranks)}")
+
+    # Create temp directory for streaming results
+    temp_dir = tempfile.mkdtemp()
+    rank_files = []
+
+    try:
+        # Process each rank independently (NEVER hold >1 rank in memory)
+        for rank_idx, rank in enumerate(valid_ranks):
+            logging.info(f"  Processing {rank} ({rank_idx + 1}/{len(valid_ranks)})")
+
+            # Process rank with minimal memory footprint
+            rank_data = process_rank_minimal(
+                rank=rank,
+                base_evidence=base_evidence,
+                taxon_lineage=taxon_lineage,
+                N=N,
+                cfg=cfg,
+                batch_size=BATCH_SIZE,
+            )
+
+            if rank_data.is_empty():
+                logging.info(f"    No data for {rank}")
+                continue
+
+            # Stream to disk immediately
+            temp_file = os.path.join(temp_dir, f"rank_{rank_idx}.parquet")
+            # Use memory-friendly writer and portable compression
+            write_parquet_stream(rank_data, temp_file, compression="snappy")
+            rank_files.append(temp_file)
+
+            logging.info(f"    Saved {rank_data.height} associations")
+
+            # Free memory ASAP
+            del rank_data
+            gc.collect()
+
+        if not rank_files:
+            return pl.LazyFrame()
+
+        # Return a LazyFrame that scans the parquet files - DO NOT materialize
+        logging.info("Building lazy result...")
+        lazy_result = pl.concat(
+            [pl.scan_parquet(f) for f in rank_files],
+            how="vertical",
+        )
+
+        # Add quality flags lazily
+        lazy_result = lazy_result.with_columns(
+            [(pl.col("effective_sample_size") >= MIN_ESS).alias("reliable")],
+        )
+
+        # Add taxon names lazily
+        lazy_result = lazy_result.join(
+            taxon_name.lazy().rename(
+                {"taxon": "taxon_ancestor", "taxon_name": "taxon_name"},
+            ),
+            on="taxon_ancestor",
+            how="left",
+        )
+
+        # Add rank labels using a mapping join instead of map_elements
+        try:
+            from modules.knowledge.wikidata.taxon.ranks import get_rank_label
+
+            # Build rank label lookup table
+            unique_ranks = (
+                lazy_result.select("taxon_rank")
+                .unique()
+                .collect()
+                .get_column("taxon_rank")
+                .to_list()
+            )
+            rank_label_df = pl.DataFrame(
+                {
+                    "taxon_rank": unique_ranks,
+                    "taxon_rank_label": [get_rank_label(r) for r in unique_ranks],
+                },
+            ).lazy()
+
+            lazy_result = lazy_result.join(rank_label_df, on="taxon_rank", how="left")
+        except Exception:
+            pass
+
+        logging.info(f"Complete: LazyFrame ready ({time.time() - start:.1f}s)")
+
+        # Note: temp files will be cleaned up when the LazyFrame is no longer needed
+        # We store the file list for later cleanup
+        lazy_result._temp_files = rank_files  # Attach for cleanup
+
+        return lazy_result
+
+    except Exception as e:
+        # Clean up temp files on error
+        for f in rank_files:
+            try:
+                os.unlink(f)
+            except OSError:
+                pass
+        try:
+            os.rmdir(temp_dir)
+        except OSError:
+            pass
+        raise e
+
+
+@app.function
+def process_rank_minimal(
+    rank: str,
+    base_evidence: pl.DataFrame,
+    taxon_lineage: pl.DataFrame,
+    N: int,
+    cfg: dict,
+    batch_size: int = 2500,
+) -> pl.DataFrame:
+    """Process single rank with phylogenetic independence-aware diversity weighting.
+
+                Returns DataFrame with only essential columns:
+                - compound_ancestor, taxon_ancestor, taxon_rank
+                - a_raw, n_source_taxa, n_eff_phylo (new: phylogenetic effective taxa)
+                - posterior_enrich_prob, log2_enrichment, rope_decision
+                - effective_sample_size, ci_lower, ci_upper
+
+                Key improvement: Uses phylogenetic distances to compute effective independent
+                taxa count. 5 sister species contribute less evidence than 3 distant organisms.
+
+    Parameters
+    ----------
+    rank : str
+        Rank.
+    base_evidence : pl.DataFrame
+        Base evidence.
+    taxon_lineage : pl.DataFrame
+        Taxon lineage.
+    N : int
+        N.
+    cfg : dict
+        Cfg.
+    batch_size : int
+        Default is 2500.
+
+    Returns
+    -------
+    pl.DataFrame
+        DataFrame containing process rank minimal.
+
+    """
+    # Map to this rank
+    rank_map = (
+        taxon_lineage.filter(pl.col("taxon_rank") == rank)
+        .select(["taxon", "taxon_ancestor"])
+        .unique()
+    )
+
+    # Propagate evidence to rank
+    rank_evidence = (
+        base_evidence.join(rank_map, on="taxon", how="inner")
+        .select(
+            [
+                "compound",
+                "taxon_ancestor",
+                "compound_ancestor",
+                pl.col("taxon").alias("source_taxon"),
+            ],
+        )
+        .unique()
+    )
+
+    # Free rank_map immediately
+    del rank_map
+
+    if rank_evidence.is_empty():
+        return pl.DataFrame()
+
+    # Scaffold totals
+    scaffold_totals = rank_evidence.group_by("compound_ancestor").agg(
+        pl.col("compound").n_unique().alias("scaffold_total"),
+    )
+
+    # Filter taxa
+    taxon_freq = rank_evidence.group_by("taxon_ancestor").agg(
+        pl.col("compound").n_unique().alias("taxon_obs"),
+    )
+
+    keep_taxa = taxon_freq.filter(
+        pl.col("taxon_obs") >= cfg["filtering"]["min_frequency_taxa"],
+    ).select("taxon_ancestor")
+
+    rank_evidence = rank_evidence.join(keep_taxa, on="taxon_ancestor", how="inner")
+
+    # Free intermediate filter dataframes
+    del taxon_freq, keep_taxa
+
+    if rank_evidence.is_empty():
+        return pl.DataFrame()
+
+    # Build contingency table with MINIMAL columns
+    MIN_THETA_0 = cfg["stats"]["min_theta_0"]
+    LAMBDA_PRIOR = cfg["priors"]["prior_strength"]
+    PHYLO_DECAY = cfg["stats"].get("phylo_decay_rate", 0.5)
+
+    # ================================================================
+    # PHYLOGENETIC DIVERSITY WEIGHTING
+    # ================================================================
+    #
+    # THE KEY INSIGHT:
+    # A compound found in 5 closely related species (e.g., 5 Gentiana spp.)
+    # provides LESS independent evidence than the same compound found in
+    # 3 distantly related organisms (e.g., 1 plant, 1 fungus, 1 bacterium).
+    #
+    # WHY? Closely related organisms share evolutionary history. If a
+    # compound is in one Gentiana, it's more likely in another due to
+    # shared ancestry, not independent evolutionary events.
+    #
+    # SOLUTION: Compute the "effective independent taxa count" (n_eff_phylo)
+    # using pairwise phylogenetic similarities between source organisms.
+    #
+    # FORMULA (Kish's design effect for correlated observations):
+    #   n_eff = n² / Σᵢⱼ similarity(dᵢⱼ)
+    #
+    # where similarity(d) = exp(-decay_rate × d)
+    # and d = taxonomic distance between taxa i and j
+    #
+    # EXAMPLES:
+    # - 5 species in same genus (d≈1): n_eff ≈ 2.5
+    # - 5 species in same family (d≈2): n_eff ≈ 3.5
+    # - 3 species from different phyla (d≈8): n_eff ≈ 3.0
+    #
+    # This naturally rewards finding compounds in diverse lineages.
+    # ================================================================
+    #
+    # EFFICIENT APPROXIMATION:
+    # ========================
+    # Computing exact pairwise phylogenetic distances is O(n²) in memory.
+    # Instead, we use a proxy: the taxonomic spread of source taxa.
+    #
+    # For each scaffold-taxon group, we measure diversity by looking at
+    # the LOWEST common rank among source taxa. If all sources are in the
+    # same genus, diversity is low. If they span multiple families, high.
+    #
+    # We compute: n_eff = n × diversity_factor
+    # where diversity_factor = 1 - (shared_ancestors / total_possible)
+    #
+    # This is O(n) in memory and captures the key signal.
+    # ================================================================
+
+    # Step 1: Collect source taxa per scaffold-taxon group
+    source_taxa_groups = rank_evidence.group_by(
+        ["compound_ancestor", "taxon_ancestor"],
+    ).agg(
+        [
+            pl.col("compound").n_unique().cast(pl.UInt32).alias("a_raw"),
+            pl.col("source_taxon").n_unique().cast(pl.UInt16).alias("n_source_taxa"),
+        ],
+    )
+
+    # Step 2: Compute phylogenetic diversity using ancestor sharing
+    # For each group, count how many distinct ancestors the source taxa have
+    # at each level. More sharing = lower effective n.
+
+    # Get source taxa with their ancestors at each distance level
+    source_with_ancestors = (
+        rank_evidence.select(["compound_ancestor", "taxon_ancestor", "source_taxon"])
+        .unique()
+        .join(
+            taxon_lineage.select(["taxon", "taxon_ancestor", "taxon_distance"]).rename(
+                {"taxon": "source_taxon", "taxon_ancestor": "ancestor"},
+            ),
+            on="source_taxon",
+            how="left",
+        )
+    )
+
+    # For each group and distance level, count unique ancestors
+    # Then compute a diversity score based on how many ancestors are shared
+    ancestor_diversity = (
+        source_with_ancestors.group_by(
+            ["compound_ancestor", "taxon_ancestor", "taxon_distance"],
+        )
+        .agg(
+            [
+                pl.col("ancestor").n_unique().alias("n_unique_ancestors"),
+                pl.col("source_taxon").n_unique().alias("n_taxa_at_level"),
+            ],
+        )
+        # Diversity ratio at each level: unique_ancestors / n_taxa
+        # If all taxa share ancestor: ratio = 1/n (low diversity)
+        # If all taxa have different ancestors: ratio = 1 (high diversity)
+        .with_columns(
+            (
+                pl.col("n_unique_ancestors").cast(pl.Float32)
+                / pl.col("n_taxa_at_level").cast(pl.Float32)
+            ).alias("diversity_ratio"),
+        )
+        # Weight by distance: closer levels matter more (use exp decay)
+        .with_columns(
+            ((-PHYLO_DECAY * pl.col("taxon_distance").cast(pl.Float32)).exp()).alias(
+                "level_weight",
+            ),
+        )
+    )
+
+    # Aggregate diversity across levels: weighted mean diversity ratio
+    group_diversity = (
+        ancestor_diversity.group_by(["compound_ancestor", "taxon_ancestor"])
+        .agg(
+            [
+                (pl.col("diversity_ratio") * pl.col("level_weight"))
+                .sum()
+                .alias("weighted_div_sum"),
+                pl.col("level_weight").sum().alias("weight_sum"),
+            ],
+        )
+        .with_columns(
+            (pl.col("weighted_div_sum") / pl.col("weight_sum").clip(0.01)).alias(
+                "mean_diversity",
+            ),
+        )
+        .select(["compound_ancestor", "taxon_ancestor", "mean_diversity"])
+    )
+
+    # Join diversity back and compute n_eff_phylo
+    # n_eff = n × mean_diversity (clamped to [1, n])
+    source_taxa_groups = (
+        source_taxa_groups.join(
+            group_diversity,
+            on=["compound_ancestor", "taxon_ancestor"],
+            how="left",
+        )
+        .with_columns(pl.col("mean_diversity").fill_null(1.0))
+        .with_columns(
+            (pl.col("n_source_taxa").cast(pl.Float32) * pl.col("mean_diversity"))
+            .clip(1.0)
+            .alias("n_eff_phylo"),
+        )
+        # Ensure n_eff <= n
+        .with_columns(
+            pl.when(pl.col("n_eff_phylo") > pl.col("n_source_taxa"))
+            .then(pl.col("n_source_taxa").cast(pl.Float32))
+            .otherwise(pl.col("n_eff_phylo"))
+            .alias("n_eff_phylo"),
+        )
+        .drop("mean_diversity")
+    )
+
+    # Free intermediate dataframes
+    del source_with_ancestors, ancestor_diversity, group_diversity
+    gc.collect()
+
+    # Step 3: Compute effective observation count
+    a_counts = source_taxa_groups.with_columns(
+        [
+            (pl.col("a_raw").cast(pl.Float32).sqrt() * pl.col("n_eff_phylo").sqrt())
+            .round(0)
+            .cast(pl.UInt32)
+            .clip(1)
+            .alias("a"),
+        ],
+    )
+
+    # Free source_taxa_groups
+    del source_taxa_groups
+
+    taxon_totals = rank_evidence.group_by("taxon_ancestor").agg(
+        pl.col("compound").n_unique().alias("taxon_total"),
+    )
+
+    # Free rank_evidence after extracting totals
+    del rank_evidence
+    gc.collect()
+
+    # Build minimal rank_data (keep only what's needed)
+    rank_data = (
+        a_counts.join(
+            scaffold_totals.select(["compound_ancestor", "scaffold_total"]),
+            on="compound_ancestor",
+            how="left",
+        )
+        .join(
+            taxon_totals.select(["taxon_ancestor", "taxon_total"]),
+            on="taxon_ancestor",
+            how="left",
+        )
+        .with_columns(
+            [
+                # Effective c (diversity-weighted)
+                (
+                    (pl.col("taxon_total") - pl.col("a_raw")).clip(0).cast(pl.Float32)
+                    * (pl.col("a") / (pl.col("a_raw").cast(pl.Float32) + 1e-10))
+                )
+                .round(0)
+                .cast(pl.UInt32)
+                .clip(0)
+                .alias("c_eff"),
+                # Baseline
+                (pl.col("scaffold_total").cast(pl.Float32) / N)
+                .clip(MIN_THETA_0)
+                .cast(pl.Float32)
+                .alias("theta_0"),
+                # Rank
+                pl.lit(rank).alias("taxon_rank"),
+            ],
+        )
+        .drop(["scaffold_total", "taxon_total"])
+    )
+
+    # Free remaining intermediate dataframes
+    del a_counts, scaffold_totals, taxon_totals
+
+    # ================================================================
+    # BASELINE θ₀: First Principles
+    # ================================================================
+    #
+    # THE FUNDAMENTAL QUESTION:
+    # We want to know P(θ > θ₀ | data) - the probability that the true
+    # rate of this scaffold in this taxon exceeds some baseline θ₀.
+    # But what should θ₀ BE?
+    #
+    # OPTION 1: θ₀ = 0.5 (Jeffreys uninformative prior)
+    # -------------------------------------------------
+    # From first principles, if we have NO prior belief about scaffold
+    # frequency, the maximally uninformative baseline is θ₀ = 0.5.
+    # This is the Jeffreys prior for a Bernoulli rate parameter.
+    #
+    # Problem: With θ₀ = 0.5, "enrichment" means "rate > 50%".
+    # - A scaffold in 2/3 compounds (67%) → P(θ > 0.5) ≈ 0.85 ✓
+    # - A scaffold in 2/100 compounds (2%) → P(θ > 0.5) ≈ 0.0 ✗
+    #
+    # But the second case IS enriched if this scaffold normally appears
+    # in only 0.1% of compounds! The uninformative prior loses the
+    # concept of "enriched RELATIVE TO what's expected."
+    #
+    # OPTION 2: θ₀ = observed frequency in dataset
+    # ---------------------------------------------
+    # This is what we use. θ₀ = scaffold_total / N.
+    #
+    # Interpretation: "Among all compounds in our dataset, what fraction
+    # contain this scaffold?" This becomes our null hypothesis - the rate
+    # we'd expect if this taxon were a random sample of the dataset.
+    #
+    # "Enrichment" then means: "This taxon has MORE of this scaffold
+    # than a random sample of the dataset would have."
+    #
+    # CAVEAT: Our dataset is NOT a random sample of all chemistry.
+    # It's biased toward studied taxa (medicinal plants, crops, etc.).
+    # So θ₀ = 10% might mean "10% of STUDIED compounds" not "10% of all
+    # compounds in nature."
+    #
+    # WHY THIS IS OK: We're asking a RELATIVE question.
+    # "Is Gentianaceae enriched in iridoids COMPARED TO our dataset?"
+    # Not: "What's the true cosmic frequency of iridoids?"
+    #
+    # The weak prior (λ=1) further protects us: even if θ₀ is imperfect,
+    # just 2-3 observations will dominate the posterior. The baseline
+    # provides a rough reference point, not a strong constraint.
+    #
+    # OPTION 3: θ₀ = 0 (pure presence/absence)
+    # ----------------------------------------
+    # If θ₀ → 0, then P(θ > θ₀) → 1 for any scaffold present at all.
+    # This loses discriminative power - everything is "enriched."
+    #
+    # CONCLUSION: Option 2 (observed frequency) is the best compromise.
+    # It provides a meaningful baseline for "enrichment" while the weak
+    # prior ensures data dominates quickly. The biases in θ₀ are
+    # acceptable because we're asking relative, not absolute, questions.
+    # ================================================================
+    # HIERARCHICAL PRIORS: Blend parent posterior with global baseline.
+    #
+    # The prior center is a weighted blend:
+    #   prior_center = w * parent_mean + (1-w) * theta_0
+    #
+    # Where w = hierarchical_weight (0 = pure global, 1 = pure parent)
+    #
+    # This allows child's evidence to dominate while parent provides
+    # subtle guidance. Default w=0.2 means prior is 80% global, 20% parent.
+    # TODO THIS IS GONE FOR NOW
+    # ========================================================
+    # PRIOR COMPUTATION
+    # ========================================================
+    #
+    # The prior is our "belief before seeing data". It's a Beta
+    # distribution centered on what we expect for this scaffold.
+    #
+    # THE PRIOR CENTER (what rate do we expect?):
+    # -------------------------------------------
+    # prior_center = w × parent_posterior + (1-w) × θ₀
+    #
+    # Where:
+    # - θ₀ = scaffold's observed frequency in the dataset (imperfect
+    #   baseline - see comments above for why "global frequency" is
+    #   problematic with biased sampling)
+    # - parent_posterior = parent taxon's estimated rate
+    # - w = hierarchical_weight = 0.1 (10% parent, 90% θ₀)
+    #
+    # PRIOR STRENGTH (how confident in our prior?):
+    # ---------------------------------------------
+    # With λ=1, the prior is equivalent to having seen 1 pseudo-
+    # observation at the prior_center rate. This is deliberately
+    # weak so that even 2-3 real observations can override it.
+    #
+    # Example: θ₀ = 0.05 (5% of dataset), λ = 1
+    # → α_prior = 0.05 × 1 = 0.05
+    # → β_prior = 0.95 × 1 = 0.95
+    # → Prior says "expect ~5%, but I'm not very sure"
+    #
+    # After seeing a=3 (3 compounds with scaffold), c_eff=7:
+    # → α_post = 0.05 + 3 = 3.05
+    # → β_post = 0.95 + 7 = 7.95
+    # → Posterior ≈ 3.05/11 ≈ 28% (data dominates!)
+    # ========================================================
+
+    # Bayesian computation (Float32 for memory)
+    rank_data = (
+        rank_data.with_columns(
+            [
+                (pl.col("theta_0") * LAMBDA_PRIOR)
+                .cast(pl.Float32)
+                .alias("alpha_prior"),
+                ((1 - pl.col("theta_0")) * LAMBDA_PRIOR)
+                .cast(pl.Float32)
+                .alias("beta_prior"),
+            ],
+        )
+        .with_columns(
+            [
+                (pl.col("alpha_prior") + pl.col("a"))
+                .cast(pl.Float32)
+                .alias("alpha_post"),
+                (pl.col("beta_prior") + pl.col("c_eff"))
+                .cast(pl.Float32)
+                .alias("beta_post"),
+            ],
+        )
+        .drop(["alpha_prior", "beta_prior"])
+        .with_columns(
+            [
+                (
+                    pl.col("alpha_post") / (pl.col("alpha_post") + pl.col("beta_post"))
+                ).alias("posterior_mean"),
+                (pl.col("alpha_post") + pl.col("beta_post") - LAMBDA_PRIOR).alias(
+                    "effective_sample_size",
+                ),
+            ],
+        )
+    )
+
+    # Batched CI/ROPE computation
+    CI_PROB = cfg["stats"]["ci_prob"]
+    ROPE_HW = cfg["stats"]["rope_half_width"]
+
+    batched_results = []
+    total_rows = rank_data.height
+
+    for start_idx in range(0, total_rows, batch_size):
+        end_idx = min(start_idx + batch_size, total_rows)
+        batch = rank_data[start_idx:end_idx]
+
+        # Compute CI/ROPE
+        batch_result = compute_ci_rope(batch, CI_PROB, ROPE_HW)
+        batched_results.append(batch_result)
+
+        del batch
+        # Free memory periodically in WASM
+        if start_idx % (batch_size * 4) == 0:
+            gc.collect()
+
+    result = pl.concat(batched_results, how="vertical")
+    del batched_results
+    gc.collect()
+
+    return result
+
+
+@app.function
+def compute_ci_rope(batch: pl.DataFrame, CI_PROB: float, ROPE_HW: float):
+    """CI/ROPE computation using numpy.
+
+                Uses numpy for scipy functions but minimizes intermediate allocations.
+                Handles numerical edge cases for very small baseline rates.
+
+    Parameters
+    ----------
+    batch : pl.DataFrame
+        Batch.
+    CI_PROB : float
+        Ci prob.
+    ROPE_HW : float
+        Rope hw.
+
+    """
+    # Extract to numpy (unavoidable for scipy)
+    alpha = np.maximum(batch["alpha_post"].to_numpy(), 1e-6)
+    beta = np.maximum(batch["beta_post"].to_numpy(), 1e-6)
+    theta = np.maximum(batch["theta_0"].to_numpy(), 1e-10)
+
+    # Compute credible interval
+    lower_p = (1 - CI_PROB) / 2
+    upper_p = 1 - lower_p
+
+    ci_lower_raw = np.maximum(betaincinv(alpha, beta, lower_p), 1e-12)
+    ci_upper_raw = np.minimum(betaincinv(alpha, beta, upper_p), 1 - 1e-12)
+
+    # ROPE bounds (clip to valid probability range)
+    rope_lower = np.maximum(theta * (2**-ROPE_HW), 1e-12)
+    rope_upper = np.minimum(theta * (2**ROPE_HW), 1 - 1e-12)
+
+    # Vectorized decisions (no Python loop)
+    decisions = np.where(
+        ci_lower_raw > rope_upper,
+        "enriched",
+        np.where(
+            ci_upper_raw < rope_lower,
+            "depleted",
+            np.where(
+                (ci_lower_raw >= rope_lower) & (ci_upper_raw <= rope_upper),
+                "equivalent",
+                "undecided",
+            ),
+        ),
+    )
+
+    # Build result (cast floats to float32 to reduce peak memory / Arrow size)
+    # Use log1p-style safe division to handle edge cases
+    posterior_prob = np.clip(1 - betainc(alpha, beta, theta), 0, 1).astype(np.float32)
+    ci_lower_log2 = np.clip(np.log2(ci_lower_raw / theta), -20, 20).astype(np.float32)
+    ci_upper_log2 = np.clip(np.log2(ci_upper_raw / theta), -20, 20).astype(np.float32)
+    log2_enrich = np.clip(np.log2((alpha / (alpha + beta)) / theta), -20, 20).astype(
+        np.float32,
+    )
+
+    # Build result and attach vectorized columns
+    result = batch.with_columns(
+        [
+            pl.Series("posterior_enrich_prob", posterior_prob),
+            pl.Series("ci_lower", ci_lower_log2),
+            pl.Series("ci_upper", ci_upper_log2),
+            pl.Series("rope_decision", decisions),
+            pl.Series("log2_enrichment", log2_enrich),
+        ],
+    )
+
+    # Clean up all numpy arrays
+    del alpha, beta, theta, ci_lower_raw, ci_upper_raw
+    del rope_lower, rope_upper, decisions
+    del posterior_prob, ci_lower_log2, ci_upper_log2, log2_enrich
+
+    return result
+
+
+@app.function
+def discover_top_taxa(
+    markers: pl.LazyFrame | pl.DataFrame,
+    rank: str,
+    min_prob: float = MIN_PROB,
+    min_ess: float = MIN_ESS,
+    min_obs: float = MIN_OBS,
+    min_log2fc: float = MIN_LOG2FC,
+    top_n: int = TOP_N_TAXA,
+) -> list[str]:
+    """Select top N taxa with most distinctive chemistry at this rank.
+
+                Returns list of taxon IDs (taxon_ancestor).
+                Works with both LazyFrame and DataFrame.
+
+    Parameters
+    ----------
+    markers : pl.LazyFrame | pl.DataFrame
+        Markers.
+    rank : str
+        Rank.
+    min_prob : float
+        MIN_PROB. Default is MIN_PROB.
+    min_ess : float
+        MIN_ESS. Default is MIN_ESS.
+    min_obs : float
+        MIN_OBS. Default is MIN_OBS.
+    min_log2fc : float
+        MIN_LOG2FC. Default is MIN_LOG2FC.
+    top_n : int
+        TOP_N_TAXA. Default is TOP_N_TAXA.
+
+    Returns
+    -------
+    list[str]
+        List of discover top taxa.
+
+    """
+    # Build query lazily
+    rank_markers = (
+        markers.filter(pl.col("taxon_rank_label") == rank)
+        .filter(pl.col("posterior_enrich_prob") >= min_prob)
+        .filter(pl.col("effective_sample_size") >= min_ess)
+        .filter(pl.col("log2_enrichment") >= min_log2fc)
+        .filter(pl.col("a_raw") >= min_obs)
+    )
+
+    # Score taxa by chemical distinctiveness
+    taxon_scores = (
+        rank_markers.group_by("taxon_ancestor")
+        .agg(
+            [
+                pl.col("compound_ancestor").n_unique().alias("n_scaffolds"),
+                pl.col("posterior_enrich_prob").mean().alias("avg_prob"),
+                pl.col("log2_enrichment").mean().alias("avg_fc"),
+                pl.col("effective_sample_size").sum().alias("total_ess"),
+            ],
+        )
+        .with_columns(
+            [
+                # Distinctiveness = diversity + strength + confidence
+                (
+                    pl.col("n_scaffolds").cast(pl.Float32) * 3.0
+                    + pl.col("avg_fc").cast(pl.Float32) * 1.5
+                    + pl.col("avg_prob").cast(pl.Float32) * 2.0
+                    + (pl.col("total_ess") / 100.0).clip(0, 2.0)
+                ).alias("distinctiveness"),
+            ],
+        )
+        .sort("distinctiveness", descending=True)
+        .head(top_n)
+    )
+
+    # Collect only the final result
+    if hasattr(taxon_scores, "collect"):
+        taxon_scores = taxon_scores.collect()
+
+    if taxon_scores.is_empty():
+        return []
+
+    return taxon_scores.get_column("taxon_ancestor").to_list()
+
+
+@app.function
+def get_markers_for_top_taxa(
+    markers: pl.LazyFrame | pl.DataFrame,
+    rank: str,
+    top_taxa: list,
+    min_prob: float = MIN_PROB,
+    min_ess: float = MIN_ESS,
+    min_obs: float = MIN_OBS,
+    min_log2fc: float = MIN_LOG2FC,
+    top_n_per_taxon: int = TOP_N_MARKERS_PER_TAXON,
+) -> pl.DataFrame:
+    """Get top markers for each of the selected top taxa.
+
+    Works with both LazyFrame and DataFrame.
+
+    Parameters
+    ----------
+    markers : pl.LazyFrame | pl.DataFrame
+        Markers.
+    rank : str
+        Rank.
+    top_taxa : list
+        Top taxa.
+    min_prob : float
+        MIN_PROB. Default is MIN_PROB.
+    min_ess : float
+        MIN_ESS. Default is MIN_ESS.
+    min_obs : float
+        MIN_OBS. Default is MIN_OBS.
+    min_log2fc : float
+        MIN_LOG2FC. Default is MIN_LOG2FC.
+    top_n_per_taxon : int
+        TOP_N_MARKERS_PER_TAXON. Default is TOP_N_MARKERS_PER_TAXON.
+
+    Returns
+    -------
+    pl.DataFrame
+        DataFrame containing markers for top taxa.
+
+    """
+    # Handle empty top_taxa
+    if not top_taxa:
+        return pl.DataFrame()
+
+    # Cast top_taxa to proper dtype to avoid UInt32/Int64 mismatch
+    top_taxa_series = pl.Series("taxon_ancestor", top_taxa, dtype=pl.UInt32)
+
+    rank_markers = (
+        markers.filter(pl.col("taxon_rank_label") == rank)
+        .filter(
+            pl.col("taxon_ancestor")
+            .cast(pl.UInt32, strict=False)
+            .is_in(top_taxa_series),
+        )
+        .filter(pl.col("posterior_enrich_prob") >= min_prob)
+        .filter(pl.col("effective_sample_size") >= min_ess)
+        .filter(pl.col("log2_enrichment") >= min_log2fc)
+        .filter(pl.col("a_raw") >= min_obs)
+    )
+
+    # For each taxon, get top N markers
+    result = (
+        rank_markers.with_columns(
+            [
+                # Marker quality score
+                (
+                    pl.col("posterior_enrich_prob") * 2.0
+                    + pl.col("log2_enrichment") / 10.0
+                    + (pl.col("effective_sample_size") / 100.0).clip(0, 1)
+                ).alias("marker_quality"),
+            ],
+        )
+        .sort(["taxon_ancestor", "marker_quality"], descending=[False, True])
+        .group_by("taxon_ancestor")
+        .head(top_n_per_taxon)
+    )
+
+    # Collect at the end
+    if hasattr(result, "collect"):
+        result = result.collect()
+
+    return result
+
+
+@app.function
+def create_taxa_marker_heatmap(
+    markers_df: pl.DataFrame,
+    rank: str,
+) -> alt.Chart | mo.Html:
+    """Heatmap showing top 10 taxa (rows) × their markers (columns).
+
+    Parameters
+    ----------
+    markers_df : pl.DataFrame
+        Markers df.
+    rank : str
+        Rank.
+
+    Returns
+    -------
+    alt.Chart | mo.Html
+        Constructed taxa marker heatmap.
+
+    """
+    if markers_df.is_empty():
+        return mo.md(f"*No {rank}-level data*")
+
+    # Prepare data
+    plot_data = markers_df.with_columns(
+        [
+            pl.col("compound_ancestor").alias("scaffold_short"),
+        ],
+    ).select(
+        [
+            "taxon_name",
+            "scaffold_short",
+            "log2_enrichment",
+            "posterior_enrich_prob",
+            "effective_sample_size",
+            "a_raw",
+        ],
+    )
+
+    # Get colormap
+    try:
+        import cmcrameri.cm as cmc
+
+        cmap = cmc.batlow
+        colors = [
+            f"#{int(c[0] * 255):02x}{int(c[1] * 255):02x}{int(c[2] * 255):02x}"
+            for c in [cmap(i / 10) for i in range(11)]
+        ]
+    except ImportError:
+        cmc = None
+        colors = "viridis"
+
+    chart = (
+        alt.Chart(plot_data)
+        .mark_rect(cornerRadius=2, stroke="white", strokeWidth=1)
+        .encode(
+            y=alt.Y(
+                "taxon_name:N",
+                title=None,
+                sort=alt.EncodingSortField(
+                    field="log2_enrichment",
+                    op="mean",
+                    order="descending",
+                ),
+                axis=alt.Axis(labelFontSize=11, labelFontWeight="bold"),
+            ),
+            x=alt.X(
+                "scaffold_short:N",
+                title=None,
+                sort=alt.EncodingSortField(
+                    field="log2_enrichment",
+                    op="max",
+                    order="descending",
+                ),
+                axis=alt.Axis(labelAngle=-45, labelFontSize=9),
+            ),
+            color=alt.Color(
+                "log2_enrichment:Q",
+                scale=alt.Scale(
+                    range=colors if isinstance(colors, list) else "viridis",
+                    scheme=colors if isinstance(colors, str) else "viridis",
+                    domain=[0, 10],
+                    clamp=True,
+                ),
+                legend=alt.Legend(title="log₂ FC", gradientLength=150),
+            ),
+            tooltip=[
+                alt.Tooltip("taxon_name:N", title="Taxon"),
+                alt.Tooltip("scaffold_short:N", title="Scaffold"),
+                alt.Tooltip(
+                    "posterior_enrich_prob:Q",
+                    format=".3f",
+                    title="P(enriched)",
+                ),
+                alt.Tooltip("log2_enrichment:Q", format=".2f", title="log₂ FC"),
+                alt.Tooltip("effective_sample_size:Q", format=".1f", title="ESS"),
+                alt.Tooltip("a_raw:Q", title="Observations"),
+            ],
+        )
+        .properties(
+            width=800,
+            height=max(300, len(plot_data.get_column("taxon_name").unique()) * 40),
+            title=alt.TitleParams(
+                text=f"Top 10 at {rank} level and Their Chemical Markers",
+                subtitle=f"Taxa selected by chemical distinctiveness (P≥{MIN_PROB}, ESS≥{MIN_ESS}, FC≥{MIN_LOG2FC})",
+                fontSize=14,
+                anchor="start",
+            ),
+        )
+        .configure_view(strokeWidth=0)
+        .configure_axis(grid=False)
+    )
+
+    return chart
+
+
+@app.function
+def create_taxa_summary_table(
+    markers_df: pl.DataFrame,
+    rank: str,
+) -> pl.DataFrame:
+    """Summary table: one row per taxon showing its marker statistics.
+
+    Parameters
+    ----------
+    markers_df : pl.DataFrame
+        Markers df.
+    rank : str
+        Rank.
+
+    Returns
+    -------
+    pl.DataFrame
+        DataFrame containing taxa summary table.
+
+    """
+    if markers_df.is_empty():
+        return pl.DataFrame()
+
+    return (
+        markers_df.group_by("taxon_ancestor")
+        .agg(
+            [
+                pl.col("taxon_name").first(),
+                pl.col("compound_ancestor").n_unique().alias("n_markers"),
+                pl.col("posterior_enrich_prob").mean().alias("avg_prob"),
+                pl.col("log2_enrichment").mean().alias("avg_fc"),
+                pl.col("log2_enrichment").max().alias("max_fc"),
+                pl.col("effective_sample_size").sum().alias("total_ess"),
+                pl.col("a_raw").sum().alias("total_obs"),
+            ],
+        )
+        .sort("avg_prob", descending=True)
+        .select(
+            [
+                pl.col("taxon_name").alias("Taxon"),
+                pl.col("n_markers").alias("# Markers"),
+                pl.col("avg_prob").round(3).alias("Avg P(enrich)"),
+                pl.col("avg_fc").round(2).alias("Avg log₂FC"),
+                pl.col("max_fc").round(2).alias("Max log₂FC"),
+                pl.col("total_ess").round(1).alias("Total ESS"),
+                pl.col("total_obs").alias("Total Obs"),
+            ],
+        )
+    )
+
+
+@app.function
+def create_markers_detail_table(
+    markers_df: pl.DataFrame,
+    rank: str,
+) -> pl.DataFrame:
+    """Detailed table: one row per marker showing which taxa it's in.
+
+    Parameters
+    ----------
+    markers_df : pl.DataFrame
+        Markers df.
+    rank : str
+        Rank.
+
+    Returns
+    -------
+    pl.DataFrame
+        DataFrame containing markers detail table.
+
+    """
+    if markers_df.is_empty():
+        return pl.DataFrame()
+
+    # Limit expensive depiction generation for very large tables
+    SAFE_PREVIEW_LIMIT = 1000
+
+    df_sorted = markers_df.sort(
+        ["taxon_name", "posterior_enrich_prob"],
+        descending=[False, True],
+    ).select(
+        [
+            pl.col("taxon_name").alias("Taxon"),
+            pl.col("compound_ancestor").alias("Scaffold"),
+            pl.col("posterior_enrich_prob").round(3).alias("P(enrich)"),
+            pl.col("log2_enrichment").round(2).alias("log₂FC"),
+            pl.col("effective_sample_size").round(1).alias("ESS"),
+            pl.col("a_raw").alias("Obs"),
+        ],
+    )
+
+    if df_sorted.height > SAFE_PREVIEW_LIMIT:
+        # For large datasets, only generate structure depictions for the first N rows
+        preview = df_sorted.limit(SAFE_PREVIEW_LIMIT).with_columns(
+            [
+                pl.col("Scaffold")
+                .map_elements(lambda s: mo.image(svg_from_smiles(s)))
+                .alias("Structure"),
+            ],
+        )
+        return preview
+
+    return df_sorted.with_columns(
+        [
+            pl.col("Scaffold")
+            .map_elements(lambda s: mo.image(svg_from_smiles(s)))
+            .alias("Structure"),
+        ],
+    )
+
+
+@app.cell
+def header():
+    mo.md("""
+    # Bayesian Chemotaxonomic Scaffold Discovery
+
+    Discover chemical scaffolds enriched in taxonomic groups using Bayesian inference.
+    """)
+    return
+
+
+@app.cell
+def apply_config():
+    effective_config = DEFAULT_CONFIG
+    return (effective_config,)
+
+
+@app.cell
+def load_data_wd(effective_config):
+    with mo.status.spinner("Fetching data from Wikidata..."):
+        compound_taxon: pl.DataFrame = parse_sparql_response(
+            execute_with_retry(
+                query="""
+            PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+            PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+            SELECT DISTINCT
+            (xsd:integer(STRAFTER(STR(?c), "Q")) AS ?compound)
+            (xsd:integer(STRAFTER(STR(?t), "Q")) AS ?taxon)
+            WHERE {
+              ?c wdt:P703 ?t .
+            }
+            """,
+                endpoint=effective_config["qlever_endpoint"],
+            ),
+        ).collect()
+
+        compound_smiles = (
+            parse_sparql_response(
+                execute_with_retry(
+                    query="""
+            PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+            PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+            SELECT DISTINCT
+            (xsd:integer(STRAFTER(STR(?c), "Q")) AS ?compound)
+            ?compound_smiles
+            WHERE {
+              ?c wdt:P233 ?compound_smiles .
+            }
+            """,
+                    endpoint=effective_config["qlever_endpoint"],
+                ),
+            )
+            .select(
+                pl.col("compound").cast(pl.UInt32, strict=False),
+                pl.col("compound_smiles").cast(pl.String, strict=False),
+            )
+            .drop_nulls()
+            .lazy()
+        )
+        _compound_ids = compound_taxon.select(pl.col("compound")).unique()
+        compound_smiles: pl.DataFrame = compound_smiles.join(
+            _compound_ids.lazy(),
+            on="compound",
+            how="inner",
+        ).collect()
+
+        taxon_parent = parse_sparql_response(
+            execute_with_retry(
+                query="""
+            PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+            PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+            SELECT DISTINCT
+            (xsd:integer(STRAFTER(STR(?t), "Q")) AS ?taxon)
+            (xsd:integer(STRAFTER(STR(?tp), "Q")) AS ?taxon_parent)
+            WHERE {
+              ?t wdt:P171 ?tp .
+            }
+            """,
+                endpoint=effective_config["qlever_endpoint"],
+            ),
+        ).collect()
+
+    with mo.status.spinner("Shrinking data and lineages..."):
+        focus_taxa = (
+            compound_taxon.select(pl.col("taxon"))
+            .unique()
+            .to_series()
+            .drop_nulls()
+            .unique()
+        )
+        lineage = build_hierarchy_lineage(
+            edges=taxon_parent,
+            child="taxon",
+            parent="taxon_parent",
+            focus=focus_taxa,
+        ).rename(
+            {"ancestor": "taxon_ancestor", "distance": "taxon_distance"},
+        )
+
+        _to_keep = set(
+            pl.concat(
+                [
+                    lineage.select("taxon"),
+                    lineage.select(pl.col("taxon_ancestor").alias("taxon")),
+                ],
+            )
+            .to_series()
+            .unique(),
+        )
+        taxon_parent = taxon_parent.filter(pl.col("taxon").is_in(_to_keep))
+
+        taxon_rank = (
+            parse_sparql_response(
+                execute_with_retry(
+                    query="""
+                PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+                PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+                SELECT DISTINCT
+                (xsd:integer(STRAFTER(STR(?t), "Q")) AS ?taxon)
+                (xsd:integer(STRAFTER(STR(?tr), "Q")) AS ?taxon_rank)
+                WHERE {
+                  ?t wdt:P105 ?tr .
+                }
+                """,
+                    endpoint=effective_config["qlever_endpoint"],
+                ),
+            )
+            .select(
+                pl.col("taxon").cast(pl.UInt32, strict=False),
+                pl.col("taxon_rank").cast(pl.UInt32, strict=False),
+            )
+            .drop_nulls()
+            .lazy()
+        )
+        taxon_rank = taxon_rank.filter(pl.col("taxon").is_in(_to_keep)).collect()
+
+        lineage = lineage.join(
+            taxon_rank.rename({"taxon": "taxon_ancestor"}),
+            on="taxon_ancestor",
+            how="left",
+        )
+
+        taxon_name = (
+            parse_sparql_response(
+                execute_with_retry(
+                    query="""
+                PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+                PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+                SELECT DISTINCT
+                (xsd:integer(STRAFTER(STR(?t), "Q")) AS ?taxon)
+                ?taxon_name
+                WHERE {
+                  ?t wdt:P225 ?taxon_name .
+                }
+                """,
+                    endpoint=effective_config["qlever_endpoint"],
+                ),
+            )
+            .select(
+                pl.col("taxon").cast(pl.UInt32, strict=False),
+                pl.col("taxon_name").cast(pl.String, strict=False),
+            )
+            .drop_nulls()
+            .lazy()
+        )
+        taxon_name = taxon_name.filter(pl.col("taxon").is_in(_to_keep)).collect()
+
+        logging.info(f"✓ Compound SMILES: {compound_smiles.height:,} compounds")
+        logging.info(f"✓ Taxon names: {taxon_name.height:,}")
+        logging.info(f"✓ Taxon hierarchy: {taxon_parent.height:,} parent relationships")
+        logging.info(f"✓ Taxon ranks: {taxon_rank.height:,}")
+        logging.info(f"✓ Compound-taxon annotations: {compound_taxon.height:,}")
+        logging.info("=" * 55)
+
+        # Free intermediate data
+        del _to_keep, focus_taxa
+        gc.collect()
+    return compound_smiles, compound_taxon, lineage, taxon_name, taxon_rank
+
+
+@app.cell
+def load_data_mortar(compound_smiles, effective_config):
+    # Load canonical SMILES from local file - REQUIRED for MORTAR row mapping
+    # The MORTAR fragment files map by row order to this file
+    compound_can_smiles = pl.read_csv(
+        str(effective_config["data_paths"]["path_can_smi"]),
+        low_memory=True,
+        rechunk=False,
+        has_header=False,
+        new_columns=["compound_smiles"],
+    )
+    logging.info(
+        f"✓ Canonical SMILES (local): {compound_can_smiles.height:,} compounds",
+    )
+
+    data_path = effective_config["data_paths"]
+
+    compound_mappings = load_compound_fragment_mapping(data_path["path_items_ert"])
+    frag_tables = []
+    for attr in ["path_frags_cdk", "path_frags_ert", "path_frags_sru"]:
+        p = data_path[attr]
+        frag_tables.append(
+            load_fragments(p, effective_config["filtering"]["min_frequency_scaffold"]),
+        )
+
+    scaffold_fragments = (
+        pl.concat(frag_tables).unique(subset=["SMILES"])
+        if frag_tables
+        else pl.DataFrame({"SMILES": [], "MoleculeFrequency": []})
+    )
+    logging.info(
+        f"✓ Scaffold fragments: {scaffold_fragments.height:,} (≥{effective_config['filtering']['min_frequency_scaffold']} occurrences)",
+    )
+
+    scaffolds_base = build_compound_scaffold_table(
+        compound_can_smiles,
+        compound_mappings,
+        scaffold_fragments,
+    )
+    logging.info(
+        f"✓ Base scaffolds: {scaffolds_base.height:,} compound-scaffold pairs",
+    )
+
+    if effective_config["filtering"]["include_compounds_as_scaffolds"]:
+        compound_self = compound_can_smiles.select(
+            [
+                pl.col("compound_smiles"),
+                pl.col("compound_smiles").alias("scaffold"),
+            ],
+        )
+        scaffolds_base = pl.concat([scaffolds_base, compound_self]).unique()
+        logging.info(
+            f"✓ Including compounds as scaffolds: +{compound_self.height:,} whole molecules",
+        )
+
+    compound_scaffold = compound_smiles.join(
+        scaffolds_base,
+        on="compound_smiles",
+        how="inner",
+    )
+    logging.info(f"✓ Total compound-scaffold pairs: {compound_scaffold.height:,}")
+
+    # Free intermediate data
+    del (
+        compound_can_smiles,
+        compound_mappings,
+        frag_tables,
+        scaffold_fragments,
+        scaffolds_base,
+    )
+    gc.collect()
+
+    _out = mo.md(
+        """
+        For now, scaffolds and fragments come from [MORTAR](https://github.com/FelixBaensch/MORTAR) (which requires a local installation and local files), but the long-term goal is to pull everything directly from Wikidata.
+        """,
+    ).callout(
+        kind="info",
+    )
+    _out
+    return (compound_scaffold,)
+
+
+@app.cell
+def build_lineages(compound_scaffold, lineage):
+    with mo.status.spinner("Building taxonomic lineages..."):
+        compound_lineage = build_compound_lineage(compound_scaffold)
+        taxon_lineage = lineage
+    return compound_lineage, taxon_lineage
+
+
+@app.cell
+def lineage_diagnostics(
+    compound_lineage,
+    compound_taxon: pl.DataFrame,
+    taxon_lineage,
+    taxon_rank,
+):
+    with mo.status.spinner("Computing lineage diagnostics..."):
+        ld_null_rank_count = taxon_lineage.filter(pl.col("taxon_rank").is_null()).height
+        ld_total_lineage_rows = taxon_lineage.height
+        ld_null_rank_pct = (
+            100 * ld_null_rank_count / ld_total_lineage_rows
+            if ld_total_lineage_rows > 0
+            else 0
+        )
+
+        ld_available_ranks = taxon_rank.get_column("taxon_rank").unique().to_list()
+        ld_available_ranks_sorted = sorted(
+            ld_available_ranks,
+            key=lambda r: get_rank_order(r),
+        )
+
+        ld_base_evidence = (
+            compound_taxon.join(compound_lineage, on="compound", how="inner")
+            .select(["compound", "taxon", "compound_ancestor"])
+            .unique()
+        )
+
+        ld_rank_compound_counts = []
+        for ld_rank in ld_available_ranks_sorted:
+            ld_rank_map = (
+                taxon_lineage.filter(pl.col("taxon_rank") == ld_rank)
+                .select(["taxon", "taxon_ancestor"])
+                .unique()
+            )
+            ld_rank_evidence = (
+                ld_base_evidence.join(ld_rank_map, on="taxon", how="inner")
+                .select(["compound", "taxon_ancestor"])
+                .unique()
+            )
+            ld_n_compounds = (
+                ld_rank_evidence.get_column("compound").n_unique()
+                if not ld_rank_evidence.is_empty()
+                else 0
+            )
+            ld_n_taxa = (
+                ld_rank_evidence.get_column("taxon_ancestor").n_unique()
+                if not ld_rank_evidence.is_empty()
+                else 0
+            )
+            ld_rank_compound_counts.append(
+                {
+                    "rank": ld_rank,
+                    "rank_label": get_rank_label(ld_rank),
+                    "n_mappings": ld_rank_map.height,
+                    "n_compounds_mapped": ld_n_compounds,
+                    "n_taxa_at_rank": ld_n_taxa,
+                },
+            )
+
+        ld_diag_df = pl.DataFrame(ld_rank_compound_counts).filter(
+            pl.col(name="n_compounds_mapped") > 0,
+        )
+
+    _out = mo.vstack(
+        [
+            mo.md("### Taxonomic Lineage Coverage"),
+            mo.md(
+                f"**Coverage:** {ld_total_lineage_rows - ld_null_rank_count:,} / {ld_total_lineage_rows:,} entries have assigned ranks ({100 - ld_null_rank_pct:.1f}%)",
+            ),
+            mo.md("**Compounds mapped per rank:**"),
+            mo.ui.table(
+                ld_diag_df.select(
+                    [
+                        pl.col("rank_label").alias("Rank"),
+                        pl.col("n_taxa_at_rank").alias("Taxa"),
+                        pl.col("n_compounds_mapped").alias("Compounds"),
+                    ],
+                ),
+                selection=None,
+            ),
+        ],
+    )
+    _out
+    return
+
+
+@app.cell
+def scaffold_compound_stats(compound_scaffold):
+    with mo.status.spinner("Analyzing fragment coverage..."):
+        # Filter to fragments only (scaffold != compound)
+        scs_fragments = compound_scaffold.filter(
+            pl.col("scaffold") != pl.col("compound_smiles"),
+        )
+
+        # Count compounds per fragment
+        scs_counts = (
+            scs_fragments.group_by("scaffold")
+            .agg(pl.col("compound_smiles").n_unique().alias("n_compounds"))
+            .sort("n_compounds", descending=True)
+        )
+
+        scs_total = scs_counts.height
+        scs_median = scs_counts.get_column("n_compounds").median()
+        scs_max = scs_counts.get_column("n_compounds").max()
+
+        # Build table with thumbnails in one pipeline
+        SAFE_PREVIEW_LIMIT = 800
+
+        scs_df_base = scs_counts.select(["scaffold", "n_compounds"]).rename(
+            {"n_compounds": "Compounds"},
+        )
+
+        if scs_df_base.height > SAFE_PREVIEW_LIMIT:
+            scs_preview = (
+                scs_df_base.limit(SAFE_PREVIEW_LIMIT)
+                .with_columns(
+                    [
+                        pl.col("scaffold")
+                        .map_elements(lambda s: mo.image(svg_from_smiles(s)))
+                        .alias("Structure"),
+                    ],
+                )
+                .select(["Structure", "Compounds"])
+            )
+            scs_df = scs_preview
+        else:
+            scs_df = scs_df_base.with_columns(
+                [
+                    pl.col("scaffold")
+                    .map_elements(lambda s: mo.image(svg_from_smiles(s)))
+                    .alias("Structure"),
+                ],
+            ).select(["Structure", "Compounds"])
+
+    _out = mo.vstack(
+        [
+            mo.md("### Chemical Fragment Coverage"),
+            mo.md(
+                f"**{scs_total:,}** unique fragments | Median: **{scs_median:.0f}** compounds/fragment | Max: **{scs_max}**",
+            ),
+            mo.ui.table(scs_df, selection=None),
+        ],
+    )
+    _out
+    return
+
+
+@app.cell
+def scaffold_trace_diagnostic(markers):
+    # Materialize only what we need for top scaffolds
+    st_top_scaffolds = (
+        markers.group_by("compound_ancestor")
+        .agg([pl.col("posterior_enrich_prob").max().alias("max_p")])
+        .sort("max_p", descending=True)
+        .head(5)
+        .collect()
+    )
+
+    if st_top_scaffolds.is_empty():
+        _out = mo.md("*No scaffold data available*")
+
+    st_available_ranks = (
+        markers.select("taxon_rank")
+        .unique()
+        .collect()
+        .get_column("taxon_rank")
+        .to_list()
+    )
+    st_available_ranks = sorted(st_available_ranks, key=lambda r: get_rank_order(r))
+
+    trace_results = []
+    for st_row in st_top_scaffolds.iter_rows(named=True):
+        st_scaffold = st_row["compound_ancestor"]
+        # Materialize only data for this scaffold
+        st_scaffold_markers = markers.filter(
+            pl.col("compound_ancestor") == st_scaffold,
+        ).collect()
+        for st_rank in st_available_ranks:
+            st_rank_data = st_scaffold_markers.filter(pl.col("taxon_rank") == st_rank)
+            if not st_rank_data.is_empty():
+                st_best = st_rank_data.sort(
+                    ["posterior_enrich_prob", "taxon_ancestor"],
+                    descending=[True, False],
+                ).row(0, named=True)
+                st_decision = st_best.get("rope_decision", "?")
+                st_badge = (
+                    "🟢"
+                    if st_decision == "enriched"
+                    else ("🔴" if st_decision == "depleted" else "🟡")
+                )
+                trace_results.append(
+                    {
+                        "Scaffold": st_scaffold,
+                        "Rank": get_rank_label(st_rank),
+                        "Taxon": st_best.get("taxon_name", "?"),
+                        "n": st_best.get("a_raw", 0),
+                        "FC": round(st_best.get("log2_enrichment", 0), 1),
+                        "Status": st_badge,
+                    },
+                )
+
+    # Filter out very weak evidence rows (n <= 1) which are not informative
+    trace_df = (
+        pl.DataFrame(trace_results).filter(pl.col("n") > 1)
+        if trace_results
+        else pl.DataFrame()
+    )
+
+    # Add a small legend explaining status badges used in the table
+    legend_md = mo.md(
+        "**Legend:** 🟢 enriched | 🔴 depleted | 🟡 undecided | (rows with n ≤ 1 removed)",
+    )
+
+    _out = mo.vstack(
+        [
+            mo.md("### Top Scaffolds by Rank"),
+            mo.ui.table(trace_df, selection=None),
+            legend_md if not trace_df.is_empty() else mo.md("*No data*"),
+        ],
+    )
+    _out
+    return
+
+
+@app.cell
+def run_analysis(
+    compound_lineage,
+    compound_taxon: pl.DataFrame,
+    effective_config,
+    taxon_lineage,
+    taxon_name,
+    taxon_rank,
+):
+    with mo.status.spinner("Computing Bayesian enrichment analysis..."):
+        markers = run_hierarchical_analysis(
+            compound_taxon,
+            compound_lineage,
+            taxon_lineage,
+            taxon_name,
+            taxon_rank,
+            effective_config,
+        )
+    return (markers,)
+
+
+@app.cell
+def _(markers, disabled=True):
+    markers
+    return
+
+
+@app.cell
+def discovery_mode(effective_config, markers):
+    # Sort by: ROPE decision (enriched first), then ESS desc
+    # Custom sort: enriched > undecided > equivalent > depleted
+    CI_PROB = effective_config["stats"]["ci_prob"]
+
+    # Materialize only top results for display
+    DISPLAY_LIMIT = 1000
+
+    dm_top = (
+        markers.with_columns(
+            [
+                pl.when(pl.col("rope_decision") == "enriched")
+                .then(pl.lit(0))
+                .when(pl.col("rope_decision") == "undecided")
+                .then(pl.lit(1))
+                .when(pl.col("rope_decision") == "equivalent")
+                .then(pl.lit(2))
+                .otherwise(pl.lit(3))
+                .alias("_sort_decision"),
+            ],
+        )
+        .sort(
+            [
+                "_sort_decision",
+                "reliable",
+                "effective_sample_size",
+            ],
+            descending=[False, True, True],
+        )
+        .head(DISPLAY_LIMIT)
+        .drop("_sort_decision")
+        .collect()  # Materialize only the limited result
+    )
+
+    dm_display = dm_top.select(
+        [
+            pl.col("compound_ancestor").alias("Scaffold"),
+            pl.col("taxon_name").fill_null(pl.col("taxon_ancestor")).alias("Taxon"),
+            # Use taxon_rank_label if present, otherwise fall back to raw taxon_rank
+            pl.coalesce([pl.col("taxon_rank_label"), pl.col("taxon_rank")]).alias(
+                "Rank",
+            ),
+            pl.col("a_raw").alias("n"),
+            pl.col("n_source_taxa").alias("Taxa"),
+            pl.col("n_eff_phylo").round(1).alias("EffTaxa"),
+            pl.col("effective_sample_size").round(1).alias("ESS"),
+            pl.col("log2_enrichment").round(2).alias("log₂FC"),
+            (
+                pl.lit("[")
+                + pl.col("ci_lower").round(2).cast(pl.Utf8)
+                + pl.lit(", ")
+                + pl.col("ci_upper").round(2).cast(pl.Utf8)
+                + pl.lit("]")
+            ).alias(f"{int(CI_PROB * 100)}% CI"),
+            pl.col("rope_decision").alias("Decision"),
+            pl.when(pl.col("reliable"))
+            .then(pl.lit("✓"))
+            .otherwise(pl.lit("○"))
+            .alias("Rel"),
+        ],
+    )
+
+    # Summary stats - compute lazily
+    dm_n_enriched = (
+        markers.filter(pl.col("rope_decision") == "enriched")
+        .select(pl.len())
+        .collect()
+        .item()
+    )
+    dm_n_reliable = (
+        markers.filter(pl.col("reliable") & (pl.col("rope_decision") == "enriched"))
+        .select(pl.len())
+        .collect()
+        .item()
+    )
+    dm_n_total = markers.select(pl.len()).collect().item()
+
+    limited_msg = (
+        f" (showing top {DISPLAY_LIMIT})" if dm_top.height == DISPLAY_LIMIT else ""
+    )
+
+    _out = mo.vstack(
+        [
+            mo.md(f"""
+    ## All Enrichment Results
+
+    🟢 **{dm_n_enriched:,}** enriched | ✓ **{dm_n_reliable:,}** reliable (ESS ≥ {MIN_ESS}) | **{dm_n_total:,}** total{limited_msg}
+    """),
+            mo.ui.table(dm_display, selection=None),
+        ],
+    )
+    _out
+    return
+
+
+@app.cell
+def summary_stats(compound_scaffold, markers):
+    # Compute counts lazily
+    ss_n_total = markers.select(pl.len()).collect().item()
+    ss_n_scaffolds = (
+        markers.select(pl.col("compound_ancestor").n_unique()).collect().item()
+    )
+    ss_ranks = (
+        markers.select("taxon_rank")
+        .unique()
+        .collect()
+        .get_column("taxon_rank")
+        .to_list()
+    )
+    ss_rank_labels = [get_rank_label(r) for r in sorted(ss_ranks, key=get_rank_order)]
+
+    # Calculate scaffold type breakdown using lazy operations
+    ss_unique_scaffolds = (
+        markers.select("compound_ancestor")
+        .unique()
+        .collect()
+        .get_column("compound_ancestor")
+    )
+    ss_unique_compounds = compound_scaffold.get_column("compound_smiles").unique()
+
+    ss_n_compound = len(
+        set(ss_unique_scaffolds.to_list()) & set(ss_unique_compounds.to_list()),
+    )
+    ss_n_fragment = ss_n_scaffolds - ss_n_compound
+
+    _out = mo.vstack(
+        [
+            mo.md("### Analysis Summary"),
+            mo.hstack(
+                [
+                    mo.stat(
+                        value=str(ss_n_total),
+                        label="Enrichment Pairs",
+                        caption="scaffold × taxon",
+                    ),
+                    mo.stat(
+                        value=str(ss_n_scaffolds),
+                        label="Unique Scaffolds",
+                        caption=f"{ss_n_compound} compounds + {ss_n_fragment} fragments",
+                    ),
+                    mo.stat(
+                        value=str(len(ss_ranks)),
+                        label="Taxonomic Ranks",
+                        caption=", ".join(ss_rank_labels),
+                    ),
+                ],
+                justify="start",
+                wrap=True,
+                gap=2,
+            ),
+        ],
+    )
+    _out
+    return
+
+
+@app.cell
+def lineage_profile_viz(markers):
+    """Scaffold selector for lineage profile visualization.
+
+    Parameters
+    ----------
+    markers : Any
+        Markers.
+
+    """
+    mo.md("---")
+
+    # Find "good examples" - scaffolds with consistent enrichment across ranks
+    # Sort by average enrichment (best signal), then scaffold size for reproducibility
+    # Limit examples to reduce memory
+    # MAX_EXAMPLES = 100
+
+    good_examples_df = (
+        markers.filter(pl.col("rope_decision") == "enriched")
+        .group_by("compound_ancestor")
+        .agg(
+            [
+                pl.col("taxon_rank").n_unique().alias("n_ranks"),
+                pl.col("log2_enrichment").mean().alias("avg_fc"),
+            ],
+        )
+        .filter(pl.col("n_ranks") >= 3)  # Enriched in at least 3 ranks
+        .sort("avg_fc", descending=True)
+        .collect()  # Materialize limited result
+    )
+    good_examples = good_examples_df.get_column("compound_ancestor").to_list()
+
+    # Fall back to all scaffolds if no good examples
+    # Sort by max posterior, then scaffold size for reproducibility
+    if not good_examples:
+        good_examples = (
+            markers.group_by("compound_ancestor")
+            .agg(pl.col("posterior_enrich_prob").max().alias("max_p"))
+            .sort("max_p", descending=True)
+            # .head(MAX_EXAMPLES)
+            .collect()  # Materialize limited result
+            .get_column("compound_ancestor")
+            .to_list()
+        )
+
+    scaffold_select = mo.ui.dropdown(
+        options=good_examples if good_examples else ["No scaffolds"],
+        value=good_examples[0] if good_examples else None,
+        label="Select scaffold (ranked by size, then enrichment)",
+    )
+    scaffold_select
+    return (scaffold_select,)
+
+
+@app.cell
+def show_lineage_profile(markers, scaffold_select, taxon_lineage):
+    selected_scaffold = scaffold_select.value
+
+    # Check if markers is empty (works for both LazyFrame and DataFrame)
+    is_empty = (
+        markers.select(pl.len()).collect().item() == 0
+        if hasattr(markers, "collect")
+        else markers.is_empty()
+    )
+
+    if not selected_scaffold or is_empty:
+        _out = mo.md("*Select a scaffold to view its lineage profile*")
+    else:
+        # Materialize only the data for this specific scaffold
+        lp_profile = (
+            markers.filter(
+                pl.col("compound_ancestor") == selected_scaffold,
+            ).collect()  # Materialize only this scaffold's data
+        )
+
+        if lp_profile.is_empty():
+            _out = mo.md(f"*No data found for scaffold: {selected_scaffold}*")
+        else:
+            LP_RANKS = [
+                "Kingdom",
+                "Phylum",
+                "Class",
+                "Order",
+                "Family",
+                "Genus",
+                "Species",
+            ]
+
+            # Create lookup table for rank labels
+            unique_ranks = lp_profile.get_column("taxon_rank").unique().to_list()
+            rank_lookup = pl.DataFrame(
+                {
+                    "taxon_rank": unique_ranks,
+                    "lp_rank_label": [get_rank_label(r) for r in unique_ranks],
+                    "lp_rank_order": [get_rank_order(r) for r in unique_ranks],
+                },
+            )
+
+            # Add rank labels via join
+            lp_profile_with_labels = lp_profile.join(
+                rank_lookup,
+                on="taxon_rank",
+                how="left",
+            )
+
+            # Filter to standard ranks only
+            lp_profile_named = lp_profile_with_labels.filter(
+                pl.col("lp_rank_label").is_in(LP_RANKS),
+            )
+
+            if lp_profile_named.is_empty():
+                # Fallback: show top enrichments without rank filtering
+                lp_top = lp_profile.sort(
+                    ["posterior_enrich_prob", "taxon_ancestor"],
+                    descending=[True, False],
+                ).head(5)
+                lp_summary_rows = []
+                for lp_row in lp_top.iter_rows(named=True):
+                    lp_summary_rows.append(
+                        f"- {lp_row.get('taxon_name', '?')}: {lp_row.get('posterior_enrich_prob', 0):.3f}",
+                    )
+                _out = mo.md(f"""
+                ### Lineage Profile: `{selected_scaffold}`
+
+                *No standard rank data found. Top enrichments:*
+
+                {chr(10).join(lp_summary_rows)}
+                """)
+            else:
+                # FIND MAIN LINEAGE - best average posterior across ranks
+                lp_species = lp_profile_named.filter(
+                    pl.col("lp_rank_label") == "Species",
+                )
+
+                lp_best_lineage_score = 0.0
+                lp_best_lineage_taxa = set()
+
+                if not lp_species.is_empty():
+                    for sp_row in lp_species.iter_rows(named=True):
+                        sp_taxon = sp_row["taxon_ancestor"]
+                        sp_ancestors = set(
+                            taxon_lineage.filter(pl.col("taxon") == sp_taxon)
+                            .get_column("taxon_ancestor")
+                            .to_list(),
+                        ) | {sp_taxon}
+
+                        lineage_data = lp_profile_named.filter(
+                            pl.col("taxon_ancestor").is_in(list(sp_ancestors)),
+                        )
+
+                        if len(lineage_data) > 0:
+                            # Sum posterior across lineage (higher = better)
+                            total_posterior = (
+                                lineage_data.get_column("posterior_enrich_prob").sum()
+                                or 0
+                            )
+                            if total_posterior > lp_best_lineage_score:
+                                lp_best_lineage_score = total_posterior
+                                lp_best_lineage_taxa = sp_ancestors
+
+                # Fallback: if no species, use best overall taxon
+                if not lp_best_lineage_taxa:
+                    lp_best_overall = lp_profile_named.sort(
+                        ["posterior_enrich_prob", "taxon_ancestor"],
+                        descending=[True, False],
+                    ).head(1)
+                    if not lp_best_overall.is_empty():
+                        lp_best_taxon = lp_best_overall.get_column("taxon_ancestor")[0]
+                        lp_best_lineage_taxa = set(
+                            taxon_lineage.filter(pl.col("taxon") == lp_best_taxon)
+                            .get_column("taxon_ancestor")
+                            .to_list(),
+                        )
+
+                # For each rank, get the main lineage taxon
+                lp_main_by_rank = {}
+                for lp_rank in LP_RANKS:
+                    lp_rank_main = lp_profile_named.filter(
+                        (pl.col("lp_rank_label") == lp_rank)
+                        & (pl.col("taxon_ancestor").is_in(list(lp_best_lineage_taxa))),
+                    ).sort(
+                        ["posterior_enrich_prob", "taxon_ancestor"],
+                        descending=[True, False],
+                    )
+
+                    if not lp_rank_main.is_empty():
+                        lp_main_by_rank[lp_rank] = lp_rank_main.row(0, named=True)
+
+                # Build table data for clean display
+                lp_table_data = []
+                lp_divergent_count = 0
+
+                for lp_rank in LP_RANKS:
+                    lp_rank_data = lp_profile_named.filter(
+                        pl.col("lp_rank_label") == lp_rank,
+                    )
+
+                    if lp_rank_data.is_empty():
+                        continue  # Skip empty ranks
+
+                    lp_m = lp_main_by_rank.get(lp_rank)
+
+                    if lp_m:
+                        lp_decision = lp_m.get("rope_decision", "?")
+
+                        # Only show enriched or depleted, skip undecided/equivalent
+                        if lp_decision not in ("enriched", "depleted"):
+                            continue
+
+                        lp_taxon = str(lp_m.get("taxon_name", "?"))
+                        lp_fc = lp_m.get("log2_enrichment", 0)
+                        lp_n = lp_m.get("a_raw", 0)
+
+                        status = "🟢" if lp_decision == "enriched" else "🔴"
+
+                        lp_table_data.append(
+                            {
+                                "Rank": lp_rank,
+                                "Taxon": lp_taxon,
+                                "FC": round(lp_fc, 1),
+                                "n": lp_n,
+                                "Status": status,
+                            },
+                        )
+
+                    # Check for divergent taxa (only enriched)
+                    lp_div_rows = lp_rank_data.filter(
+                        ~pl.col("taxon_ancestor").is_in(list(lp_best_lineage_taxa))
+                        & (pl.col("rope_decision") == "enriched"),
+                    ).sort(
+                        ["effective_sample_size", "taxon_ancestor"],
+                        descending=[True, False],
+                    )
+
+                    for lp_div in lp_div_rows.head(1).iter_rows(named=True):
+                        lp_div_taxon = str(lp_div.get("taxon_name", "?"))
+                        lp_div_fc = lp_div.get("log2_enrichment", 0)
+                        lp_table_data.append(
+                            {
+                                "Rank": "  ↳ other",
+                                "Taxon": lp_div_taxon,
+                                "FC": round(lp_div_fc, 1),
+                                "n": lp_div.get("a_raw", 0),
+                                "Status": "🔶",
+                            },
+                        )
+                        lp_divergent_count += 1
+
+                lp_df = pl.DataFrame(lp_table_data)
+
+                # Pattern summary
+                if lp_df.is_empty():
+                    lp_pattern = mo.callout(
+                        "No significant enrichment found",
+                        kind="info",
+                    )
+                elif lp_divergent_count >= 3:
+                    lp_pattern = mo.callout(
+                        "Found in multiple unrelated lineages — possible convergent evolution",
+                        kind="warn",
+                    )
+                elif lp_divergent_count >= 1:
+                    lp_pattern = mo.callout(
+                        "Some enrichment outside main lineage",
+                        kind="info",
+                    )
+                else:
+                    lp_pattern = mo.callout(
+                        "Enrichment follows single lineage — strong phylogenetic signal",
+                        kind="success",
+                    )
+
+                # Structure image
+                lp_struct_img = mo.image(svg_from_smiles([selected_scaffold][0]))
+                lp_short_smi = selected_scaffold
+
+                _out = mo.vstack(
+                    [
+                        mo.md("### Taxonomic Lineage Profile"),
+                        mo.vstack(
+                            [lp_struct_img, mo.md(f"`{lp_short_smi}`")],
+                            justify="start",
+                            gap=1,
+                        ),
+                        mo.ui.table(lp_df, selection=None)
+                        if not lp_df.is_empty()
+                        else mo.md("*No enriched ranks*"),
+                        lp_pattern,
+                    ],
+                )
+    _out
+    return
+
+
+@app.cell
+def markers_kin(markers):
+    kingdom_top_taxa = discover_top_taxa(markers, "Kingdom")
+    kingdom_markers = get_markers_for_top_taxa(markers, "Kingdom", kingdom_top_taxa)
+    kingdom_summary = create_taxa_summary_table(kingdom_markers, "Kingdom")
+    kingdom_detail = create_markers_detail_table(kingdom_markers, "Kingdom")
+
+    _out = mo.vstack(
+        [
+            mo.md("## Kingdom Level"),
+            create_taxa_marker_heatmap(kingdom_markers, "Kingdom"),
+            mo.md("### Summary by Kingdom"),
+            mo.ui.table(kingdom_summary, selection=None)
+            if not kingdom_summary.is_empty()
+            else mo.md("*No data*"),
+            mo.md("### Detailed Markers"),
+            mo.ui.table(kingdom_detail, selection=None)
+            if not kingdom_detail.is_empty()
+            else mo.md("*No data*"),
+        ],
+    )
+
+    _out
+    return
+
+
+@app.cell
+def markers_fam(markers):
+    family_top_taxa = discover_top_taxa(markers, "Family")
+    family_markers = get_markers_for_top_taxa(markers, "Family", family_top_taxa)
+    family_summary = create_taxa_summary_table(family_markers, "Family")
+    family_detail = create_markers_detail_table(family_markers, "Family")
+
+    _out = mo.vstack(
+        [
+            mo.md("## Family Level"),
+            create_taxa_marker_heatmap(family_markers, "Family"),
+            mo.md("### Summary by Family"),
+            mo.ui.table(family_summary, selection=None)
+            if not family_summary.is_empty()
+            else mo.md("*No data*"),
+            mo.md("### Detailed Markers"),
+            mo.ui.table(family_detail, selection=None)
+            if not family_detail.is_empty()
+            else mo.md("*No data*"),
+        ],
+    )
+
+    _out
+    return
+
+
+@app.cell
+def markers_gen(markers):
+    genus_top_taxa = discover_top_taxa(markers, "Genus")
+    genus_markers = get_markers_for_top_taxa(markers, "Genus", genus_top_taxa)
+    genus_summary = create_taxa_summary_table(genus_markers, "Genus")
+    genus_detail = create_markers_detail_table(genus_markers, "Genus")
+
+    _out = mo.vstack(
+        [
+            mo.md("## Genus Level"),
+            create_taxa_marker_heatmap(genus_markers, "Genus"),
+            mo.md("### Summary by Genus"),
+            mo.ui.table(genus_summary, selection=None)
+            if not genus_summary.is_empty()
+            else mo.md("*No data*"),
+            mo.md("### Detailed Markers"),
+            mo.ui.table(genus_detail, selection=None)
+            if not genus_detail.is_empty()
+            else mo.md("*No data*"),
+        ],
+    )
+
+    _out
+    return
+
+
+@app.cell
+def methods_summary(
+    compound_scaffold,
+    compound_taxon: pl.DataFrame,
+    effective_config,
+    markers,
+):
+    """Statistical methods summary for reproducibility and publication.
+
+    Parameters
+    ----------
+    compound_scaffold : Any
+        Compound scaffold.
+    compound_taxon : pl.DataFrame
+        Compound taxon.
+    effective_config : Any
+        Effective config.
+    markers : Any
+        Markers.
+
+    """
+    # Count key statistics - collect lazily
+    n_compounds = compound_scaffold.get_column("compound_smiles").n_unique()
+    n_taxa_s = compound_taxon.get_column("taxon").n_unique()
+    n_pairs = markers.select(pl.len()).collect().item()
+    n_enriched = (
+        markers.filter(pl.col("rope_decision") == "enriched")
+        .select(pl.len())
+        .collect()
+        .item()
+    )
+    n_reliable = (
+        markers.filter(pl.col("reliable") & (pl.col("rope_decision") == "enriched"))
+        .select(pl.len())
+        .collect()
+        .item()
+    )
+
+    _out = mo.vstack(
+        [
+            mo.md("---"),
+            mo.md("### Methods Summary"),
+            mo.md(f"""
+    **Data:** {n_compounds:,} compounds across {n_taxa_s:,} taxa
+
+    **Statistical Model:**
+    - Prior: Beta(θ₀λ, (1-θ₀)λ) with λ = {effective_config["priors"]["prior_strength"]}
+    - Baseline θ₀: Scaffold's observed frequency in dataset
+    - Diversity weighting: a_eff = √(compounds × n_eff_phylo)
+    - Phylogenetic independence: n_eff_phylo = n² / Σᵢⱼ exp(-{effective_config["stats"].get("phylo_decay_rate", 0.5)} × d_ij) where d_ij is taxonomic distance
+    - Hierarchical prior flow: {effective_config["priors"]["hierarchical_prior_flow"]} (weight = {effective_config["priors"]["hierarchical_weight"]})
+
+    **Decision Framework:**
+    - Credible interval: {int(effective_config["stats"]["ci_prob"] * 100)}%
+    - ROPE half-width: ±{effective_config["stats"]["rope_half_width"]} log₂ FC
+    - Reliable if ESS ≥ {effective_config["stats"]["min_ess"]}
+
+    **Results:** {n_pairs:,} scaffold-taxon pairs tested  → {n_enriched:,} enriched ({n_reliable:,} reliable)
+    """),
+        ],
+    )
+    _out
+    return
+
+
+@app.cell
+def ui_disclaimer():
+    if IS_PYODIDE:
+        _out = mo.callout(
+            mo.md("""
+            **Browser Version Limitations:**
+            - Might fail because of memory constraints
+            - For unlimited results, run locally:
+            ```bash
+            uvx marimo run https://adafede.github.io/marimo/apps/bayesian_chemotaxonomic_profiler.py
+            ```
+            """),
+            kind="warn",
+        ).style(
+            style={
+                "overflow-wrap": "anywhere",
+            },
+        )
+    else:
+        _out = mo.Html("")
+    _out
+    return
+
+
+@app.cell
+def footer():
+    mo.md("""
+    ---
+    **Data:**
+    <a href="https://www.wikidata.org/wiki/Q104225190" style="color:#990000;">LOTUS Initiative</a> &
+    <a href="https://www.wikidata.org/" style="color:#990000;">Wikidata</a> |
+    **Code:**
+    <a href="https://github.com/Adafede/marimo/blob/main/apps/bayesian_chemotaxonomic_profiler.py" style="color:#339966;">bayesian_chemotaxonomic_profiler.py</a> |
+    **External tools:**
+    <a href="https://github.com/FelixBaensch/MORTAR" style="color:#006699;">MORTAR</a> &
+    <a href="https://github.com/cdk/depict" style="color:#006699;">CDK Depict</a> &
+    <a href="https://qlever.dev/wikidata" style="color:#006699;">QLever</a> |
+    **License:**
+    <a href="https://creativecommons.org/publicdomain/zero/1.0/" style="color:#484848;">CC0 1.0</a> for data &
+    <a href="https://www.gnu.org/licenses/agpl-3.0.html" style="color:#484848;">AGPL-3.0</a> for code
+    """)
+    return
+
+
+if __name__ == "__main__":
+    app.run()
