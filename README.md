@@ -1,6 +1,7 @@
 # marimo WebAssembly + GitHub Pages Template
 
-This template repository demonstrates how to export [marimo](https://marimo.io) notebooks to WebAssembly and deploy them to GitHub Pages.
+This template repository demonstrates how to export [marimo](https://marimo.io)
+notebooks to WebAssembly and deploy them to GitHub Pages.
 
 ## 📚 Included Examples
 
@@ -15,20 +16,24 @@ This template repository demonstrates how to export [marimo](https://marimo.io) 
    1. `notebooks/` notebooks are exported with `--mode edit`
    2. `apps/` notebooks are exported with `--mode run`
 3. Push to main branch
-4. Go to repository **Settings > Pages** and change the "Source" dropdown to "GitHub Actions"
+4. Go to repository **Settings > Pages** and change the "Source" dropdown to
+   "GitHub Actions"
 5. GitHub Actions will automatically build and deploy to Pages
 
 ## Including data or assets
 
-To include data or assets in your notebooks, add them to the `public/` directory.
+To include data or assets in your notebooks, add them to the `public/`
+directory.
 
-For example, the `apps/charts.py` notebook loads an image asset from the `public/` directory.
+For example, the `apps/charts.py` notebook loads an image asset from the
+`public/` directory.
 
 ```markdown
 <img src="public/logo.png" width="200" />
 ```
 
-And the `notebooks/penguins.py` notebook loads a CSV dataset from the `public/` directory.
+And the `notebooks/penguins.py` notebook loads a CSV dataset from the `public/`
+directory.
 
 ```python
 import polars as pl
@@ -49,17 +54,20 @@ To use a specific template, pass the `--template` parameter to the build script:
 uv run .github/scripts/build.py --template templates/tailwind.html.j2
 ```
 
-You can also create your own custom templates. See the [templates/README.md](templates/README.md) for more information.
+You can also create your own custom templates. See the
+[templates/README.md](templates/README.md) for more information.
 
 ## 🧪 Testing
 
-To test the export process, run `.github/scripts/build.py` from the root directory.
+To test the export process, run `.github/scripts/build.py` from the root
+directory.
 
 ```bash
 uv run .github/scripts/build.py
 ```
 
-This will export all notebooks in a folder called `_site/` in the root directory. Then to serve the site, run:
+This will export all notebooks in a folder called `_site/` in the root
+directory. Then to serve the site, run:
 
 ```bash
 python -m http.server -d _site

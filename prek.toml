@@ -20,10 +20,7 @@ hooks = [
   { id = "debug-statements" },
   { id = "destroyed-symlinks" },
   { id = "detect-private-key" },
-  {
-    id = "end-of-file-fixer",
-    exclude = "^apps/public/"
-  },
+  { id = "end-of-file-fixer", exclude = "^apps/public/" },
   { id = "fix-byte-order-marker" },
   { id = "mixed-line-ending" },
   { id = "trailing-whitespace" }
@@ -43,61 +40,38 @@ hooks = [
 
 [[repos]]
 repo = "https://github.com/python-jsonschema/check-jsonschema"
-rev = "0.37.2"
-hooks = [
-  { id = "check-github-workflows" },
-  { id = "check-taskfile" }
-]
+rev = "0.37.3"
+hooks = [{ id = "check-github-workflows" }, { id = "check-taskfile" }]
 
 [[repos]]
 repo = "https://github.com/asottile/pyupgrade"
 rev = "v3.21.2"
-hooks = [
-  { id = "pyupgrade" }
-]
+hooks = [{ id = "pyupgrade" }]
 
 [[repos]]
 repo = "https://github.com/asottile/add-trailing-comma"
 rev = "v4.0.0"
-hooks = [
-  { id = "add-trailing-comma" }
-]
+hooks = [{ id = "add-trailing-comma" }]
 
 [[repos]]
 repo = "https://github.com/astral-sh/ruff-pre-commit"
-rev = "v0.15.16"
-hooks = [
-  {
-    id = "ruff-check",
-    args = ["--fix"]
-  },
-  { id = "ruff-format" }
-]
+rev = "v0.15.18"
+hooks = [{ id = "ruff-check", args = ["--fix"] }, { id = "ruff-format" }]
 
 [[repos]]
 repo = "https://github.com/tombi-toml/tombi-pre-commit"
-rev = "v1.1.2"
-hooks = [
-  { id = "tombi-format" },
-  { id = "tombi-lint" }
-]
+rev = "v1.1.3"
+hooks = [{ id = "tombi-format" }, { id = "tombi-lint" }]
 
 [[repos]]
 repo = "https://github.com/crate-ci/typos"
 rev = "v1.47.2"
-hooks = [
-  {
-    id = "typos",
-    exclude = "^apps/public/"
-  }
-]
+hooks = [{ id = "typos", exclude = "^apps/public/" }]
 
 [[repos]]
 repo = "https://github.com/astral-sh/uv-pre-commit"
-rev = "0.11.19"
-hooks = [
-  { id = "uv-lock" }
-]
+rev = "0.11.22"
+hooks = [{ id = "uv-lock" }]
 
 [[repos]]
 repo = "local"
@@ -115,17 +89,9 @@ hooks = [
 [[repos]]
 repo = "https://github.com/zizmorcore/zizmor-pre-commit"
 rev = "v1.25.2"
-hooks = [
-  {
-    id = "zizmor",
-    entry = "zizmor --fix=all ."
-  }
-]
+hooks = [{ id = "zizmor", entry = "zizmor --fix=all ." }]
 
 [[repos]]
 repo = "https://github.com/jolars/panache-pre-commit"
-rev = "v2.43.1"
-hooks = [
-  { id = "panache-format" },
-  { id = "panache-lint" }
-]
+rev = "v2.56.0"
+hooks = [{ id = "panache-format" }, { id = "panache-lint" }]
