@@ -83,7 +83,12 @@ with app.setup:
         "preview_max_root_nodes": 30,
         "preview_max_children": 20,
         "preview_max_depth": 3,
-        "npclassifier_cache_url": "https://adafede.github.io/marimo/apps/public/npclassifier/npclassifier_cache.csv",
+        "npclassifier_cache_url": "https://media.githubusercontent.com/media/adafede/marimo/main/apps/public/npclassifier/npclassifier_cache.csv",
+        "npclassifier_cache_urls": [
+            "https://media.githubusercontent.com/media/adafede/marimo/main/apps/public/npclassifier/npclassifier_cache.csv",
+            "https://raw.githubusercontent.com/adafede/marimo/main/apps/public/npclassifier/npclassifier_cache.csv",
+            "https://adafede.github.io/marimo/apps/public/npclassifier/npclassifier_cache.csv",
+        ],
     }
 
     # Metadata for provenance and reproducibility
@@ -1581,7 +1586,7 @@ with app.setup:
     # ========================================================================
 
     def fetch_npclassifier_cache(url: str | None = None) -> pl.DataFrame:
-        """Fetch NPClassifier cache CSV from remote URL.
+        """Fetch NPClassifier cache CSV from a real asset URL or bundled local file.
 
                                 The cache contains SMILES with their NPClassifier annotations:
                                 - pathway: Top-level classification (e.g., "Terpenoids", "Alkaloids")
@@ -1602,13 +1607,26 @@ with app.setup:
 
         """
         import urllib.request
+        from pathlib import Path
 
-        url = url or str(CONFIG["npclassifier_cache_url"])
-        try:
-            with urllib.request.urlopen(url, timeout=60) as resp:
-                csv_bytes = resp.read()
+        def _empty_npclassifier_df() -> pl.DataFrame:
+            return pl.DataFrame(
+                schema={
+                    "smiles": pl.Utf8,
+                    "pathway": pl.Utf8,
+                    "superclass": pl.Utf8,
+                    "class": pl.Utf8,
+                    "isglycoside": pl.Utf8,
+                    "error": pl.Utf8,
+                },
+            )
+
+        def _read_npclassifier_csv(cache_bytes: bytes) -> pl.DataFrame:
+            text = cache_bytes.decode("utf-8", errors="replace").lstrip()
+            if text.startswith("version https://git-lfs.github.com/spec/v1"):
+                raise ValueError("remote cache is a Git LFS pointer")
             return pl.read_csv(
-                io.BytesIO(csv_bytes),
+                io.BytesIO(cache_bytes),
                 schema_overrides={
                     "smiles": pl.Utf8,
                     "pathway": pl.Utf8,
@@ -1618,9 +1636,49 @@ with app.setup:
                     "error": pl.Utf8,
                 },
             )
-        except Exception as e:
-            print(f"Warning: Could not fetch NPClassifier cache: {e}", file=sys.stderr)
-            return pl.DataFrame()
+
+        def _ensure_npclassifier_columns(df: pl.DataFrame) -> pl.DataFrame:
+            for col in ["smiles", "pathway", "superclass", "class", "isglycoside", "error"]:
+                if col not in df.columns:
+                    df = df.with_columns(pl.lit(None, dtype=pl.Utf8).alias(col))
+            return df
+
+        candidate_urls = [url] if url else list(CONFIG.get("npclassifier_cache_urls", [str(CONFIG["npclassifier_cache_url"])]))
+        if not any(candidate_urls):
+            candidate_urls = [str(CONFIG["npclassifier_cache_url"])]
+
+        local_candidates = [
+            Path(__file__).resolve().parent / "public" / "npclassifier" / "npclassifier_cache.csv",
+            Path.cwd() / "apps" / "public" / "npclassifier" / "npclassifier_cache.csv",
+            Path.cwd() / "public" / "npclassifier" / "npclassifier_cache.csv",
+        ]
+
+        for candidate in local_candidates:
+            if candidate.exists():
+                try:
+                    return _ensure_npclassifier_columns(
+                        _read_npclassifier_csv(candidate.read_bytes()),
+                    )
+                except Exception as local_error:
+                    print(
+                        f"Warning: Could not read bundled NPClassifier cache {candidate}: {local_error}",
+                        file=sys.stderr,
+                    )
+                    break
+
+        for candidate_url in candidate_urls:
+            try:
+                with urllib.request.urlopen(candidate_url, timeout=60) as resp:
+                    csv_bytes = resp.read()
+                return _ensure_npclassifier_columns(_read_npclassifier_csv(csv_bytes))
+            except Exception as e:
+                print(
+                    f"Warning: Could not fetch NPClassifier cache from {candidate_url}: {e}",
+                    file=sys.stderr,
+                )
+
+        print("Warning: Could not fetch NPClassifier cache from any configured URL", file=sys.stderr)
+        return _empty_npclassifier_df()
 
     def build_npclassifier_tree(
         npclassifier_df: pl.DataFrame,
@@ -1666,6 +1724,12 @@ with app.setup:
 
         if len(npclassifier_df) == 0:
             return []
+
+        for col in ["smiles", "pathway", "superclass", "class", "isglycoside", "error"]:
+            if col not in npclassifier_df.columns:
+                npclassifier_df = npclassifier_df.with_columns(
+                    pl.lit(None, dtype=pl.Utf8).alias(col),
+                )
 
         # Filter out rows with errors or empty classifications
         valid_df = npclassifier_df.filter(

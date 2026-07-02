@@ -80,8 +80,18 @@ with app.setup:
         "app_name": "LOTUS Data Exporter",
         "qlever_endpoint": "https://qlever.dev/api/wikidata",
         "pubchem_endpoint": "https://qlever.dev/api/pubchem",
-        "npclassifier_cache_url": "https://adafede.github.io/marimo/apps/public/npclassifier/npclassifier_cache.csv",
-        "classyfire_cache_url": "https://adafede.github.io/marimo/apps/public/classyfire/classyfire_cache.csv",
+        "npclassifier_cache_url": "https://media.githubusercontent.com/media/adafede/marimo/main/apps/public/npclassifier/npclassifier_cache.csv",
+        "npclassifier_cache_urls": [
+            "https://media.githubusercontent.com/media/adafede/marimo/main/apps/public/npclassifier/npclassifier_cache.csv",
+            "https://raw.githubusercontent.com/adafede/marimo/main/apps/public/npclassifier/npclassifier_cache.csv",
+            "https://adafede.github.io/marimo/apps/public/npclassifier/npclassifier_cache.csv",
+        ],
+        "classyfire_cache_url": "https://media.githubusercontent.com/media/adafede/marimo/main/apps/public/classyfire/classyfire_cache.csv",
+        "classyfire_cache_urls": [
+            "https://media.githubusercontent.com/media/adafede/marimo/main/apps/public/classyfire/classyfire_cache.csv",
+            "https://raw.githubusercontent.com/adafede/marimo/main/apps/public/classyfire/classyfire_cache.csv",
+            "https://adafede.github.io/marimo/apps/public/classyfire/classyfire_cache.csv",
+        ],
         "ott_cache_url": "https://adafede.github.io/marimo/apps/public/ott/ott.tsv",
     }
 
@@ -344,7 +354,7 @@ with app.setup:
 
     # Zenodo record IDs (latest versions)
     ZENODO_FROZEN_RECORD_ID = (
-        "7534071"  # frozen.csv - https://zenodo.org/records/7534071
+        "19360665"  # frozen.csv - https://zenodo.org/records/19360665
     )
 
     CRITICAL_STRUCTURE_COLS = [
@@ -771,7 +781,7 @@ with app.setup:
     # ========================================================================
 
     def fetch_npclassifier_cache(url: str | None = None) -> pl.DataFrame:
-        """Fetch NPClassifier cache CSV from remote URL.
+        """Fetch NPClassifier cache CSV from a real asset URL or bundled local file.
 
         Return columns: smiles, pathway, superclass, class, isglycoside, error.
 
@@ -787,13 +797,26 @@ with app.setup:
 
         """
         import urllib.request
+        from pathlib import Path
 
-        url = url or CONFIG["npclassifier_cache_url"]
-        try:
-            with urllib.request.urlopen(url, timeout=60) as resp:
-                csv_bytes = resp.read()
+        def _empty_npclassifier_df() -> pl.DataFrame:
+            return pl.DataFrame(
+                schema={
+                    "smiles": pl.Utf8,
+                    "pathway": pl.Utf8,
+                    "superclass": pl.Utf8,
+                    "class": pl.Utf8,
+                    "isglycoside": pl.Utf8,
+                    "error": pl.Utf8,
+                },
+            )
+
+        def _read_npclassifier_csv(cache_bytes: bytes) -> pl.DataFrame:
+            text = cache_bytes.decode("utf-8", errors="replace").lstrip()
+            if text.startswith("version https://git-lfs.github.com/spec/v1"):
+                raise ValueError("remote cache is a Git LFS pointer")
             return pl.read_csv(
-                io.BytesIO(csv_bytes),
+                io.BytesIO(cache_bytes),
                 schema_overrides={
                     "smiles": pl.Utf8,
                     "pathway": pl.Utf8,
@@ -803,9 +826,49 @@ with app.setup:
                     "error": pl.Utf8,
                 },
             )
-        except Exception as e:
-            print(f"Warning: Could not fetch NPClassifier cache: {e}", file=sys.stderr)
-            return pl.DataFrame()
+
+        def _ensure_npclassifier_columns(df: pl.DataFrame) -> pl.DataFrame:
+            for col in ["smiles", "pathway", "superclass", "class", "isglycoside", "error"]:
+                if col not in df.columns:
+                    df = df.with_columns(pl.lit(None, dtype=pl.Utf8).alias(col))
+            return df
+
+        candidate_urls = [url] if url else list(CONFIG.get("npclassifier_cache_urls", [str(CONFIG["npclassifier_cache_url"])]))
+        if not any(candidate_urls):
+            candidate_urls = [str(CONFIG["npclassifier_cache_url"])]
+
+        local_candidates = [
+            Path(__file__).resolve().parent / "public" / "npclassifier" / "npclassifier_cache.csv",
+            Path.cwd() / "apps" / "public" / "npclassifier" / "npclassifier_cache.csv",
+            Path.cwd() / "public" / "npclassifier" / "npclassifier_cache.csv",
+        ]
+
+        for candidate in local_candidates:
+            if candidate.exists():
+                try:
+                    return _ensure_npclassifier_columns(
+                        _read_npclassifier_csv(candidate.read_bytes()),
+                    )
+                except Exception as local_error:
+                    print(
+                        f"Warning: Could not read bundled NPClassifier cache {candidate}: {local_error}",
+                        file=sys.stderr,
+                    )
+                    break
+
+        for candidate_url in candidate_urls:
+            try:
+                with urllib.request.urlopen(candidate_url, timeout=60) as resp:
+                    csv_bytes = resp.read()
+                return _ensure_npclassifier_columns(_read_npclassifier_csv(csv_bytes))
+            except Exception as e:
+                print(
+                    f"Warning: Could not fetch NPClassifier cache from {candidate_url}: {e}",
+                    file=sys.stderr,
+                )
+
+        print("Warning: Could not fetch NPClassifier cache from any configured URL", file=sys.stderr)
+        return _empty_npclassifier_df()
 
     def fetch_classyfire_cache(url: str | None = None) -> pl.DataFrame:
         """Fetch ClassyFire cache from remote URL or local file.
@@ -823,6 +886,7 @@ with app.setup:
             InChIKey.
 
         """
+        import urllib.request
 
         def _empty_classyfire_df() -> pl.DataFrame:
             return pl.DataFrame(
@@ -836,78 +900,123 @@ with app.setup:
                 },
             )
 
-        configured = url or CONFIG.get("classyfire_cache_url")
-        candidates = [
-            c for c in [configured, "apps/public/classyfire/classyfire_cache.csv"] if c
+        def _read_classyfire_csv(cache_bytes: bytes) -> pl.DataFrame:
+            text = cache_bytes.decode("utf-8", errors="replace").lstrip()
+            if text.startswith("version https://git-lfs.github.com/spec/v1"):
+                raise ValueError("remote cache is a Git LFS pointer")
+            return pl.read_csv(
+                io.BytesIO(cache_bytes),
+                separator="\t",
+                try_parse_dates=False,
+                truncate_ragged_lines=True,
+            )
+
+        def _normalize_classyfire_df(df: pl.DataFrame) -> pl.DataFrame:
+            if len(df) == 0:
+                return _empty_classyfire_df()
+
+            cols = set(df.columns)
+            mapped = df.select(
+                [
+                    (
+                        pl.col("inchikey")
+                        if "inchikey" in cols
+                        else pl.col("structure_inchikey")
+                        if "structure_inchikey" in cols
+                        else pl.col("structure_taxonomy_classyfire_chemontid")
+                    )
+                    .cast(pl.Utf8)
+                    .alias("inchikey"),
+                    (
+                        pl.col("chemontid")
+                        if "chemontid" in cols
+                        else pl.col("structure_tax_cla_chemontid")
+                        if "structure_tax_cla_chemontid" in cols
+                        else pl.col("structure_taxonomy_classyfire_chemontid")
+                    )
+                    .cast(pl.Utf8)
+                    .alias("chemontid"),
+                    (
+                        pl.col("kingdom")
+                        if "kingdom" in cols
+                        else pl.col("structure_tax_cla_01kin")
+                        if "structure_tax_cla_01kin" in cols
+                        else pl.col("structure_taxonomy_classyfire_01kingdom")
+                    )
+                    .cast(pl.Utf8)
+                    .alias("kingdom"),
+                    (
+                        pl.col("superclass")
+                        if "superclass" in cols
+                        else pl.col("structure_tax_cla_02sup")
+                        if "structure_tax_cla_02sup" in cols
+                        else pl.col("structure_taxonomy_classyfire_02superclass")
+                    )
+                    .cast(pl.Utf8)
+                    .alias("superclass"),
+                    (
+                        pl.col("class")
+                        if "class" in cols
+                        else pl.col("structure_tax_cla_03cla")
+                        if "structure_tax_cla_03cla" in cols
+                        else pl.col("structure_taxonomy_classyfire_03class")
+                    )
+                    .cast(pl.Utf8)
+                    .alias("class"),
+                    (
+                        pl.col("direct_parent")
+                        if "direct_parent" in cols
+                        else pl.col("structure_tax_cla_04dirpar")
+                        if "structure_tax_cla_04dirpar" in cols
+                        else pl.col("structure_taxonomy_classyfire_04directparent")
+                    )
+                    .cast(pl.Utf8)
+                    .alias("direct_parent"),
+                ],
+            ).unique(subset=["inchikey"])
+
+            return normalize_blank_strings(mapped)
+
+        candidate_urls = [url] if url else list(
+            CONFIG.get(
+                "classyfire_cache_urls",
+                [str(CONFIG["classyfire_cache_url"])],
+            ),
+        )
+        if not any(candidate_urls):
+            candidate_urls = [str(CONFIG["classyfire_cache_url"])]
+
+        local_candidates = [
+            Path(__file__).resolve().parent / "public" / "classyfire" / "classyfire_cache.csv",
+            Path.cwd() / "apps" / "public" / "classyfire" / "classyfire_cache.csv",
+            Path.cwd() / "public" / "classyfire" / "classyfire_cache.csv",
         ]
 
-        for source in candidates:
+        for candidate in local_candidates:
+            if candidate.exists():
+                try:
+                    return _normalize_classyfire_df(
+                        _read_classyfire_csv(candidate.read_bytes()),
+                    )
+                except Exception as local_error:
+                    print(
+                        f"Warning: Could not read bundled ClassyFire cache {candidate}: {local_error}",
+                        file=sys.stderr,
+                    )
+                    break
+
+        for candidate_url in candidate_urls:
             try:
-                if source.startswith("http://") or source.startswith("https://"):
-                    df = pl.read_csv(source)
-                else:
-                    if not Path(source).exists():
-                        continue
-                    df = pl.read_csv(source)
-
-                if len(df) == 0:
-                    continue
-
-                cols = set(df.columns)
-                mapped = df.select(
-                    [
-                        (
-                            pl.col("inchikey")
-                            if "inchikey" in cols
-                            else pl.col("structure_inchikey")
-                        )
-                        .cast(pl.Utf8)
-                        .alias("inchikey"),
-                        (
-                            pl.col("chemontid")
-                            if "chemontid" in cols
-                            else pl.col("structure_taxonomy_classyfire_chemontid")
-                        )
-                        .cast(pl.Utf8)
-                        .alias("chemontid"),
-                        (
-                            pl.col("kingdom")
-                            if "kingdom" in cols
-                            else pl.col("structure_taxonomy_classyfire_01kingdom")
-                        )
-                        .cast(pl.Utf8)
-                        .alias("kingdom"),
-                        (
-                            pl.col("superclass")
-                            if "superclass" in cols
-                            else pl.col("structure_taxonomy_classyfire_02superclass")
-                        )
-                        .cast(pl.Utf8)
-                        .alias("superclass"),
-                        (
-                            pl.col("class")
-                            if "class" in cols
-                            else pl.col("structure_taxonomy_classyfire_03class")
-                        )
-                        .cast(pl.Utf8)
-                        .alias("class"),
-                        (
-                            pl.col("direct_parent")
-                            if "direct_parent" in cols
-                            else pl.col("structure_taxonomy_classyfire_04directparent")
-                        )
-                        .cast(pl.Utf8)
-                        .alias("direct_parent"),
-                    ],
-                ).unique(subset=["inchikey"])
-
-                return normalize_blank_strings(mapped)
+                with urllib.request.urlopen(candidate_url, timeout=60) as resp:
+                    csv_bytes = resp.read()
+                return _normalize_classyfire_df(_read_classyfire_csv(csv_bytes))
             except Exception as e:
                 print(
-                    f"Warning: Could not read ClassyFire cache from {source}: {e}",
+                    f"Warning: Could not fetch ClassyFire cache from {candidate_url}: {e}",
                     file=sys.stderr,
                 )
 
+        print("Warning: Could not fetch ClassyFire cache from any configured URL", file=sys.stderr)
         return _empty_classyfire_df()
 
     def fetch_ott_taxonomy_cache(url: str | None = None) -> pl.DataFrame:
