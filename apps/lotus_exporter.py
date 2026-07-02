@@ -828,17 +828,35 @@ with app.setup:
             )
 
         def _ensure_npclassifier_columns(df: pl.DataFrame) -> pl.DataFrame:
-            for col in ["smiles", "pathway", "superclass", "class", "isglycoside", "error"]:
+            for col in [
+                "smiles",
+                "pathway",
+                "superclass",
+                "class",
+                "isglycoside",
+                "error",
+            ]:
                 if col not in df.columns:
                     df = df.with_columns(pl.lit(None, dtype=pl.Utf8).alias(col))
             return df
 
-        candidate_urls = [url] if url else list(CONFIG.get("npclassifier_cache_urls", [str(CONFIG["npclassifier_cache_url"])]))
+        candidate_urls = (
+            [url]
+            if url
+            else list(
+                CONFIG.get(
+                    "npclassifier_cache_urls", [str(CONFIG["npclassifier_cache_url"])]
+                )
+            )
+        )
         if not any(candidate_urls):
             candidate_urls = [str(CONFIG["npclassifier_cache_url"])]
 
         local_candidates = [
-            Path(__file__).resolve().parent / "public" / "npclassifier" / "npclassifier_cache.csv",
+            Path(__file__).resolve().parent
+            / "public"
+            / "npclassifier"
+            / "npclassifier_cache.csv",
             Path.cwd() / "apps" / "public" / "npclassifier" / "npclassifier_cache.csv",
             Path.cwd() / "public" / "npclassifier" / "npclassifier_cache.csv",
         ]
@@ -867,7 +885,10 @@ with app.setup:
                     file=sys.stderr,
                 )
 
-        print("Warning: Could not fetch NPClassifier cache from any configured URL", file=sys.stderr)
+        print(
+            "Warning: Could not fetch NPClassifier cache from any configured URL",
+            file=sys.stderr,
+        )
         return _empty_npclassifier_df()
 
     def fetch_classyfire_cache(url: str | None = None) -> pl.DataFrame:
@@ -977,17 +998,24 @@ with app.setup:
 
             return normalize_blank_strings(mapped)
 
-        candidate_urls = [url] if url else list(
-            CONFIG.get(
-                "classyfire_cache_urls",
-                [str(CONFIG["classyfire_cache_url"])],
-            ),
+        candidate_urls = (
+            [url]
+            if url
+            else list(
+                CONFIG.get(
+                    "classyfire_cache_urls",
+                    [str(CONFIG["classyfire_cache_url"])],
+                ),
+            )
         )
         if not any(candidate_urls):
             candidate_urls = [str(CONFIG["classyfire_cache_url"])]
 
         local_candidates = [
-            Path(__file__).resolve().parent / "public" / "classyfire" / "classyfire_cache.csv",
+            Path(__file__).resolve().parent
+            / "public"
+            / "classyfire"
+            / "classyfire_cache.csv",
             Path.cwd() / "apps" / "public" / "classyfire" / "classyfire_cache.csv",
             Path.cwd() / "public" / "classyfire" / "classyfire_cache.csv",
         ]
@@ -1016,7 +1044,10 @@ with app.setup:
                     file=sys.stderr,
                 )
 
-        print("Warning: Could not fetch ClassyFire cache from any configured URL", file=sys.stderr)
+        print(
+            "Warning: Could not fetch ClassyFire cache from any configured URL",
+            file=sys.stderr,
+        )
         return _empty_classyfire_df()
 
     def fetch_ott_taxonomy_cache(url: str | None = None) -> pl.DataFrame:

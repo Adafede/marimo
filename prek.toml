@@ -40,7 +40,7 @@ hooks = [
 
 [[repos]]
 repo = "https://github.com/python-jsonschema/check-jsonschema"
-rev = "0.37.3"
+rev = "0.37.4"
 hooks = [{ id = "check-github-workflows" }, { id = "check-taskfile" }]
 
 [[repos]]
@@ -55,22 +55,22 @@ hooks = [{ id = "add-trailing-comma" }]
 
 [[repos]]
 repo = "https://github.com/astral-sh/ruff-pre-commit"
-rev = "v0.15.18"
+rev = "v0.15.20"
 hooks = [{ id = "ruff-check", args = ["--fix"] }, { id = "ruff-format" }]
 
 [[repos]]
 repo = "https://github.com/tombi-toml/tombi-pre-commit"
-rev = "v1.1.5"
+rev = "v1.1.7"
 hooks = [{ id = "tombi-format" }, { id = "tombi-lint" }]
 
 [[repos]]
 repo = "https://github.com/crate-ci/typos"
-rev = "v1.47.2"
+rev = "v1.48.0"
 hooks = [{ id = "typos", exclude = "^apps/public/" }]
 
 [[repos]]
 repo = "https://github.com/astral-sh/uv-pre-commit"
-rev = "0.11.23"
+rev = "0.11.26"
 hooks = [{ id = "uv-lock" }]
 
 [[repos]]
@@ -93,5 +93,5 @@ hooks = [{ id = "zizmor", entry = "zizmor --fix=all ." }]
 
 [[repos]]
 repo = "https://github.com/jolars/panache-pre-commit"
-rev = "v2.57.0"
+rev = "v2.60.0"
 hooks = [{ id = "panache-format" }, { id = "panache-lint" }]
