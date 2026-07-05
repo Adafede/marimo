@@ -1655,8 +1655,9 @@ with app.setup:
             if url
             else list(
                 CONFIG.get(
-                    "npclassifier_cache_urls", [str(CONFIG["npclassifier_cache_url"])]
-                )
+                    "npclassifier_cache_urls",
+                    [str(CONFIG["npclassifier_cache_url"])],
+                ),
             )
         )
         if not any(candidate_urls):
