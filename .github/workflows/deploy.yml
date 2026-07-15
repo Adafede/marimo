@@ -21,6 +21,8 @@ env:
 jobs:
   # The build job exports marimo notebooks to static HTML/WebAssembly
   build:
+    permissions:
+      contents: read
     runs-on: ubuntu-latest  # Use the latest Ubuntu runner
     steps:
       # Check out the repository code
