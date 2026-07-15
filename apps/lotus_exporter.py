@@ -1069,7 +1069,7 @@ with app.setup:
             OTT taxonomy cache table mapped to the export taxonomy columns.
 
         """
-        url = url or CONFIG.get("ott_cache_url")
+        url = url or cast(str | None, CONFIG.get("ott_cache_url"))
         if not url:
             return pl.DataFrame(
                 schema={
@@ -1106,12 +1106,14 @@ with app.setup:
                 },
             )
 
-        configured = url or CONFIG.get("ott_cache_url")
+        configured = url or cast(str | None, CONFIG.get("ott_cache_url"))
         candidates = [c for c in [configured, "apps/public/ott/ott.tsv"] if c]
 
         for source in candidates:
             try:
-                if source.startswith("http://") or source.startswith("https://"):
+                if source.startswith("http://") or source.startswith(
+                    "https://",
+                ):
                     df = pl.read_csv(source, separator="\t")
                 else:
                     if not Path(source).exists():
@@ -1391,7 +1393,7 @@ with app.setup:
         if not cid_list:
             return pl.DataFrame(schema=schema)
 
-        endpoint = CONFIG["pubchem_endpoint"]
+        endpoint = cast(str, CONFIG["pubchem_endpoint"])
         unique_cids = sorted({c for c in cid_list if c})
 
         # Process in batches to avoid query size limits
@@ -1505,7 +1507,7 @@ with app.setup:
         if not inchikey_list:
             return pl.DataFrame(schema=schema)
 
-        endpoint = CONFIG["pubchem_endpoint"]
+        endpoint = cast(str, CONFIG["pubchem_endpoint"])
         unique_inchikeys = sorted({ik for ik in inchikey_list if ik})
 
         batch_size = PUBCHEM_BATCH_SIZE
@@ -1905,10 +1907,6 @@ with app.setup:
             )
 
             # Pass 2: for rows that still have no NPC data, try canonical SMILES
-            still_missing_npc = (
-                pl.col("npc_pathway").is_null()
-                & pl.col("compound_smiles_can").is_not_null()
-            )
             result = (
                 result.join(
                     npc_renamed.rename(
@@ -2520,7 +2518,7 @@ def fetch_data(run_button):
         def progress_callback(msg):
             _spinner.update(msg)
 
-        data = fetch_all_data(CONFIG["qlever_endpoint"], progress_callback)
+        data = fetch_all_data(cast(str, CONFIG["qlever_endpoint"]), progress_callback)
 
     with mo.status.spinner("Fetching NPClassifier cache..."):
         npclassifier_df = fetch_npclassifier_cache()
@@ -2781,7 +2779,10 @@ def main():
             if args.verbose:
                 print("Fetching data from Wikidata...", file=sys.stderr)
 
-            data = fetch_all_data(CONFIG["qlever_endpoint"], progress_callback)
+            data = fetch_all_data(
+                cast(str, CONFIG["qlever_endpoint"]),
+                progress_callback,
+            )
 
             if args.verbose:
                 print("\nFetching external caches...", file=sys.stderr)

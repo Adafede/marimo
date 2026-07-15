@@ -1465,9 +1465,9 @@ with app.setup:
             Tuple containing tree to display.
 
         """
-        max_depth = int(CONFIG["preview_max_depth"])
-        max_children = int(CONFIG["preview_max_children"])
-        max_root = int(CONFIG["preview_max_root_nodes"])
+        max_depth = int(cast(int | str, CONFIG["preview_max_depth"]))
+        max_children = int(cast(int | str, CONFIG["preview_max_children"]))
+        max_root = int(cast(int | str, CONFIG["preview_max_root_nodes"]))
 
         shown_count = 0
 
@@ -1654,9 +1654,12 @@ with app.setup:
             [url]
             if url
             else list(
-                CONFIG.get(
-                    "npclassifier_cache_urls",
-                    [str(CONFIG["npclassifier_cache_url"])],
+                cast(
+                    list[str],
+                    CONFIG.get(
+                        "npclassifier_cache_urls",
+                        [str(CONFIG["npclassifier_cache_url"])],
+                    ),
                 ),
             )
         )

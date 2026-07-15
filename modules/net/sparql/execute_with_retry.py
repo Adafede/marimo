@@ -156,7 +156,7 @@ def execute_with_retry(
         "http" in error_name.lower()
         or "urlerror" in error_name.lower()
         or "http" in error_msg.lower()
-        or _extract_status(last_error) is not None
+        or (last_error is not None and _extract_status(last_error) is not None)
         or isinstance(last_error, ConnectionError)
     ):
         if last_http_details is not None:
