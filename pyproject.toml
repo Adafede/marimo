@@ -16,7 +16,7 @@ dependencies = [
   "numpy>=2.4.6",
   "polars>=1.43.0",
   "pyarrow>=25.0.0",
-  "pydantic-ai>=2.14.1",
+  "pydantic-ai>=2.15.0",
   "rdflib>=7.6.0",
   "rdkit>=2026.3.4",
   "requests>=2.34.2",
@@ -31,7 +31,7 @@ lotus_wikidata_explorer = "apps.lotus_wikidata_explorer:main"
 
 [dependency-groups]
 dev = [
-  "pre-commit>=4.6.0",
+  "pre-commit>=4.6.1",
 ]
 
 [tool.deptry]
