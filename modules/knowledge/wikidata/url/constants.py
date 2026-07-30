@@ -1,14 +1,14 @@
 """Wikidata URL constants."""
 
 __all__ = [
+    "ENTITY_PREFIX",
+    "QLEVER_ENDPOINT",
+    "REFERENCE_PREFIX",
+    "SPARQL_ENDPOINT",
+    "STATEMENT_PREFIX",
     "WIKIDATA_BASE",
     "WIKIDATA_HTTP_BASE",
-    "ENTITY_PREFIX",
-    "STATEMENT_PREFIX",
-    "REFERENCE_PREFIX",
     "WIKI_PREFIX",
-    "SPARQL_ENDPOINT",
-    "QLEVER_ENDPOINT",
 ]
 
 # Base URLs

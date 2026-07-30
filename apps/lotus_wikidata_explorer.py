@@ -34,22 +34,23 @@ __generated_with = "0.23.0"
 app = marimo.App(width="full", app_title="LOTUS Wikidata Explorer")
 
 with app.setup:
-    import marimo as mo
-    import polars as pl
     import array
     import csv
+    import gc
+    import hashlib
     import io
     import json
-    import time
-    import hashlib
     import re
     import sys
+    import time
     import urllib.parse
-    import gc
     from abc import ABC, abstractmethod
     from dataclasses import dataclass
     from datetime import date, datetime
     from typing import Any
+
+    import marimo as mo
+    import polars as pl
 
     # Check for WASM/Pyodide environment early
     IS_PYODIDE = "pyodide" in sys.modules
@@ -70,38 +71,42 @@ with app.setup:
     if _USE_LOCAL:
         sys.path.insert(0, ".")
 
-    from modules.text.formula.filters import FormulaFilters
-    from modules.text.formula.create_filters import create_filters
-    from modules.text.formula.serialize_filters import serialize_filters
-    from modules.text.formula.match_filters import match_filters
-    from modules.text.smiles.validate_and_escape import validate_and_escape
-    from modules.text.strings.pluralize import pluralize
+    from modules.chem.cdk.depict.svg_from_smiles import svg_from_smiles
+    from modules.io.compress.if_large import compress_if_large
+    from modules.knowledge.rdf.namespace.wikidata import WIKIDATA_NAMESPACES
     from modules.knowledge.wikidata.entity.extract_from_url import extract_from_url
-    from modules.knowledge.wikidata.url.constants import (
-        ENTITY_PREFIX as WIKIDATA_ENTITY_PREFIX,
-        STATEMENT_PREFIX as WIKIDATA_STATEMENT_PREFIX,
-        WIKIDATA_HTTP_BASE,
-        WIKI_PREFIX,
-    )
     from modules.knowledge.wikidata.html.scholia import scholia_url
-    from modules.knowledge.wikidata.sparql.query_taxon_search import query_taxon_search
+    from modules.knowledge.wikidata.sparql.query_compounds import (
+        query_all_compounds,
+        query_compounds_by_taxon,
+    )
+    from modules.knowledge.wikidata.sparql.query_sachem import query_sachem
     from modules.knowledge.wikidata.sparql.query_taxon_connectivity import (
         query_taxon_connectivity,
     )
     from modules.knowledge.wikidata.sparql.query_taxon_details import (
         query_taxon_details,
     )
-    from modules.knowledge.wikidata.sparql.query_compounds import (
-        query_compounds_by_taxon,
-        query_all_compounds,
+    from modules.knowledge.wikidata.sparql.query_taxon_search import query_taxon_search
+    from modules.knowledge.wikidata.url.constants import (
+        ENTITY_PREFIX as WIKIDATA_ENTITY_PREFIX,
     )
-    from modules.knowledge.wikidata.sparql.query_sachem import query_sachem
+    from modules.knowledge.wikidata.url.constants import (
+        STATEMENT_PREFIX as WIKIDATA_STATEMENT_PREFIX,
+    )
+    from modules.knowledge.wikidata.url.constants import (
+        WIKI_PREFIX,
+        WIKIDATA_HTTP_BASE,
+    )
     from modules.net.sparql.execute_with_retry import execute_with_retry
     from modules.net.sparql.parse_response import parse_sparql_response
     from modules.net.sparql.values_clause import values_clause
-    from modules.chem.cdk.depict.svg_from_smiles import svg_from_smiles
-    from modules.knowledge.rdf.namespace.wikidata import WIKIDATA_NAMESPACES
-    from modules.io.compress.if_large import compress_if_large
+    from modules.text.formula.create_filters import create_filters
+    from modules.text.formula.filters import FormulaFilters
+    from modules.text.formula.match_filters import match_filters
+    from modules.text.formula.serialize_filters import serialize_filters
+    from modules.text.smiles.validate_and_escape import validate_and_escape
+    from modules.text.strings.pluralize import pluralize
 
     if IS_PYODIDE:
         import pyodide_http
@@ -1276,7 +1281,6 @@ with app.setup:
         @abstractmethod
         def _to_bytes(self, df: pl.LazyFrame) -> bytes:
             """Serialize a lazy dataframe to bytes."""
-            pass
 
     class CSVExportStrategy(ExportStrategy):
         """Export datasets as CSV bytes."""
@@ -1293,8 +1297,8 @@ with app.setup:
                 return result
             else:
                 # Native: use sink_csv for streaming (memory efficient)
-                import tempfile
                 import os
+                import tempfile
 
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as f:
                     temp_path = f.name
@@ -1322,8 +1326,8 @@ with app.setup:
                 return result
             else:
                 # Native: use sink_ndjson for streaming
-                import tempfile
                 import os
+                import tempfile
 
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".ndjson") as f:
                     temp_path = f.name
@@ -2518,7 +2522,6 @@ def md_title():
     mo.md("""
     # LOTUS Wikidata Explorer
     """)
-    return
 
 
 @app.cell
@@ -2533,7 +2536,6 @@ def ui_help():
     """),
         },
     )
-    return
 
 
 @app.cell
@@ -2691,7 +2693,6 @@ def ketcher_helper():
             ),
         },
     )
-    return
 
 
 @app.cell
@@ -2759,7 +2760,6 @@ def ui_search_panel(
         )
 
     mo.vstack(filters_ui, gap=1)
-    return
 
 
 @app.cell
@@ -3173,7 +3173,6 @@ def generate_downloads(
             ],
         )
     _out
-    return
 
 
 @app.cell
@@ -3199,7 +3198,6 @@ def ui_disclaimer():
     else:
         _out = mo.Html("")
     _out
-    return
 
 
 @app.cell
@@ -3221,7 +3219,6 @@ def footer():
     <a href="https://creativecommons.org/publicdomain/zero/1.0/" style="color:#484848;">CC0 1.0</a> for data &
     <a href="https://www.gnu.org/licenses/agpl-3.0.html" style="color:#484848;">AGPL-3.0</a> for code
     """)
-    return
 
 
 def main():

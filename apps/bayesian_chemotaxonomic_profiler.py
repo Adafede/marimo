@@ -124,14 +124,15 @@ with app.setup:
     import sys
     import tempfile
     import time
-    from typing import Iterable, Final, Literal, TypedDict
+    from collections.abc import Iterable
+    from typing import Final, Literal, TypedDict
+    from urllib.parse import quote
 
     import altair as alt
     import marimo as mo
     import numpy as np
     import polars as pl
     from scipy.special import betainc, betaincinv
-    from urllib.parse import quote
 
     _USE_LOCAL = True
     if _USE_LOCAL:
@@ -2094,7 +2095,6 @@ def header():
 
     Discover chemical scaffolds enriched in taxonomic groups using Bayesian inference.
     """)
-    return
 
 
 @app.cell
@@ -2441,7 +2441,6 @@ def lineage_diagnostics(
         ],
     )
     _out
-    return
 
 
 @app.cell
@@ -2502,7 +2501,6 @@ def scaffold_compound_stats(compound_scaffold):
         ],
     )
     _out
-    return
 
 
 @app.cell
@@ -2579,7 +2577,6 @@ def scaffold_trace_diagnostic(markers):
         ],
     )
     _out
-    return
 
 
 @app.cell
@@ -2606,7 +2603,6 @@ def run_analysis(
 @app.cell
 def _(markers, disabled=True):
     markers
-    return
 
 
 @app.cell
@@ -2702,7 +2698,6 @@ def discovery_mode(effective_config, markers):
         ],
     )
     _out
-    return
 
 
 @app.cell
@@ -2763,7 +2758,6 @@ def summary_stats(compound_scaffold, markers):
         ],
     )
     _out
-    return
 
 
 @app.cell
@@ -3057,7 +3051,6 @@ def show_lineage_profile(markers, scaffold_select, taxon_lineage):
                     ],
                 )
     _out
-    return
 
 
 @app.cell
@@ -3083,7 +3076,6 @@ def markers_kin(markers):
     )
 
     _out
-    return
 
 
 @app.cell
@@ -3109,7 +3101,6 @@ def markers_fam(markers):
     )
 
     _out
-    return
 
 
 @app.cell
@@ -3135,7 +3126,6 @@ def markers_gen(markers):
     )
 
     _out
-    return
 
 
 @app.cell
@@ -3200,7 +3190,6 @@ def methods_summary(
         ],
     )
     _out
-    return
 
 
 @app.cell
@@ -3224,7 +3213,6 @@ def ui_disclaimer():
     else:
         _out = mo.Html("")
     _out
-    return
 
 
 @app.cell
@@ -3244,7 +3232,6 @@ def footer():
     <a href="https://creativecommons.org/publicdomain/zero/1.0/" style="color:#484848;">CC0 1.0</a> for data &
     <a href="https://www.gnu.org/licenses/agpl-3.0.html" style="color:#484848;">AGPL-3.0</a> for code
     """)
-    return
 
 
 if __name__ == "__main__":

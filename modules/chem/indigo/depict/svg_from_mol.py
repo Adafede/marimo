@@ -3,7 +3,9 @@
 __all__ = ["svg_from_mol"]
 
 import base64
+
 from indigo import IndigoObject
+
 from ..indigo_instance import get_indigo, get_renderer
 
 

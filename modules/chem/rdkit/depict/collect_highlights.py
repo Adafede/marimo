@@ -1,6 +1,6 @@
 """Collect atom highlight data from SMARTS pattern matches."""
 
-__all__ = ["collect_highlights", "RGBColor", "SmartsEntry"]
+__all__ = ["RGBColor", "SmartsEntry", "collect_highlights"]
 
 from collections import defaultdict
 from collections.abc import Iterator

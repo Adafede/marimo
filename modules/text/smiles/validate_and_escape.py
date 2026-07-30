@@ -2,8 +2,8 @@
 
 __all__ = ["validate_and_escape"]
 
-from .validate import validate
 from ..strings.escape_backslashes import escape_backslashes
+from .validate import validate
 
 
 def _looks_like_molfile(text: str) -> bool:

@@ -23,7 +23,6 @@ def _():
 
     Use the slider above to calculate the first {n.value} numbers in the Fibonacci sequence.
     """)
-    return
 
 
 @app.cell
@@ -38,7 +37,6 @@ def _():
 def _(n):
     fib = fibonacci(n.value)
     mo.md(", ".join([str(f) for f in fib]))
-    return
 
 
 @app.function

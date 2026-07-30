@@ -271,7 +271,6 @@ def _show_header():
     Upload a file with one SMILES per line (or pass `--smiles_file` on the CLI).
     Results are cached at **`{CACHE_PATH}`** — any SMILES classified before won't be re-fetched.
     """)
-    return
 
 
 @app.cell
@@ -431,7 +430,6 @@ def _status(cache, parse_details, smiles_list):
             f"{_details}",
         )
     _status_md
-    return
 
 
 @app.cell
@@ -512,7 +510,6 @@ def _pathway_chart(pl, results_df, run_btn, smiles_list):
         color=alt.Color("Pathway:N", legend=None),
         tooltip=["Pathway", "Count"],
     ).properties(title="Pathway Distribution", width=600, height=300)
-    return
 
 
 @app.cell
@@ -524,7 +521,6 @@ def _download(results_df, run_btn, smiles_list):
         mimetype="text/csv",
         label="Download results CSV",
     )
-    return
 
 
 if __name__ == "__main__":

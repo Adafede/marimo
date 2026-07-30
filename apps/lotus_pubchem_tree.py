@@ -51,24 +51,25 @@ __generated_with = "0.23.0"
 app = marimo.App(width="full", app_title="LOTUS PubChem Tree Generator")
 
 with app.setup:
-    import marimo as mo
-    import polars as pl
     import io
     import json
-    import time
     import sys
+    import time
     from dataclasses import dataclass
     from datetime import datetime
     from typing import cast
+
+    import marimo as mo
+    import polars as pl
 
     _USE_LOCAL = True
     if _USE_LOCAL:
         sys.path.insert(0, ".")
 
-    from modules.net.sparql.execute_with_retry import execute_with_retry
     from modules.knowledge.wikidata.url.constants import (
         ENTITY_PREFIX as WIKIDATA_ENTITY_PREFIX,
     )
+    from modules.net.sparql.execute_with_retry import execute_with_retry
 
     IS_PYODIDE = "pyodide" in sys.modules
     if IS_PYODIDE:
@@ -2267,7 +2268,6 @@ def md_title():
 
     *Only nodes with InChIKey and taxon association (directly or in descendants) are included.*
     """)
-    return
 
 
 @app.cell
@@ -2297,7 +2297,6 @@ def wasm_warning():
                 kind="danger",
             ),
         )
-    return
 
 
 @app.cell
@@ -2412,7 +2411,6 @@ def display_stats(stats):
             ),
         ],
     )
-    return
 
 
 @app.cell
@@ -2640,7 +2638,6 @@ def display_previews(biological_tree, chemical_tree, npclassifier_tree):
             mo.ui.tabs(cast(dict[str, object], tabs_dict)),
         ],
     )
-    return
 
 
 @app.cell
@@ -2867,7 +2864,6 @@ def download_buttons(biological_tree, chemical_tree, npclassifier_tree):
     ]
 
     mo.vstack(download_elements)
-    return
 
 
 @app.cell
@@ -2886,7 +2882,6 @@ def footer():
     <a href="https://creativecommons.org/publicdomain/zero/1.0/" style="color:#484848;">CC0 1.0</a> for data &
     <a href="https://www.gnu.org/licenses/agpl-3.0.html" style="color:#484848;">AGPL-3.0</a> for code
     """)
-    return
 
 
 def main():
@@ -2931,7 +2926,7 @@ Examples:
                 print("=" * 60, file=sys.stderr)
                 print(f"Output directory: {output_dir.absolute()}", file=sys.stderr)
                 print(f"Endpoint: {CONFIG['qlever_endpoint']}", file=sys.stderr)
-                print("", file=sys.stderr)
+                print(file=sys.stderr)
 
             def progress_callback(msg):
                 if args.verbose:

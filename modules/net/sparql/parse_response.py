@@ -3,6 +3,7 @@
 __all__ = ["parse_sparql_response"]
 
 import io
+
 import polars as pl
 
 

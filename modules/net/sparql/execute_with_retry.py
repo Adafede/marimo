@@ -2,8 +2,9 @@
 
 __all__ = ["execute_with_retry"]
 
-import time
 import re
+import time
+
 from .client import Client
 
 

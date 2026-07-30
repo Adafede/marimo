@@ -50,24 +50,25 @@ __generated_with = "0.23.0"
 app = marimo.App(width="full", app_title="LOTUS Data Exporter")
 
 with app.setup:
-    import marimo as mo
-    import polars as pl
+    import gzip
     import io
     import sys
-    import gzip
-    from pathlib import Path
     from dataclasses import dataclass
     from datetime import datetime
+    from pathlib import Path
     from typing import cast
+
+    import marimo as mo
+    import polars as pl
 
     _USE_LOCAL = True
     if _USE_LOCAL:
         sys.path.insert(0, ".")
 
-    from modules.net.sparql.execute_with_retry import execute_with_retry
     from modules.knowledge.wikidata.url.constants import (
         ENTITY_PREFIX as WIKIDATA_ENTITY_PREFIX,
     )
+    from modules.net.sparql.execute_with_retry import execute_with_retry
 
     IS_PYODIDE = "pyodide" in sys.modules
     if IS_PYODIDE:
@@ -414,8 +415,8 @@ with app.setup:
             Previously published ``frozen.csv`` records loaded from Zenodo.
 
         """
-        import urllib.request
         import json
+        import urllib.request
 
         try:
             # Get the latest version info from Zenodo API
@@ -1250,7 +1251,7 @@ with app.setup:
         """
         try:
             from rdkit import Chem
-            from rdkit.Chem import Descriptors, rdMolDescriptors, inchi
+            from rdkit.Chem import Descriptors, inchi, rdMolDescriptors
             from rdkit.Chem.rdCIPLabeler import AssignCIPLabels
         except ImportError:
             print(
@@ -2467,7 +2468,6 @@ def md_title():
 
     *Data is fetched from Wikidata and enriched with external caches.*
     """)
-    return
 
 
 @app.cell
@@ -2493,7 +2493,6 @@ def wasm_warning():
                 kind="danger",
             ),
         )
-    return
 
 
 @app.cell
@@ -2706,7 +2705,6 @@ def display_stats(
             ),
         ],
     )
-    return
 
 
 @app.cell
@@ -2725,7 +2723,6 @@ def footer():
     <a href="https://creativecommons.org/publicdomain/zero/1.0/" style="color:#484848;">CC0 1.0</a> for data &
     <a href="https://www.gnu.org/licenses/agpl-3.0.html" style="color:#484848;">AGPL-3.0</a> for code
     """)
-    return
 
 
 # ============================================================================
@@ -2770,7 +2767,7 @@ def main():
                 print("=" * 60, file=sys.stderr)
                 print(f"Output directory: {output_dir.absolute()}", file=sys.stderr)
                 print(f"Endpoint: {CONFIG['qlever_endpoint']}", file=sys.stderr)
-                print("", file=sys.stderr)
+                print(file=sys.stderr)
 
             def progress_callback(msg):
                 if args.verbose:

@@ -1,16 +1,16 @@
 """Build compound queries for Wikidata."""
 
-__all__ = ["query_compounds_by_taxon", "query_all_compounds"]
+__all__ = ["query_all_compounds", "query_compounds_by_taxon"]
 
-from .prefixes import PREFIXES
 from .patterns_compound import (
-    SELECT_VARS_FULL,
-    SELECT_VARS_INTERIM,
     COMPOUND_IDENTIFIERS,
-    TAXON_REFERENCE_ASSOCIATION,
     PROPERTIES_OPTIONAL,
     REFERENCE_METADATA_OPTIONAL,
+    SELECT_VARS_FULL,
+    SELECT_VARS_INTERIM,
+    TAXON_REFERENCE_ASSOCIATION,
 )
+from .prefixes import PREFIXES
 
 
 def query_compounds_by_taxon(qid: str) -> str:

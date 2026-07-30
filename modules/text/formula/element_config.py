@@ -2,8 +2,8 @@
 
 __all__ = [
     "ELEMENT_CONFIGS",
-    "HALOGEN_CONFIGS",
     "ELEMENT_DEFAULTS",
+    "HALOGEN_CONFIGS",
 ]
 
 # Element configurations: (symbol, name, min_count, max_count)

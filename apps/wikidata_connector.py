@@ -32,6 +32,7 @@ app = marimo.App(width="medium", app_title="Wikidata Entity Connector")
 
 with app.setup:
     import json
+
     import marimo as mo
     import networkx as nx
     import requests
@@ -585,7 +586,6 @@ def header():
 
     Find the smallest subgraph connecting N Wikidata entities via **multi-source BFS** over the `wdt:` graph, using [QLever](https://qlever.cs.uni-freiburg.de/wikidata) as the SPARQL backend.
     """)
-    return
 
 
 @app.cell
@@ -697,7 +697,6 @@ def compute(
 @app.cell
 def show_error(error_msg):
     error_msg
-    return
 
 
 @app.cell
@@ -726,7 +725,6 @@ def render_graph(graph_result):
       </span>
     </div>
     """)
-    return
 
 
 @app.cell
@@ -737,7 +735,6 @@ def vis_graph(G, graph_result, terminals):
         html = build_graph_html(G, terminals)
 
     mo.Html(html)
-    return
 
 
 @app.cell
@@ -755,7 +752,6 @@ def sparql_output(G, graph_result):
 
     [▶ Open in QLever](https://qlever.cs.uni-freiburg.de/wikidata?query={requests.utils.quote(sparql_query)})
     """)
-    return
 
 
 @app.cell
@@ -772,7 +768,6 @@ def footer():
     <a href="https://creativecommons.org/publicdomain/zero/1.0/" style="color:#484848;">CC0 1.0</a> for data &
     <a href="https://www.gnu.org/licenses/agpl-3.0.html" style="color:#484848;">AGPL-3.0</a> for code
     """)
-    return
 
 
 if __name__ == "__main__":

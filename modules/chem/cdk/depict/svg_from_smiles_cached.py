@@ -4,8 +4,8 @@ __all__ = ["svg_from_smiles_cached"]
 
 from functools import lru_cache
 
-from .url import CDK_DEPICT_URL
 from .svg_from_smiles import svg_from_smiles
+from .url import CDK_DEPICT_URL
 
 CACHE_SIZE: int = 256
 

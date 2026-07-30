@@ -17,11 +17,12 @@ app = marimo.App(
 )
 
 with app.setup:
-    import marimo as mo
     from collections import defaultdict
-    from itertools import cycle
     from dataclasses import dataclass
+    from itertools import cycle
     from typing import Any
+
+    import marimo as mo
 
     @dataclass
     class MockInput:
@@ -39,13 +40,13 @@ with app.setup:
     from modules.utils.colors.hex_to_rgb_float import hex_to_rgb_float
 
     try:
+        from modules.chem.rdkit.depict.with_highlights import (
+            with_highlights as depict_with_highlights,
+        )
         from modules.chem.rdkit.smarts.find_mcs import find_mcs
         from modules.chem.rdkit.smarts.parse import parse as parse_smarts
         from modules.chem.rdkit.smiles.parse_many import (
             parse_many as parse_smiles_list,
-        )
-        from modules.chem.rdkit.depict.with_highlights import (
-            with_highlights as depict_with_highlights,
         )
 
         message = mo.md("[+] Your environment supports **RDKit**, all good!")
@@ -74,14 +75,12 @@ with app.setup:
 def message_md():
     """Display the RDKit availability message."""
     message
-    return
 
 
 @app.cell
 def stop_rdkit():
     """Stop execution when RDKit is unavailable."""
     mo.stop(predicate=not rdkit_available)
-    return
 
 
 @app.cell
@@ -122,7 +121,6 @@ def py_find_mcs(smi_input):
     else:
         mcs = None
     mcs
-    return
 
 
 @app.cell
@@ -252,7 +250,6 @@ def py_generate_html(smarts_input, smi_input, submit_button, toggles):
 def html_display(html):
     """Display generated HTML output in the notebook."""
     mo.Html(html)
-    return
 
 
 if __name__ == "__main__":

@@ -22,7 +22,6 @@ def title():
     mo.md("""
     # Remote Import Demo
     """)
-    return
 
 
 @app.cell
@@ -35,8 +34,8 @@ def imports():
 
         sys.path.insert(0, ".")
     # Modules will be auto-inlined by the build script
-    from modules.text.formula.parse import parse
     from modules.chem.cdk.depict.svg_from_smiles import svg_from_smiles
+    from modules.text.formula.parse import parse
 
     return parse, svg_from_smiles
 
@@ -45,14 +44,12 @@ def imports():
 def example_1(parse):
     """Show formula parsing output."""
     mo.show_code(parse("C₆H₁₂O₆"), position="above")
-    return
 
 
 @app.cell
 def example_2(svg_from_smiles):
     """Show a rendered structure image from a SMILES string."""
     mo.show_code(mo.image(svg_from_smiles("CCO")), position="above")
-    return
 
 
 if __name__ == "__main__":

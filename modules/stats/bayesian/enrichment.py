@@ -5,6 +5,7 @@ where differences are considered negligible for practical purposes.
 """
 
 import numpy as np
+
 from .beta import (
     credible_interval,
     posterior_probability_above,

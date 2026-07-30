@@ -21,15 +21,13 @@ The exported files will be placed in the specified output directory (default: _s
 # ]
 # ///
 
-import subprocess
 import re
 import shutil
-from typing import List, Union, Set
+import subprocess
 from pathlib import Path
 
-import jinja2
 import fire
-
+import jinja2
 from loguru import logger
 
 
@@ -82,7 +80,7 @@ def copy_public_directories(source_dir: Path, output_dir: Path) -> None:
             logger.error(f"Error copying {public_dir} to {dest_path}: {e}")
 
 
-def find_imported_modules(notebook_path: Path) -> Set[str]:
+def find_imported_modules(notebook_path: Path) -> set[str]:
     """Find ``modules.*`` imports declared in a notebook script.
 
     Parameters
@@ -112,7 +110,7 @@ def find_imported_modules(notebook_path: Path) -> Set[str]:
     return imports
 
 
-def find_module_dependencies(module_path: Path, module_name: str) -> Set[str]:
+def find_module_dependencies(module_path: Path, module_name: str) -> set[str]:
     """Find direct module dependencies referenced by a module source file.
 
     Parameters
@@ -172,7 +170,7 @@ def find_module_dependencies(module_path: Path, module_name: str) -> Set[str]:
     return dependencies
 
 
-def get_all_required_modules(notebook_path: Path, public_path: Path) -> Set[str]:
+def get_all_required_modules(notebook_path: Path, public_path: Path) -> set[str]:
     """Resolve the transitive closure of notebook module dependencies.
 
     Parameters
@@ -488,10 +486,8 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
         aliases = {}
         # Remove parentheses and normalize whitespace
         text = import_text.strip()
-        if text.startswith("("):
-            text = text[1:]
-        if text.endswith(")"):
-            text = text[:-1]
+        text = text.removeprefix("(")
+        text = text.removesuffix(")")
 
         # Split by comma and process each import
         for item in text.split(","):
@@ -663,7 +659,7 @@ def _export_html_wasm(
     output_path: Path = notebook_path.with_suffix(".html")
 
     # Base command for marimo export
-    cmd: List[str] = ["uv", "run", "marimo", "export", "html-wasm", "--sandbox"]
+    cmd: list[str] = ["uv", "run", "marimo", "export", "html-wasm", "--sandbox"]
 
     # Configure export mode based on whether it's an app or a notebook
     if as_app:
@@ -708,8 +704,8 @@ def _export_html_wasm(
 def _generate_index(
     output_dir: Path,
     template_file: Path,
-    notebooks_data: List[dict] | None = None,
-    apps_data: List[dict] | None = None,
+    notebooks_data: list[dict] | None = None,
+    apps_data: list[dict] | None = None,
 ) -> None:
     """Generate the ``index.html`` page for exported notebooks and apps.
 
@@ -759,7 +755,7 @@ def _generate_index(
         logger.error(f"Error rendering template: {e}")
 
 
-def _export(folder: Path, output_dir: Path, as_app: bool = False) -> List[dict]:
+def _export(folder: Path, output_dir: Path, as_app: bool = False) -> list[dict]:
     """Export all marimo notebooks in a folder to HTML/WebAssembly format.
 
     Parameters
@@ -817,8 +813,8 @@ def _export(folder: Path, output_dir: Path, as_app: bool = False) -> List[dict]:
 
 
 def main(
-    output_dir: Union[str, Path] = "_site",
-    template: Union[str, Path] = "templates/tailwind.html.j2",
+    output_dir: str | Path = "_site",
+    template: str | Path = "templates/tailwind.html.j2",
 ) -> None:
     """Export marimo notebooks.
 

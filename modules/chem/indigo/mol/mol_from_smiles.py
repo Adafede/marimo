@@ -3,6 +3,7 @@
 __all__ = ["mol_from_smiles"]
 
 from indigo import IndigoObject
+
 from ..indigo_instance import get_indigo
 
 

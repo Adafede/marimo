@@ -1,6 +1,6 @@
 """Ranks utilities."""
 
-__all__ = ["normalize_rank", "get_rank_label", "get_rank_order"]
+__all__ = ["get_rank_label", "get_rank_order", "normalize_rank"]
 
 
 def normalize_rank(rank: str) -> str:

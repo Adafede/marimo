@@ -2,13 +2,13 @@
 
 __all__ = ["query_sachem"]
 
-from .prefixes import PREFIXES
-from .prefixes_sachem import PREFIXES_SACHEM
 from .patterns_compound import (
-    SELECT_VARS_FULL,
     PROPERTIES_OPTIONAL,
     REFERENCE_METADATA_OPTIONAL,
+    SELECT_VARS_FULL,
 )
+from .prefixes import PREFIXES
+from .prefixes_sachem import PREFIXES_SACHEM
 
 
 def build_sachem_service(
