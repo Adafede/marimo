@@ -17,7 +17,7 @@ The exported files will be placed in the specified output directory (default: _s
 # dependencies = [
 #     "jinja2==3.1.3",
 #     "fire==0.7.0",
-#     "loguru==0.7.0"
+#     "loguru==0.7.0",
 # ]
 # ///
 
