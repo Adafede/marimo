@@ -5,42 +5,16 @@
 [[repos]]
 repo = "https://github.com/pre-commit/pre-commit-hooks"
 rev = "v6.0.0"
-hooks = [
-  { id = "check-added-large-files" },
-  { id = "check-ast" },
-  { id = "check-builtin-literals" },
-  { id = "check-case-conflict" },
-  { id = "check-docstring-first" },
-  { id = "check-illegal-windows-names" },
-  { id = "check-merge-conflict" },
-  { id = "check-symlinks" },
-  { id = "check-toml" },
-  { id = "check-json" },
-  { id = "check-vcs-permalinks" },
-  { id = "debug-statements" },
-  { id = "destroyed-symlinks" },
-  { id = "detect-private-key" },
-  { id = "end-of-file-fixer", exclude = "^apps/public/" },
-  { id = "fix-byte-order-marker" },
-  { id = "mixed-line-ending" },
-  { id = "trailing-whitespace" }
-]
+hooks = [{ id = "check-added-large-files" }, { id = "check-ast" }, { id = "check-builtin-literals" }, { id = "check-case-conflict" }, { id = "check-docstring-first" }, { id = "check-illegal-windows-names" }, { id = "check-merge-conflict" }, { id = "check-symlinks" }, { id = "check-toml" }, { id = "check-json" }, { id = "check-vcs-permalinks" }, { id = "debug-statements" }, { id = "destroyed-symlinks" }, { id = "detect-private-key" }, { id = "end-of-file-fixer", exclude = "^apps/public/" }, { id = "fix-byte-order-marker" }, { id = "mixed-line-ending" }, { id = "trailing-whitespace" }]
 
 [[repos]]
 repo = "https://github.com/fpgmaas/deptry"
 rev = "0.25.1"
-hooks = [
-  {
-    id = "deptry",
-    language = "python",
-    additional_dependencies = ["deptry"],
-    exclude = '^(?!.*\.py$).*$'
-  }
-]
+hooks = [{ id = "deptry", language = "python", additional_dependencies = ["deptry"], exclude = '^(?!.*\.py$).*$' }]
 
 [[repos]]
 repo = "https://github.com/python-jsonschema/check-jsonschema"
-rev = "0.37.4"
+rev = "0.38.0"
 hooks = [{ id = "check-github-workflows" }, { id = "check-taskfile" }]
 
 [[repos]]
@@ -60,7 +34,7 @@ hooks = [{ id = "ruff-check", args = ["--fix"] }, { id = "ruff-format" }]
 
 [[repos]]
 repo = "https://github.com/tombi-toml/tombi-pre-commit"
-rev = "v1.2.7"
+rev = "v1.3.5"
 hooks = [{ id = "tombi-format" }, { id = "tombi-lint" }]
 
 [[repos]]
@@ -70,21 +44,12 @@ hooks = [{ id = "typos", exclude = "^apps/public/" }]
 
 [[repos]]
 repo = "https://github.com/astral-sh/uv-pre-commit"
-rev = "0.12.2"
+rev = "0.12.3"
 hooks = [{ id = "uv-lock" }]
 
 [[repos]]
 repo = "local"
-hooks = [
-  {
-    id = "ty-check",
-    name = "ty-check",
-    language = "python",
-    entry = "ty check",
-    exclude = '^(?!.*\.py$).*$',
-    additional_dependencies = ["ty"]
-  }
-]
+hooks = [{ id = "ty-check", name = "ty-check", language = "python", entry = "ty check", exclude = '^(?!.*\.py$).*$', additional_dependencies = ["ty"] }]
 
 [[repos]]
 repo = "https://github.com/zizmorcore/zizmor-pre-commit"
@@ -93,7 +58,7 @@ hooks = [{ id = "zizmor", entry = "zizmor --fix=all ." }]
 
 [[repos]]
 repo = "https://github.com/jolars/panache-pre-commit"
-rev = "v3.2.0"
+rev = "v3.3.0"
 hooks = [{ id = "panache-format" }, { id = "panache-lint" }]
 
 [[repos]]

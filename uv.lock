@@ -2742,17 +2742,7 @@ name = "pydantic-ai"
 version = "2.26.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-  { name = "pydantic-ai-slim", extra = [
-    "anthropic",
-    "cli",
-    "evals",
-    "google",
-    "logfire",
-    "mcp",
-    "openai",
-    "retries",
-    "web"
-  ] },
+  { name = "pydantic-ai-slim", extra = ["anthropic", "cli", "evals", "google", "logfire", "mcp", "openai", "retries", "web"] },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/cd/2c/58a3d3d21adc76012cb4c46d4da18c19a60c761cb57e2894729338f4f181/pydantic_ai-2.26.0.tar.gz", hash = "sha256:f04585e1b16047e17bfeda8ce5d5f5b549fa3567a000ee2e1f012ac5cc893ccf", size = 19394, upload-time = "2026-08-07T03:34:17.274Z" }
 wheels = [
