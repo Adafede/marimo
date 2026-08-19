@@ -31,7 +31,7 @@ jobs:
           persist-credentials: false
 
       # Install uv package manager for faster Python package installation
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
+      - uses: astral-sh/setup-uv@ae62891fec2bb8e7d6c99fc78c9fec3a63790f8d
 
       # Run the build script to export notebooks to WebAssembly
       - name: 🛠️ Export notebooks
