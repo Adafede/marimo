@@ -2280,7 +2280,7 @@ def wasm_warning():
                 mo.md("""
                 **This app cannot run in the browser**
 
-                The LOTUS PubChem Tree Generator processes lasrge amount
+                The LOTUS PubChem Tree Generator processes large amount
                 of data from Wikidata, which exceeds WebAssembly memory limits.
 
                 **Please use the CLI instead:**

@@ -37,6 +37,7 @@ directory.
 
 ```python
 import polars as pl
+
 df = pl.read_csv(mo.notebook_location() / "public" / "penguins.csv")
 ```
 
