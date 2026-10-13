@@ -138,6 +138,7 @@ resolve common formatting issues, and detect common pitfalls.
 ## Examples
 
 <example title="Markdown ccell">
+
 ```
 @app.cell
 def _():
