@@ -148,6 +148,7 @@ def _():
     """)
     return
 ```
+
 </example>
 
 <example title="Basic UI with reactivity"> \`\`\` @app.cell def \_(): import

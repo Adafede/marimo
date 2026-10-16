@@ -6,7 +6,5 @@
     ":semanticCommits",
     ":pinVersions"
   ],
-  "enabledManagers": [
-    "github-actions"
-  ]
+  "enabledManagers": ["github-actions"]
 }
