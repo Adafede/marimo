@@ -40,5 +40,5 @@ class FormulaFilters:
             any(
                 s != "allowed"
                 for s in [self.f_state, self.cl_state, self.br_state, self.i_state]
-            )
+            ),
         )
