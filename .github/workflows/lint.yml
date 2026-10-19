@@ -1,0 +1,37 @@
+name: Lint
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+env:
+  UV_SYSTEM_PYTHON: 1
+
+jobs:
+  lint:
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Check formatting
+        run: ruff format --check .
+
+      - name: Run linter
+        run: ruff check .
+
+      - name: Check TOML validity
+        run: |
+          python -c "import tomllib; tomllib.load(open('pyproject.toml', 'rb'))"
+          python -c "import tomllib; tomllib.load(open('prek.toml', 'rb'))"
+          python -c "import tomllib; tomllib.load(open('typos.toml', 'rb'))"
