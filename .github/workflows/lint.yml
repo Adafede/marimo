@@ -33,5 +33,6 @@ jobs:
       - name: Check TOML validity
         run: |
           python -c "import tomllib; tomllib.load(open('pyproject.toml', 'rb'))"
+          python -c "import tomllib; tomllib.load(open('.tombi.toml', 'rb'))"
           python -c "import tomllib; tomllib.load(open('prek.toml', 'rb'))"
           python -c "import tomllib; tomllib.load(open('typos.toml', 'rb'))"
