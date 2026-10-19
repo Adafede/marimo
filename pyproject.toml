@@ -30,9 +30,9 @@ dependencies = [
 lotus_wikidata_explorer = "apps.lotus_wikidata_explorer:main"
 
 [dependency-groups]
-dev = [
-  "pre-commit>=4.6.2",
-]
+  dev = [
+    "pre-commit>=4.6.2",
+  ]
 
 [tool.deptry]
 package_module_name_map = { "epam-indigo" = "indigo" }
@@ -41,3 +41,16 @@ package_module_name_map = { "epam-indigo" = "indigo" }
 
 [tool.ty.rules]
 unresolved-import = "ignore"
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "W", "I", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+# Marimo cells display the last expression intentionally
+"notebooks/*" = ["B018"]
+"apps/*" = ["B018", "BLE001"]
+# Module code may use broad exception handling
+"modules/*" = ["BLE001"]
