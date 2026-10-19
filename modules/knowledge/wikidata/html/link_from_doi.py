@@ -2,6 +2,8 @@
 
 __all__ = ["DOI_BASE", "link_from_doi"]
 
+from urllib.parse import urlparse
+
 from .styled_anchor import DEFAULT_LINK_COLOR, styled_anchor
 
 DOI_BASE = "https://doi.org/"
@@ -21,7 +23,11 @@ def extract_doi(doi: str) -> str:
         String representation of doi.
 
     """
-    return doi.split("doi.org/")[-1] if "doi.org/" in doi else doi
+    parsed = urlparse(doi)
+    host = parsed.hostname.lower() if parsed.hostname else ""
+    if host == "doi.org":
+        return parsed.path.lstrip("/")
+    return doi
 
 
 def link_from_doi(doi: str, color: str = DEFAULT_LINK_COLOR) -> str:
