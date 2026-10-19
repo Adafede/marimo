@@ -33,11 +33,7 @@ def build_sachem_service(
         String representation of sachem service.
 
     """
-    is_multiline_literal = structure_literal.startswith(
-        "'''",
-    ) or structure_literal.startswith(
-        '"""',
-    )
+    is_multiline_literal = structure_literal.startswith(("'''", '"""'))
 
     if search_type == "similarity":
         return f"""
@@ -109,11 +105,7 @@ def query_sachem(
         search_type=search_type,
         threshold=threshold,
     )
-    is_multiline_literal = escaped_smiles.startswith(
-        "'''",
-    ) or escaped_smiles.startswith(
-        '"""',
-    )
+    is_multiline_literal = escaped_smiles.startswith(("'''", '"""'))
 
     if taxon_qid and is_multiline_literal:
         # For multiline query molfiles, keep SERVICE first; pre-binding ?c can trigger

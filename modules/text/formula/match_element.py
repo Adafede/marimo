@@ -33,6 +33,4 @@ def match_element(
     cnt = count_element(formula, element)
     if min_count is not None and cnt < min_count:
         return False
-    if max_count is not None and cnt > max_count:
-        return False
-    return True
+    return not (max_count is not None and cnt > max_count)

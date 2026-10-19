@@ -41,6 +41,4 @@ class ElementRange:
             return True
         if self.min_val is not None and count < self.min_val:
             return False
-        if self.max_val is not None and count > self.max_val:
-            return False
-        return True
+        return not (self.max_val is not None and count > self.max_val)

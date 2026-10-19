@@ -1112,9 +1112,7 @@ with app.setup:
 
         for source in candidates:
             try:
-                if source.startswith("http://") or source.startswith(
-                    "https://",
-                ):
+                if source.startswith(("http://", "https://")):
                     df = pl.read_csv(source, separator="\t")
                 else:
                     if not Path(source).exists():

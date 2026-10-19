@@ -1137,7 +1137,7 @@ def run_hierarchical_analysis(
 
         return lazy_result
 
-    except Exception as e:
+    except Exception:
         # Clean up temp files on error
         for f in rank_files:
             try:
@@ -1148,7 +1148,7 @@ def run_hierarchical_analysis(
             os.rmdir(temp_dir)
         except OSError:
             pass
-        raise e
+        raise
 
 
 @app.function

@@ -25,6 +25,8 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
+import itertools
+
 import marimo
 
 __generated_with = "0.21.1"
@@ -351,7 +353,7 @@ with app.setup:
 
         for t1, t2, data in mst.edges(data=True):
             path = data.get("path", [t1, t2])
-            for a, b in zip(path, path[1:]):
+            for a, b in itertools.pairwise(path):
                 if edge_graph.has_edge(a, b):
                     G.add_edge(a, b, prop=edge_graph[a][b].get("prop", ""))
 
