@@ -93,5 +93,15 @@ Python files, configs, and templates.
 ## Verification
 
 Before completing a change, run:
-1. `ruff check .` — must pass (144 pre-existing errors; see [tool.ruff] in pyproject.toml)
+1. `ruff check .` — must pass (76 pre-existing errors; see [tool.ruff] in pyproject.toml)
+   - Some errors in `notebooks/`, `apps/`, and `modules/` are intentionally ignored via
+     per-file rules due to marimo's reactive programming patterns
 2. `uv run .github/scripts/build.py` — build must succeed (may fail on loro/Rust)
+   - Alternative: `ruff check .` and `ruff format --check .` verify basic correctness
+
+## Agent Configuration
+
+Contributors using Claude Code may create `.claude/settings.json` locally with
+permissions to allow `ruff check`, `ruff format`, `git` operations, and `graphify`
+commands while denying destructive actions like `rm -rf`, `git push`, and
+`git remote` modifications.
