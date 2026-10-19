@@ -439,10 +439,9 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
         for line in lines:
             if line.strip():
                 indented_lines.append(f"{indent}{line}")
-            elif line == "":
+            elif line == "" and indented_lines and indented_lines[-1] != "":
                 # Only add one blank line, skip if previous was also blank
-                if indented_lines and indented_lines[-1] != "":
-                    indented_lines.append("")
+                indented_lines.append("")
 
         # Add trailing blank line only if not already present
         if indented_lines and indented_lines[-1] != "":

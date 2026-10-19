@@ -1161,7 +1161,17 @@ with app.setup:
 
             selected_qid = max(qids, key=lambda q: info[q][0])
 
-            matches_sorted = sorted(matches, key=lambda x: info[x[0]][0], reverse=True)
+            def _match_sort_key(match: tuple[str | None, str]) -> int | str:
+                qid = match[0]
+                if qid is None:
+                    return 0
+                return info[qid][0]
+
+            matches_sorted = sorted(
+                matches,
+                key=_match_sort_key,
+                reverse=True,
+            )
             matches_with_details = [
                 (qid, name, info[qid][1], info[qid][2], info[qid][0])
                 for qid, name in matches_sorted

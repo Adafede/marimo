@@ -37,19 +37,33 @@ dev = [
 [tool.deptry]
 package_module_name_map = { "epam-indigo" = "indigo" }
 
+# pyodide_http is provided by the Pyodide runtime; fire/jinja2/loguru are
+# declared inline in build.py's PEP 723 script block.
+[tool.deptry.per_rule_ignores]
+DEP001 = ["pyodide_http", "fire", "jinja2", "loguru"]
+# Imported lazily by altair/marimo at runtime (image export, remote IO).
+DEP002 = [
+  "aiohttp",
+  "fsspec",
+  "matchms",
+  "pydantic-ai",
+  "vegafusion",
+  "vl-convert-python",
+]
+
 [tool.ruff]
 line-length = 88
 
 [tool.ruff.lint.per-file-ignores]
 # Marimo cells display the last expression intentionally
-"notebooks/*.py" = ["B018"]
-"notebooks/**/*.py" = ["B018"]
-"apps/*.py" = ["B018", "BLE001"]
-"apps/**/*.py" = ["B018", "BLE001"]
+"notebooks/*.py" = ["B018", "B023", "BLE001", "LOG015", "S110", "S112"]
+"notebooks/**/*.py" = ["B018", "B023", "BLE001", "LOG015", "S110", "S112"]
+"apps/*.py" = ["B018", "BLE001", "DTZ005", "DTZ007", "DTZ011", "LOG015", "PLC0206", "S110", "S112"]
+"apps/**/*.py" = ["B018", "BLE001", "DTZ005", "DTZ007", "DTZ011", "LOG015", "PLC0206", "S110", "S112"]
 # Module code may use broad exception handling
-"modules/**/*.py" = ["BLE001"]
+"modules/**/*.py" = ["BLE001", "S110", "S112"]
+# Build scripts catch broad exceptions to report and continue
+"build.py" = ["BLE001"]
+".github/scripts/*.py" = ["BLE001"]
 
 [tool.setuptools.packages.find]
-
-[tool.ty.rules]
-unresolved-import = "ignore"

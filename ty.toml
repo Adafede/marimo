@@ -1,0 +1,9 @@
+# Configuration for ty (https://docs.astral.sh/ty/)
+#
+# Applied explicitly via `ty check --config-file ty.toml` (see prek.toml).
+# Passing the file on the command line is required because files with a PEP 723
+# `# /// script` block (notebooks and apps) scope their own configuration and
+# would otherwise ignore these rules.
+
+[rules]
+unresolved-import = "ignore"
