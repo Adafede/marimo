@@ -29,29 +29,22 @@ notebooks to WebAssembly and deploy them to GitHub Pages.
 To include data or assets in your notebooks, add them to the `public/`
 directory.
 
-Assets in the `public/` directory are available to notebooks at runtime.
 For example, a notebook can load an image from `public/` via:
 
-```markdown
-<img src="public/logo.png" width="200" />
-```
-
-And the `notebooks/npclassifier.py` notebook loads a CSV dataset from the
-`public/` directory.
-
 ```python
-import polars as pl
+import marimo as mo
+img = mo.ui.file(label="Upload image")
 
-df = pl.read_csv(mo.notebook_location() / "public" / "penguins.csv")
+# Load asset using notebook_location
+df = pl.read_csv(mo.notebook_location() / "public" / "your_data.csv")
 ```
 
 ## 🎨 Templates
 
-This repository includes several templates for the generated site:
+This repository includes two example templates for the generated site:
 
 1. `index.html.j2` (default): A template with styling and a footer
-2. `bare.html.j2`: A minimal template with basic styling
-3. `tailwind.html.j2`: A minimal and lean template using Tailwind CSS
+2. `tailwind.html.j2`: A minimal and lean template using Tailwind CSS
 
 To use a specific template, pass the `--template` parameter to the build script:
 
