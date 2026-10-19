@@ -43,14 +43,13 @@ package_module_name_map = { "epam-indigo" = "indigo" }
 unresolved-import = "ignore"
 
 [tool.ruff]
-line-length = 100
-
-[tool.ruff.lint]
-select = ["E", "W", "I", "UP"]
+line-length = 88
 
 [tool.ruff.lint.per-file-ignores]
 # Marimo cells display the last expression intentionally
-"notebooks/*" = ["B018"]
-"apps/*" = ["B018", "BLE001"]
+"notebooks/*.py" = ["B018"]
+"notebooks/**/*.py" = ["B018"]
+"apps/*.py" = ["B018", "BLE001"]
+"apps/**/*.py" = ["B018", "BLE001"]
 # Module code may use broad exception handling
-"modules/*" = ["BLE001"]
+"modules/**/*.py" = ["BLE001"]
