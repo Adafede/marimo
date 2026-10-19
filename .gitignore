@@ -124,6 +124,7 @@ dmypy.json
 .marimo
 
 # --- Local agent tooling (not for publication) ---
+# .claude/settings.json is tracked via git add -f (force-add) despite .claude/ being ignored
 .kb/
 graphify-out/
 CLAUDE.md

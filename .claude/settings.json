@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ruff check *)",
+      "Bash(ruff format *)",
+      "Bash(uv run build.py *)",
+      "Bash(uv run .github/scripts/build.py *)",
+      "Bash(graphify *)",
+      "Bash(prek *)",
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git branch *)",
+      "Bash(git checkout *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(python -m http.server *)"
+    ],
+    "deny": [
+      "Bash(rm -rf *)",
+      "Bash(git push *)",
+      "Bash(git remote *)"
+    ]
+  }
+}
