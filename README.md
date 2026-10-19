@@ -5,9 +5,13 @@ notebooks to WebAssembly and deploy them to GitHub Pages.
 
 ## 📚 Included Examples
 
-- `apps/charts.py`: Interactive data visualization with Altair
+- `apps/bayesian_chemotaxonomic_profiler.py`: Bayesian chemotaxonomic profiling
+- `apps/lotus_exporter.py`: Export compound data from LOTUS
+- `apps/lotus_pubchem_tree.py`: Build taxonomic trees from PubChem
+- `apps/lotus_wikidata_explorer.py`: Explore Wikidata for compound data
+- `apps/mols.py`: Molecular structure utilities
 - `notebooks/fibonacci.py`: Interactive Fibonacci sequence calculator
-- `notebooks/penguins.py`: Interactive data analysis with Polars and marimo
+- `notebooks/npclassifier.py`: NPClassifier demo notebook
 
 ## 🚀 Usage
 
@@ -25,15 +29,15 @@ notebooks to WebAssembly and deploy them to GitHub Pages.
 To include data or assets in your notebooks, add them to the `public/`
 directory.
 
-For example, the `apps/charts.py` notebook loads an image asset from the
-`public/` directory.
+Assets in the `public/` directory are available to notebooks at runtime.
+For example, a notebook can load an image from `public/` via:
 
 ```markdown
 <img src="public/logo.png" width="200" />
 ```
 
-And the `notebooks/penguins.py` notebook loads a CSV dataset from the `public/`
-directory.
+And the `notebooks/npclassifier.py` notebook loads a CSV dataset from the
+`public/` directory.
 
 ```python
 import polars as pl
