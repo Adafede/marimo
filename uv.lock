@@ -47,21 +47,21 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "aiohttp", specifier = ">=3.14.3" },
+    { name = "aiohttp", specifier = ">=3.14.5" },
     { name = "altair", specifier = ">=6.3.0" },
     { name = "cmcrameri", specifier = ">=1.10" },
     { name = "epam-indigo", specifier = ">=1.46.0" },
     { name = "fsspec", specifier = ">=2026.9.0" },
     { name = "maplib", specifier = ">=0.20.14" },
-    { name = "marimo", specifier = ">=0.25.0" },
+    { name = "marimo", specifier = ">=0.25.1" },
     { name = "matchms", specifier = ">=0.33.1" },
     { name = "networkx", specifier = ">=3.4.2" },
-    { name = "numpy", specifier = ">=2.5.3" },
-    { name = "polars", specifier = ">=1.44.2" },
-    { name = "pyarrow", specifier = ">=25.0.1" },
-    { name = "pydantic-ai", specifier = ">=2.51.0" },
+    { name = "numpy", specifier = ">=2.5.4" },
+    { name = "polars", specifier = ">=2.0.0" },
+    { name = "pyarrow", specifier = ">=26.0.0" },
+    { name = "pydantic-ai", specifier = ">=2.57.0" },
     { name = "rdflib", specifier = ">=7.6.0" },
-    { name = "rdkit", specifier = ">=2026.3.6" },
+    { name = "rdkit", specifier = ">=2026.9.1" },
     { name = "requests", specifier = ">=2.34.2" },
     { name = "scipy", specifier = ">=1.16.3" },
     { name = "simple-parsing", specifier = ">=0.1.9" },
@@ -70,7 +70,7 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
-dev = [{ name = "pre-commit", specifier = ">=4.6.2" }]
+dev = [{ name = "pre-commit", specifier = ">=4.7.0" }]
 
 [[package]]
 name = "agent-detector"

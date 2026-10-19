@@ -4,21 +4,21 @@ version = "0.1.0"
 description = "Minimal, reusable utilities for marimo applications"
 requires-python = ">=3.13"
 dependencies = [
-  "aiohttp>=3.14.3",
+  "aiohttp>=3.14.5",
   "altair>=6.3.0",
   "cmcrameri>=1.10",
   "epam-indigo>=1.46.0",
   "fsspec>=2026.9.0",
   "maplib>=0.20.14",
-  "marimo>=0.25.0",
+  "marimo>=0.25.1",
   "matchms>=0.33.1",
   "networkx>=3.4.2",
-  "numpy>=2.5.3",
-  "polars>=1.44.2",
-  "pyarrow>=25.0.1",
-  "pydantic-ai>=2.51.0",
+  "numpy>=2.5.4",
+  "polars>=2.0.0",
+  "pyarrow>=26.0.0",
+  "pydantic-ai>=2.57.0",
   "rdflib>=7.6.0",
-  "rdkit>=2026.3.6",
+  "rdkit>=2026.9.1",
   "requests>=2.34.2",
   "scipy>=1.16.3",
   "simple-parsing>=0.1.9",
@@ -30,17 +30,12 @@ dependencies = [
 lotus_wikidata_explorer = "apps.lotus_wikidata_explorer:main"
 
 [dependency-groups]
-  dev = [
-    "pre-commit>=4.6.2",
-  ]
+dev = [
+  "pre-commit>=4.7.0",
+]
 
 [tool.deptry]
 package_module_name_map = { "epam-indigo" = "indigo" }
-
-[tool.setuptools.packages.find]
-
-[tool.ty.rules]
-unresolved-import = "ignore"
 
 [tool.ruff]
 line-length = 88
@@ -53,3 +48,8 @@ line-length = 88
 "apps/**/*.py" = ["B018", "BLE001"]
 # Module code may use broad exception handling
 "modules/**/*.py" = ["BLE001"]
+
+[tool.setuptools.packages.find]
+
+[tool.ty.rules]
+unresolved-import = "ignore"

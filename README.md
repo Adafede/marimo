@@ -33,6 +33,7 @@ For example, a notebook can load an image from `public/` via:
 
 ```python
 import marimo as mo
+
 img = mo.ui.file(label="Upload image")
 
 # Load asset using notebook_location

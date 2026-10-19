@@ -19,7 +19,7 @@ hooks = [{ id = "check-github-workflows" }, { id = "check-taskfile" }]
 
 [[repos]]
 repo = "https://github.com/asottile/pyupgrade"
-rev = "v3.21.2"
+rev = "v3.22.0"
 hooks = [{ id = "pyupgrade" }]
 
 [[repos]]
@@ -29,22 +29,22 @@ hooks = [{ id = "add-trailing-comma" }]
 
 [[repos]]
 repo = "https://github.com/astral-sh/ruff-pre-commit"
-rev = "v0.16.9"
+rev = "v0.17.1"
 hooks = [{ id = "ruff-check", args = ["--fix"] }, { id = "ruff-format" }]
 
 [[repos]]
 repo = "https://github.com/tombi-toml/tombi-pre-commit"
-rev = "v1.5.8"
+rev = "v1.8.8"
 hooks = [{ id = "tombi-format" }, { id = "tombi-lint" }]
 
 [[repos]]
 repo = "https://github.com/crate-ci/typos"
-rev = "v1.50.3"
+rev = "v1.51.1"
 hooks = [{ id = "typos", exclude = "^apps/public/" }]
 
 [[repos]]
 repo = "https://github.com/astral-sh/uv-pre-commit"
-rev = "0.12.20"
+rev = "0.13.1"
 hooks = [{ id = "uv-lock" }]
 
 [[repos]]
@@ -53,12 +53,12 @@ hooks = [{ id = "ty-check", name = "ty-check", language = "python", entry = "ty 
 
 [[repos]]
 repo = "https://github.com/zizmorcore/zizmor-pre-commit"
-rev = "v1.30.1"
+rev = "v1.31.1"
 hooks = [{ id = "zizmor", entry = "zizmor --fix=all ." }]
 
 [[repos]]
 repo = "https://github.com/jolars/panache-pre-commit"
-rev = "v3.12.0"
+rev = "v3.17.0"
 hooks = [{ id = "panache-format" }, { id = "panache-lint" }]
 
 [[repos]]
