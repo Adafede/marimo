@@ -1,6 +1,5 @@
 ---
 title: Readme
-marimo-version: 0.23.0
 ---
 
 # Template Documentation
@@ -29,8 +28,8 @@ Templates receive the following variables from the build script:
 
 - `notebooks`: A list of dictionaries containing information about notebooks
   - Each notebook has:
-    - `display_name`: The formatted name of the notebook (e.g., "Penguins"
-      instead of "penguins")
+    - `display_name`: The formatted name of the notebook (e.g., "NP Classifier"
+      instead of "npclassifier")
     - `html_path`: The path to the HTML file for the notebook
 
 - `apps`: A list of dictionaries containing information about apps
@@ -44,7 +43,7 @@ A complete template should include:
 
 1. **Conditional Notebook Section**: Only display if notebooks exist
 
-   ```jinja
+   ```jinja2
    {% if notebooks %}
    <h2>Notebooks</h2>
    <div class="notebooks-container">
@@ -60,7 +59,7 @@ A complete template should include:
 
 2. **Conditional App Section**: Only display if apps exist
 
-   ```jinja
+   ```jinja2
    {% if apps %}
    <h2>Apps</h2>
    <div class="apps-container">
@@ -76,15 +75,15 @@ A complete template should include:
 
 ## Using Custom Templates
 
-To use a custom template with the build script, use the `--template` parameter:
+To use a custom template, pass the `--template` parameter to the build script:
 
 ```bash
-uv run .github/scripts/build.py --output-dir _site --template templates/your-custom-template.html.j2
+uv run build.py --template templates/your-custom-template.html.j2
 ```
 
 ## Example Templates
 
-This repository includes three example templates:
+This repository includes two example templates:
 
 1. `index.html.j2`: A less lean template with more styling and a footer
 2. `tailwind.html.j2`: A minimal and lean template using Tailwind CSS

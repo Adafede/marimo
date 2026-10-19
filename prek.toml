@@ -49,7 +49,7 @@ hooks = [{ id = "uv-lock" }]
 
 [[repos]]
 repo = "local"
-hooks = [{ id = "ty-check", name = "ty-check", language = "python", entry = "ty check", exclude = '^(?!.*\.py$).*$', additional_dependencies = ["ty"] }]
+hooks = [{ id = "ty-check", name = "ty-check", language = "python", entry = "ty check", exclude = '^(?!.*\.py$).*$', additional_dependencies = ["ty"] }, { id = "graphify-regen", name = "graphify-regen", language = "system", entry = "graphify extract . --code-only --no-cluster --out .", pass_filenames = false, always_run = true }]
 
 [[repos]]
 repo = "https://github.com/zizmorcore/zizmor-pre-commit"

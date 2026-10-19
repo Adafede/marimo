@@ -5,9 +5,13 @@ notebooks to WebAssembly and deploy them to GitHub Pages.
 
 ## 📚 Included Examples
 
-- `apps/charts.py`: Interactive data visualization with Altair
+- `apps/bayesian_chemotaxonomic_profiler.py`: Bayesian chemotaxonomic profiling
+- `apps/lotus_exporter.py`: Export compound data from LOTUS
+- `apps/lotus_pubchem_tree.py`: Build taxonomic trees from PubChem
+- `apps/lotus_wikidata_explorer.py`: Explore Wikidata for compound data
+- `apps/mols.py`: Molecular structure utilities
 - `notebooks/fibonacci.py`: Interactive Fibonacci sequence calculator
-- `notebooks/penguins.py`: Interactive data analysis with Polars and marimo
+- `notebooks/npclassifier.py`: NPClassifier demo notebook
 
 ## 🚀 Usage
 
@@ -25,29 +29,22 @@ notebooks to WebAssembly and deploy them to GitHub Pages.
 To include data or assets in your notebooks, add them to the `public/`
 directory.
 
-For example, the `apps/charts.py` notebook loads an image asset from the
-`public/` directory.
-
-```markdown
-<img src="public/logo.png" width="200" />
-```
-
-And the `notebooks/penguins.py` notebook loads a CSV dataset from the `public/`
-directory.
+For example, a notebook can load an image from `public/` via:
 
 ```python
-import polars as pl
+import marimo as mo
+img = mo.ui.file(label="Upload image")
 
-df = pl.read_csv(mo.notebook_location() / "public" / "penguins.csv")
+# Load asset using notebook_location
+df = pl.read_csv(mo.notebook_location() / "public" / "your_data.csv")
 ```
 
 ## 🎨 Templates
 
-This repository includes several templates for the generated site:
+This repository includes two example templates for the generated site:
 
 1. `index.html.j2` (default): A template with styling and a footer
-2. `bare.html.j2`: A minimal template with basic styling
-3. `tailwind.html.j2`: A minimal and lean template using Tailwind CSS
+2. `tailwind.html.j2`: A minimal and lean template using Tailwind CSS
 
 To use a specific template, pass the `--template` parameter to the build script:
 
