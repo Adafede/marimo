@@ -879,6 +879,11 @@ def main(
         apps_data=apps_data,
         template_file=template_file,
     )
+    # Add analytics + badge to the index page too
+    index_file = output_dir / "index.html"
+    if index_file.is_file():
+        inject_simpleanalytics(index_file)
+        logger.info("Successfully added analytics to index.html")
 
     logger.info(f"Build completed successfully. Output directory: {output_dir}")
 
