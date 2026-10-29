@@ -1297,7 +1297,7 @@ with app.setup:
 
             # Sort compounds and children by Name for consistent output
             sorted_compounds = (
-                sorted(compounds_list, key=lambda x: x.get("Name", ""))
+                sorted(compounds_list, key=lambda x: str(x.get("Name") or ""))
                 if compounds_list
                 else None
             )
