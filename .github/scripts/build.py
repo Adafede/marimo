@@ -603,6 +603,20 @@ def inject_simpleanalytics(html_path: Path) -> None:
     script = """
     <!-- Simple Analytics -->
     <script async src="https://scripts.simpleanalyticscdn.com/latest.js"></script>
+    <a href="https://www.simpleanalytics.com?utm_source=adafede.github.io&utm_content=badge" referrerpolicy="origin" target="_blank" rel="noopener noreferrer">
+      <picture>
+        <source
+          srcset="https://simpleanalyticsbadges.com/adafede.github.io?mode=dark&counter=false&radius=10&background-dark=0a0f19&text-dark=b8c5d6&logo-dark=d69999"
+          media="(prefers-color-scheme: dark)"
+        />
+        <img
+          src="https://simpleanalyticsbadges.com/adafede.github.io?mode=light&counter=false&radius=10&background-light=f7fafc&text-light=4a5a6d&logo-light=990000"
+          alt="Simple Analytics" width="118" height="28" loading="lazy"
+          referrerpolicy="no-referrer"
+          crossorigin="anonymous"
+        />
+      </picture>
+    </a>
     """
 
     # Insert before </body>
