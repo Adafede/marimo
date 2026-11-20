@@ -25,6 +25,7 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
+from urllib.parse import quote
 
 import fire
 import jinja2
@@ -589,46 +590,139 @@ def inline_modules(notebook_path: Path, output_path: Path, public_path: Path):
     logger.info(f"Successfully inlined modules into {output_path}")
 
 
-def inject_simpleanalytics(html_path: Path) -> None:
-    """Inject the Simple Analytics script tag before ``</body>``.
+_ANALYTICS_PIXEL_STYLE = (
+    '<style id="analytics-pixel-style">'
+    ".analytics-pixel{position:absolute;inset-block-start:0;inset-inline-start:0;"
+    "inline-size:1px;block-size:1px;opacity:0;pointer-events:none;}</style>"
+)
+
+
+def _page_path_for(
+    html_path: Path,
+    output_dir: Path | None,
+    base_path: str,
+) -> str:
+    """Compute the published URL path for an exported HTML file.
+
+    Parameters
+    ----------
+    html_path : Path
+        Path to the rendered HTML file.
+    output_dir : Path | None
+        Root output directory, used to derive the relative route.
+    base_path : str
+        Site deployment prefix (e.g. ``"/marimo"``).
+
+    Returns
+    -------
+    str
+        Canonical site-relative path starting with ``/``.
+
+    """
+    stripped = base_path.strip("/")
+    base = f"/{stripped}" if stripped else ""
+    if output_dir is not None:
+        try:
+            rel = html_path.resolve().relative_to(output_dir.resolve()).as_posix()
+        except ValueError:
+            rel = html_path.name
+    else:
+        rel = html_path.name
+    if rel == "index.html":
+        return f"{base}/"
+    if rel.endswith("/index.html"):
+        return f"{base}/{rel[:-10].rstrip('/')}/"
+    return f"{base}/{rel}"
+
+
+def inject_simpleanalytics(
+    html_path: Path,
+    output_dir: Path | None = None,
+    hostname: str = "adafede.github.io",
+    base_path: str = "/marimo",
+) -> None:
+    """Inject the JavaScript-free Simple Analytics badge and pixel into HTML.
 
     Parameters
     ----------
     html_path : Path
         Path to the exported HTML file.
+    output_dir : Path | None
+        Root output directory used to resolve per-page paths.
+    hostname : str
+        Canonical Simple Analytics site hostname.
+    base_path : str
+        Deployment base path prefix (default ``"/marimo"``).
 
     """
-    html = html_path.read_text()
+    html = html_path.read_text(encoding="utf-8")
+    safe_host = quote(hostname, safe=".-")
+    page_path = _page_path_for(html_path, output_dir, base_path)
+    encoded_path = quote(page_path, safe="")
 
-    script = """
+    html = re.sub(
+        r'<script\b[^>]*\bsrc=["\'][^"\']*simpleanalyticscdn\.com[^"\']*["\'][^>]*>\s*</script>',
+        "",
+        html,
+        flags=re.IGNORECASE,
+    )
+    html = re.sub(
+        r"<noscript\b[^>]*>[\s\S]*?noscript\.gif[\s\S]*?</noscript>",
+        "",
+        html,
+        flags=re.IGNORECASE,
+    )
+    html = re.sub(
+        r'<img\b[^>]*\bclass=["\'][^"\']*\banalytics-pixel\b[^"\']*["\'][^>]*>',
+        "",
+        html,
+        flags=re.IGNORECASE,
+    )
+
+    if "</head>" in html and ".analytics-pixel" not in html:
+        html = html.replace("</head>", f"{_ANALYTICS_PIXEL_STYLE}\n</head>", 1)
+
+    snippet = f"""
     <!-- Simple Analytics -->
-    <script async src="https://scripts.simpleanalyticscdn.com/latest.js"></script>
-    <a href="https://www.simpleanalytics.com?utm_source=adafede.github.io&utm_content=badge" referrerpolicy="origin" target="_blank" rel="noopener noreferrer">
+    <a href="https://www.simpleanalytics.com?utm_source={safe_host}&utm_content=badge" referrerpolicy="origin" target="_blank" rel="noopener noreferrer">
       <picture>
         <source
-          srcset="https://simpleanalyticsbadges.com/adafede.github.io?mode=dark&counter=false&radius=10&background-dark=0a0f19&text-dark=b8c5d6&logo-dark=d69999"
+          srcset="https://simpleanalyticsbadges.com/{safe_host}?mode=dark&counter=false&radius=10&background-dark=0a0f19&text-dark=b8c5d6&logo-dark=d69999"
           media="(prefers-color-scheme: dark)"
         />
         <img
-          src="https://simpleanalyticsbadges.com/adafede.github.io?mode=light&counter=false&radius=10&background-light=f7fafc&text-light=4a5a6d&logo-light=990000"
+          src="https://simpleanalyticsbadges.com/{safe_host}?mode=light&counter=false&radius=10&background-light=f7fafc&text-light=4a5a6d&logo-light=990000"
           alt="Simple Analytics" width="118" height="28" loading="lazy"
           referrerpolicy="no-referrer"
           crossorigin="anonymous"
         />
       </picture>
     </a>
+    <img
+      src="https://queue.simpleanalyticscdn.com/noscript.gif?hostname={safe_host}&amp;path={encoded_path}"
+      alt=""
+      width="1"
+      height="1"
+      referrerpolicy="no-referrer-when-downgrade"
+      decoding="async"
+      fetchpriority="low"
+      aria-hidden="true"
+      class="analytics-pixel"
+    />
     """
 
     # Insert before </body>
     if "</body>" in html:
-        html = html.replace("</body>", script + "\n</body>")
-        html_path.write_text(html)
+        html = html.replace("</body>", snippet + "\n</body>", 1)
+        html_path.write_text(html, encoding="utf-8")
 
 
 def _export_html_wasm(
     notebook_path: Path,
     output_dir: Path,
     as_app: bool = False,
+    hostname: str = "adafede.github.io",
+    base_path: str = "/marimo",
 ) -> bool:
     """Export a single marimo notebook to HTML/WebAssembly format.
 
@@ -643,6 +737,10 @@ def _export_html_wasm(
         Output root directory.
     as_app : bool
         Whether to export in app/run mode. Default is ``False``.
+    hostname : str
+        Canonical Simple Analytics site hostname.
+    base_path : str
+        Deployment base path prefix.
 
     Returns
     -------
@@ -696,7 +794,12 @@ def _export_html_wasm(
         logger.debug(f"Running command: {cmd}")
         subprocess.run(cmd, capture_output=True, text=True, check=True)
         logger.info(f"Successfully exported {notebook_path}")
-        inject_simpleanalytics(output_file)
+        inject_simpleanalytics(
+            output_file,
+            output_dir=output_dir,
+            hostname=hostname,
+            base_path=base_path,
+        )
         logger.info("Successfully added analytics")
 
         if inlined_path:
@@ -768,7 +871,13 @@ def _generate_index(
         logger.error(f"Error rendering template: {e}")
 
 
-def _export(folder: Path, output_dir: Path, as_app: bool = False) -> list[dict]:
+def _export(
+    folder: Path,
+    output_dir: Path,
+    as_app: bool = False,
+    hostname: str = "adafede.github.io",
+    base_path: str = "/marimo",
+) -> list[dict]:
     """Export all marimo notebooks in a folder to HTML/WebAssembly format.
 
     Parameters
@@ -779,6 +888,10 @@ def _export(folder: Path, output_dir: Path, as_app: bool = False) -> list[dict]:
         Output root directory.
     as_app : bool
         Whether to export files as apps (run mode). Default is ``False``.
+    hostname : str
+        Canonical Simple Analytics site hostname.
+    base_path : str
+        Deployment base path prefix.
 
     Returns
     -------
@@ -816,7 +929,13 @@ def _export(folder: Path, output_dir: Path, as_app: bool = False) -> list[dict]:
             "html_path": str(nb.with_suffix(".html")),
         }
         for nb in notebooks
-        if _export_html_wasm(nb, output_dir, as_app=as_app)
+        if _export_html_wasm(
+            nb,
+            output_dir,
+            as_app=as_app,
+            hostname=hostname,
+            base_path=base_path,
+        )
     ]
 
     logger.info(
@@ -828,6 +947,8 @@ def _export(folder: Path, output_dir: Path, as_app: bool = False) -> list[dict]:
 def main(
     output_dir: str | Path = "_site",
     template: str | Path = "templates/tailwind.html.j2",
+    hostname: str = "adafede.github.io",
+    base_path: str = "/marimo",
 ) -> None:
     """Export marimo notebooks.
 
@@ -841,6 +962,10 @@ def main(
     template : Union[str, Path]
         Template path used for index generation.
         Default is ``"templates/tailwind.html.j2"``.
+    hostname : str
+        Canonical Simple Analytics site hostname.
+    base_path : str
+        Deployment base path prefix (default ``"/marimo"``).
 
     """
     logger.info("Starting marimo build process")
@@ -857,10 +982,22 @@ def main(
     logger.info(f"Using template file: {template_file}")
 
     # Export notebooks from the notebooks/ directory
-    notebooks_data = _export(Path("notebooks"), output_dir, as_app=False)
+    notebooks_data = _export(
+        Path("notebooks"),
+        output_dir,
+        as_app=False,
+        hostname=hostname,
+        base_path=base_path,
+    )
 
     # Export apps from the apps/ directory
-    apps_data = _export(Path("apps"), output_dir, as_app=True)
+    apps_data = _export(
+        Path("apps"),
+        output_dir,
+        as_app=True,
+        hostname=hostname,
+        base_path=base_path,
+    )
 
     # Copy public directories from both notebooks/ and apps/
     logger.info("Copying public directories...")
@@ -882,7 +1019,12 @@ def main(
     # Add analytics + badge to the index page too
     index_file = output_dir / "index.html"
     if index_file.is_file():
-        inject_simpleanalytics(index_file)
+        inject_simpleanalytics(
+            index_file,
+            output_dir=output_dir,
+            hostname=hostname,
+            base_path=base_path,
+        )
         logger.info("Successfully added analytics to index.html")
 
     logger.info(f"Build completed successfully. Output directory: {output_dir}")

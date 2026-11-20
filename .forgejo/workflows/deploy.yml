@@ -14,7 +14,7 @@ jobs:
 
       - name: Build
         run: |
-          uv run .github/scripts/build.py
+          uv run .github/scripts/build.py --hostname=adafede.codeberg.page
 
       # This is only done on Codeberg but we still need the GitHub hosted files (128MB limit)
       - name: Cleanup
